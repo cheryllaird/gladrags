@@ -397,4 +397,4 @@ In the Supabase dashboard:
 9. **Upload sizes**: original up to 1.5 MB, cut-out PNG up to 2.5 MB, both at most 1600 px. If PNG cut-outs prove too big on real phones, the options are to allow WebP cut-outs, or to upload to storage via short-lived signed upload URLs (the server would still need to check and strip the files afterwards, since users can't write to storage directly).
 10. **Sign-in by code as well as link**, for the iPhone home-screen app. This needs the email template change in section 9.
 11. **Signed image URLs** last 1 hour, or 10 minutes for the add-by-link product image.
-12. **Caps can be overshot slightly** by requests sent at the same moment (section 7). Accepted at tester scale for now.
+12. **Caps can be overshot** by requests sent at the same moment (section 7). Accepted during development; an atomic check is planned before testers join.
