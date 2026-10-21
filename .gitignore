@@ -14,3 +14,10 @@ test-results/
 # OS and editor
 .DS_Store
 *.log
+
+# Next.js and TypeScript generated files
+next-env.d.ts
+*.tsbuildinfo
+
+# Written by `next dev` for coding agents; not part of the repo
+AGENTS.md
