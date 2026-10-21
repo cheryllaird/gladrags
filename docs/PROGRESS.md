@@ -61,7 +61,7 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 
 | Item | Needed by | Status |
 | --- | --- | --- |
-| Supabase project URL, anon key, service role key | End-to-end check of foundations (auth, migrations) | ☐ Missing |
+| Supabase project URL, publishable key, secret key | End-to-end check of foundations (auth, migrations) | ☐ Missing |
 | Gemini API key (free tier OK for dev; paid before testers) | Milestone 3 (ingestion, outfit-engine live runs) | ☐ Missing |
 | Vercel project linked to repo, with the same env vars | Milestone 4 preview deploy | ☐ Missing |
 | Tester email allowlist | Milestone 6 (and her own email for testing earlier) | ☐ Missing |

@@ -76,7 +76,7 @@ A branch merges into `main` only when all of these hold:
 
 List any of these that are still missing when you reach a step that needs them:
 
-- Supabase project URL, anon key and service role key.
+- Supabase project URL, publishable key and secret key.
 - Gemini API key (free tier is fine for development; switch to paid before testers join).
 - Vercel project linked to this repo, with the same environment variables.
 - Tester email allowlist.
