@@ -2,6 +2,12 @@ import { defineConfig } from "@playwright/test";
 
 const PORT = Number(process.env.PLAYWRIGHT_PORT ?? 3100);
 const BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? `http://localhost:${PORT}`;
+/**
+ * Optional: a Chromium binary to use instead of Playwright's own download,
+ * for machines with a pre-installed browser of a different build. CI leaves
+ * it unset and uses `playwright install`.
+ */
+const CHROMIUM_EXECUTABLE = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined;
 
 /**
  * Journey tests run on a 390 px wide phone viewport (CLAUDE.md: mobile first)
@@ -26,6 +32,7 @@ export default defineConfig({
         deviceScaleFactor: 3,
         isMobile: true,
         hasTouch: true,
+        launchOptions: CHROMIUM_EXECUTABLE ? { executablePath: CHROMIUM_EXECUTABLE } : {},
       },
     },
   ],
