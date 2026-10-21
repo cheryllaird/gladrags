@@ -14,3 +14,7 @@ test-results/
 # OS and editor
 .DS_Store
 *.log
+
+# Next.js and TypeScript generated files
+next-env.d.ts
+*.tsbuildinfo
