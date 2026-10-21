@@ -80,11 +80,14 @@ describe("callWithValidation retries exactly once", () => {
     }
   });
 
-  it("calls onCall only for calls that returned, so a thrown call records no cost", async () => {
+  // Updated by foundations (review item 5): a thrown attempt may still be
+  // billed, so onCall reports it too, with no cost so the estimate is used.
+  it("calls onCall for thrown attempts too, with no cost (so the estimate is recorded)", async () => {
     const seen: ModelCall[] = [];
     const { call } = counting([new Error("boom"), tagging.valid]);
-    await callWithValidation(TaggingModelOutputSchema, call, { onCall: (c) => void seen.push(c) });
-    expect(seen).toHaveLength(1);
+    await callWithValidation(TaggingModelOutputSchema, call, { onCall: (c) => void seen.push(c), provider: "gemini" });
+    expect(seen).toHaveLength(2);
+    expect(seen[0]).toMatchObject({ raw: undefined, costPence: undefined, provider: "gemini", error: "boom" });
   });
 
   it("awaits an async onCall before validating, so the cost is recorded first", async () => {

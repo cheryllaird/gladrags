@@ -116,8 +116,17 @@ insert into public.usage_events (user_id, kind, cost_pence, provider) values
   ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'tagging', 0.12, 'gemini'),
   ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'ranking_final', 0.4, 'gemini');
 
+-- Images are written by the server (secret key), never by users.
 insert into storage.objects (bucket_id, name) values
-  ('cutouts', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/00000000-0000-4000-8000-000000000002.png');
+  ('cutouts', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/00000000-0000-4000-8000-000000000002.png'),
+  ('originals', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/00000000-0000-4000-8000-000000000001.jpg'),
+  ('originals', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/00000000-0000-4000-8000-000000000003.jpg');
+
+insert into public.link_imports (original_image_key, user_id, source_url, product, created_at) values
+  ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/00000000-0000-4000-8000-000000000030.jpg', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+   'https://shop.example.com/p/1', '{"title": "Linen shirt", "brand": "Example", "colour": "Navy"}', now()),
+  ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/00000000-0000-4000-8000-000000000031.jpg', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+   'https://shop.example.com/p/2', '{}', now() - interval '2 hours');
 
 -- Constraints ----------------------------------------------------------------
 
@@ -204,7 +213,8 @@ select pg_temp.expect_count('select * from public.users', 1, 'A sees only their 
 select pg_temp.expect_count('select * from public.items', 3, 'A sees only their own items');
 select pg_temp.expect_count('select * from public.outfits', 0, 'A cannot see B''s outfits');
 select pg_temp.expect_count('select * from public.usage_events', 2, 'A sees only their own usage');
-select pg_temp.expect_count('select * from storage.objects', 0, 'A cannot see B''s images');
+select pg_temp.expect_count('select * from storage.objects', 2, 'A sees only their own images');
+select pg_temp.expect_error('select * from public.link_imports', 'A reading link imports (server only)');
 
 select pg_temp.expect_error('select * from public.allowed_emails', 'A reading the allowlist');
 select pg_temp.expect_error('select public.ai_spend_pence_since(now())', 'A reading total AI spend');
@@ -290,15 +300,21 @@ select pg_temp.expect_error(
   'update public.outfits set status = ''loved'' where id = ''a1000000-0000-4000-8000-000000000001''',
   'unknown outfit status');
 
-select pg_temp.expect_rows(
-  'insert into storage.objects (bucket_id, name) values (''originals'', ''aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/00000000-0000-4000-8000-000000000001.jpg'')', 1,
-  'A uploads into their own folder');
+select pg_temp.expect_error(
+  'insert into storage.objects (bucket_id, name) values (''originals'', ''aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/00000000-0000-4000-8000-000000000009.jpg'')',
+  'A uploading straight to storage, even into their own folder (skips EXIF stripping)');
 select pg_temp.expect_error(
   'insert into storage.objects (bucket_id, name) values (''originals'', ''bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/planted.jpg'')',
   'A uploading into B''s folder');
 select pg_temp.expect_rows(
+  'update storage.objects set name = ''aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/renamed.jpg'' where bucket_id = ''originals''', 0,
+  'A changing their own images changes nothing (no update policy)');
+select pg_temp.expect_rows(
   'delete from storage.objects where bucket_id = ''cutouts''', 0,
   'A deleting B''s images changes nothing');
+select pg_temp.expect_rows(
+  'delete from storage.objects where name = ''aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/00000000-0000-4000-8000-000000000003.jpg''', 1,
+  'A deletes one of their own images');
 
 -- Deleting an item removes outfits that used it (and their children keep
 -- existing with parent_outfit_id cleared, unless they used it too).
@@ -319,6 +335,46 @@ reset role;
 select pg_temp.expect_count(
   'select * from storage.buckets where id in (''originals'', ''cutouts'') and public = false', 2,
   'both image buckets exist and are private');
+
+-- Link imports: step 2 claims an import once (as the server, with the secret key)
+
+select pg_temp.expect_rows($$
+  update public.link_imports set tagged_at = now()
+  where original_image_key = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/00000000-0000-4000-8000-000000000030.jpg'
+    and user_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' and tagged_at is null and created_at > now() - interval '1 hour'
+$$, 1, 'step 2 claims a fresh import');
+select pg_temp.expect_rows($$
+  update public.link_imports set tagged_at = now()
+  where original_image_key = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/00000000-0000-4000-8000-000000000030.jpg'
+    and user_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' and tagged_at is null and created_at > now() - interval '1 hour'
+$$, 0, 'replaying step 2 claims nothing (single use)');
+select pg_temp.expect_rows($$
+  update public.link_imports set tagged_at = now()
+  where original_image_key = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/00000000-0000-4000-8000-000000000031.jpg'
+    and user_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' and tagged_at is null and created_at > now() - interval '1 hour'
+$$, 0, 'an expired import can''t be claimed');
+select pg_temp.expect_rows($$
+  update public.link_imports set tagged_at = now()
+  where original_image_key = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/00000000-0000-4000-8000-000000000031.jpg'
+    and user_id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' and tagged_at is null
+$$, 0, 'B can''t claim A''s import');
+select pg_temp.expect_error($$
+  insert into public.link_imports (original_image_key, user_id, source_url)
+  values ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/00000000-0000-4000-8000-000000000040.jpg', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'https://x.example.com')
+$$, 'link import whose image is in another user''s folder');
+
+-- Email changes go through the allowlist too ----------------------------------
+
+select pg_temp.expect_error(
+  'update auth.users set email = ''stranger@example.com'' where id = ''bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb''',
+  'changing an account''s email to one not on the allowlist');
+insert into public.allowed_emails (email) values ('b.new@example.com');
+select pg_temp.expect_rows(
+  'update auth.users set email = ''B.New@example.com'' where id = ''bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb''', 1,
+  'changing an account''s email to an allowlisted one');
+select pg_temp.expect_count(
+  'select * from public.users where id = ''bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'' and email = ''b.new@example.com''', 1,
+  'the profile''s email follows the change');
 
 -- Account deletion --------------------------------------------------------------
 

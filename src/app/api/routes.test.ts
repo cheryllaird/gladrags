@@ -228,11 +228,18 @@ describe("link import (two steps)", () => {
     }
   });
 
-  it("step 2 attaches the cut-out and returns a tagged draft", async () => {
-    const one = await stepOne();
+  async function okStepOne(url?: string) {
+    const one = await stepOne(url);
     if (one.status !== "ok") throw new Error("expected ok");
-    const meta = { sourceUrl: one.sourceUrl, originalImageKey: one.originalImageKey, product: one.product };
-    const res = await itemLinkCutout.POST(linkCutout(meta, png()));
+    return one;
+  }
+
+  const usageToday = async () =>
+    UsageSummarySchema.parse(await (await usage.GET(json("/api/usage", "GET"))).json()).itemsToday.used;
+
+  it("step 2 attaches the cut-out and returns a tagged draft", async () => {
+    const one = await okStepOne();
+    const res = await itemLinkCutout.POST(linkCutout({ originalImageKey: one.originalImageKey }, png()));
     const { draft } = ItemDraftResponseSchema.parse(await res.json());
     expect(draft).toMatchObject({ source: "link", sourceUrl: one.sourceUrl, originalImageKey: one.originalImageKey });
     expect(draft.cutoutImageKey).not.toBeNull();
@@ -240,21 +247,48 @@ describe("link import (two steps)", () => {
   });
 
   it("step 2 works without a cut-out (tags the original)", async () => {
-    const one = await stepOne();
-    if (one.status !== "ok") throw new Error("expected ok");
-    const meta = { sourceUrl: one.sourceUrl, originalImageKey: one.originalImageKey, product: one.product };
-    const { draft } = ItemDraftResponseSchema.parse(await (await itemLinkCutout.POST(linkCutout(meta))).json());
-    expect(draft.cutoutImageKey).toBeNull();
+    const one = await okStepOne();
+    const res = await itemLinkCutout.POST(linkCutout({ originalImageKey: one.originalImageKey }));
+    expect(ItemDraftResponseSchema.parse(await res.json()).draft.cutoutImageKey).toBeNull();
   });
 
-  it("step 2 refuses another user's image and bad meta", async () => {
-    const meta = {
-      sourceUrl: "https://shop.example.com/p/1",
-      originalImageKey: "0b000000-0000-4000-8000-000000000002/1a000000-0000-4000-8000-000000000099.jpg",
-      product: { title: null, brand: null, colour: null },
-    };
-    await expectError(await itemLinkCutout.POST(linkCutout(meta, png())), 400, "bad_request");
-    await expectError(await itemLinkCutout.POST(linkCutout({ sourceUrl: "nope" })), 400, "bad_request");
+  it("uses the server's stored source URL, not one the client echoes back", async () => {
+    const one = await okStepOne();
+    const res = await itemLinkCutout.POST(
+      linkCutout({ originalImageKey: one.originalImageKey, sourceUrl: "https://evil.example.com/" }),
+    );
+    expect(ItemDraftResponseSchema.parse(await res.json()).draft.sourceUrl).toBe(one.sourceUrl);
+  });
+
+  it("counts the item at step 2 (where tagging runs), not at step 1", async () => {
+    const one = await okStepOne();
+    expect(await usageToday()).toBe(0);
+    await itemLinkCutout.POST(linkCutout({ originalImageKey: one.originalImageKey }, png()));
+    expect(await usageToday()).toBe(1);
+  });
+
+  it("step 2 is single use: a replay gets not_found and isn't counted", async () => {
+    const one = await okStepOne();
+    const meta = { originalImageKey: one.originalImageKey };
+    expect((await itemLinkCutout.POST(linkCutout(meta, png()))).status).toBe(200);
+    await expectError(await itemLinkCutout.POST(linkCutout(meta, png())), 404, "not_found");
+    expect(await usageToday()).toBe(1);
+  });
+
+  it("step 2 enforces the daily cap, even for an import started before the cap was hit", async () => {
+    const one = await okStepOne();
+    for (let i = 0; i < DAILY_CAPS.item_ingest; i++) await itemPhoto.POST(photo(jpeg()));
+    const res = await itemLinkCutout.POST(linkCutout({ originalImageKey: one.originalImageKey }, png()));
+    await expectError(res, 429, "daily_cap_reached");
+    // Step 1 refuses too, once the cap is reached.
+    const again = await itemLink.POST(json("/api/items/link", "POST", { url: "https://shop.example.com/p/2" }));
+    await expectError(again, 429, "daily_cap_reached");
+  });
+
+  it("step 2 refuses an import that isn't the user's, or that never existed", async () => {
+    const otherUsersKey = "0b000000-0000-4000-8000-000000000002/1a000000-0000-4000-8000-000000000099.jpg";
+    await expectError(await itemLinkCutout.POST(linkCutout({ originalImageKey: otherUsersKey }, png())), 404, "not_found");
+    await expectError(await itemLinkCutout.POST(linkCutout({ originalImageKey: "nope" })), 400, "bad_request");
   });
 
   it.each([
@@ -379,6 +413,60 @@ describe("usage, auth and account", () => {
     expect((await account.DELETE(json("/api/account", "DELETE"))).status).toBe(200);
     const list = ItemListResponseSchema.parse(await (await items.GET(json("/api/items", "GET"))).json());
     expect(list.items).toHaveLength(MOCK_ITEMS.length);
+  });
+});
+
+describe("mock markers for the UI's fallback and error states", () => {
+  const named = (name: string) => fileOf(JPEG_MAGIC, 512, name, "image/jpeg");
+
+  it("mock-no-tags in a photo's file name returns empty suggested tags", async () => {
+    const res = await itemPhoto.POST(photo(named("shirt-mock-no-tags.jpg")));
+    expect(ItemDraftResponseSchema.parse(await res.json()).draft.suggestedTags).toBeNull();
+  });
+
+  it("mock-ai-paused and mock-daily-cap in a photo's file name return those errors", async () => {
+    await expectError(await itemPhoto.POST(photo(named("mock-ai-paused.jpg"))), 503, "ai_paused");
+    const error = await expectError(await itemPhoto.POST(photo(named("mock-daily-cap.jpg"))), 429, "daily_cap_reached");
+    expect(error.cap?.kind).toBe("items_per_day");
+  });
+
+  it("mock-no-tags in a link makes step 2 return empty tags", async () => {
+    const one = LinkImportResponseSchema.parse(
+      await (await itemLink.POST(json("/api/items/link", "POST", { url: "https://shop.example.com/p?t=mock-no-tags" }))).json(),
+    );
+    if (one.status !== "ok") throw new Error("expected ok");
+    const res = await itemLinkCutout.POST(linkCutout({ originalImageKey: one.originalImageKey }));
+    expect(ItemDraftResponseSchema.parse(await res.json()).draft.suggestedTags).toBeNull();
+  });
+
+  it("markers in a link, outfit guidance or custom style return cap errors", async () => {
+    await expectError(await itemLink.POST(json("/api/items/link", "POST", { url: "https://shop.example.com/mock-ai-paused" })), 503, "ai_paused");
+    const outfitsError = await expectError(
+      await outfits.POST(json("/api/outfits", "POST", { style: { kind: "preset", presetId: "work" }, guidance: "mock-daily-cap" })),
+      429,
+      "daily_cap_reached",
+    );
+    expect(outfitsError.cap?.kind).toBe("outfit_requests_per_day");
+    await expectError(
+      await outfits.POST(json("/api/outfits", "POST", { style: { kind: "custom", text: "party mock-ai-paused" } })),
+      503,
+      "ai_paused",
+    );
+  });
+});
+
+describe("anchor-aware incomplete wardrobe", () => {
+  it("says bottom is missing for a top anchor when there are no bottoms, despite a dress", async () => {
+    for (const item of MOCK_ITEMS.filter((i) => i.tags.category === "bottom")) {
+      await itemById.DELETE(json(`/api/items/${item.id}`, "DELETE"), ctx(item.id));
+    }
+    const top = MOCK_ITEMS.find((i) => i.tags.category === "top")!;
+    const res = await outfits.POST(json("/api/outfits", "POST", { style: { kind: "preset", presetId: "casual" }, anchorItemId: top.id }));
+    expect(OutfitGenerationResponseSchema.parse(await res.json())).toMatchObject({
+      status: "incomplete_wardrobe",
+      reason: "missing_category",
+      missingCategories: ["bottom"],
+    });
   });
 });
 

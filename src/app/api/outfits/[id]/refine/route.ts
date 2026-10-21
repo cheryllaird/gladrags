@@ -9,6 +9,7 @@ import { ApiException, notFound } from "@/lib/api/errors";
 import { jsonResponse, parseJsonBody, parseRouteParams, withApiHandler } from "@/lib/api/http";
 import { assertMockModeForStub } from "@/lib/api/stub";
 import { requireUser } from "@/lib/auth/session";
+import { throwIfCapMarker } from "@/lib/mocks/markers";
 import * as mock from "@/lib/mocks/store";
 import { getUsageGuard } from "@/lib/usage";
 
@@ -29,6 +30,8 @@ export const POST = withApiHandler(async (request, { params }: Context) => {
       issues: [{ path: "itemId", message: "Not in this outfit" }],
     });
   }
+
+  throwIfCapMarker([body.kind === "guidance" ? body.text : null], "outfit_request");
 
   const usage = getUsageGuard();
   await usage.assertCanStart(user.id, "outfit_request");

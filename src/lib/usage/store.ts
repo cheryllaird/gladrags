@@ -18,6 +18,14 @@ export interface UsageStore {
   record(event: UsageEvent): Promise<void>;
 }
 
+/**
+ * Costs are kept to 4 decimal places of a penny, like the database column
+ * (numeric(12, 4)). Summing in whole ten-thousandths avoids float drift:
+ * 2,500 × 0.2p must make exactly 500p, not 499.99999999998p.
+ */
+const COST_SCALE = 10_000;
+const toUnits = (pence: number) => Math.round(pence * COST_SCALE);
+
 /** For tests and mock mode. */
 export class InMemoryUsageStore implements UsageStore {
   readonly events: (UsageEvent & { at: Date })[] = [];
@@ -29,7 +37,8 @@ export class InMemoryUsageStore implements UsageStore {
   }
 
   async spendSince(since: Date): Promise<number> {
-    return this.events.filter((e) => e.at >= since).reduce((sum, e) => sum + e.costPence, 0);
+    const units = this.events.filter((e) => e.at >= since).reduce((sum, e) => sum + toUnits(e.costPence), 0);
+    return units / COST_SCALE;
   }
 
   async record(event: UsageEvent): Promise<void> {

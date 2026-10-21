@@ -10,6 +10,7 @@ import { notFound } from "@/lib/api/errors";
 import { jsonResponse, parseJsonBody, parseSearchParams, withApiHandler } from "@/lib/api/http";
 import { assertMockModeForStub } from "@/lib/api/stub";
 import { requireUser } from "@/lib/auth/session";
+import { throwIfCapMarker } from "@/lib/mocks/markers";
 import * as mock from "@/lib/mocks/store";
 import { getUsageGuard } from "@/lib/usage";
 
@@ -28,6 +29,7 @@ export const POST = withApiHandler(async (request) => {
   assertMockModeForStub("POST /api/outfits");
 
   if (body.anchorItemId && !mock.getItem(body.anchorItemId)) throw notFound("That item");
+  throwIfCapMarker([body.guidance, body.style.kind === "custom" ? body.style.text : null], "outfit_request");
 
   const usage = getUsageGuard();
   await usage.assertCanStart(user.id, "outfit_request");

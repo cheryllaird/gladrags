@@ -8,6 +8,12 @@ const BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? `http://localhost:${PORT}`;
  * it unset and uses `playwright install`.
  */
 const CHROMIUM_EXECUTABLE = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined;
+/**
+ * PLAYWRIGHT_USE_BUILD=true tests the production build (`pnpm start`; run
+ * `pnpm build` first), as CI does. Otherwise the dev server is used.
+ * GLADRAGS_E2E=true is what lets mock mode run in a production build.
+ */
+const USE_BUILD = process.env.PLAYWRIGHT_USE_BUILD === "true";
 
 /**
  * Journey tests run on a 390 px wide phone viewport (CLAUDE.md: mobile first)
@@ -39,10 +45,10 @@ export default defineConfig({
   webServer: process.env.PLAYWRIGHT_BASE_URL
     ? undefined
     : {
-        command: `pnpm dev --port ${PORT}`,
+        command: USE_BUILD ? `pnpm start --port ${PORT}` : `pnpm dev --port ${PORT}`,
         url: BASE_URL,
         reuseExistingServer: !process.env.CI,
         timeout: 120_000,
-        env: { GLADRAGS_MOCK_MODE: "true" },
+        env: { GLADRAGS_MOCK_MODE: "true", GLADRAGS_E2E: "true" },
       },
 });

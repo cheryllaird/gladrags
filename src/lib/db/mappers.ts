@@ -4,7 +4,11 @@
  */
 import type { CreateItemRequest, ItemRow, ItemTags, Outfit, OutfitRow, WardrobeItem } from "@/contracts";
 
-export function itemRowToWardrobeItem(row: ItemRow, urls: { originalUrl: string; cutoutUrl: string }): WardrobeItem {
+/** Pass cutoutUrl: null when the row has no cutout_image_key. */
+export function itemRowToWardrobeItem(
+  row: ItemRow,
+  urls: { originalUrl: string; cutoutUrl: string | null },
+): WardrobeItem {
   return {
     id: row.id,
     source: row.source,

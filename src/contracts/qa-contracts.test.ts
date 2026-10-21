@@ -223,14 +223,19 @@ describe("checkRankedOutfits and the anchor item", () => {
     expect(checkRankedOutfits([named], known).valid[0]).toBe(named);
   });
 
-  // GAP (reported to the orchestrator): the spec says outfits "must include
-  // the anchor item if given", but the shared validator has no anchor
-  // parameter, so a ranked outfit without the anchor passes as valid. The
-  // outfit-engine must check this itself until the contract changes. This
-  // test pins today's behaviour so the gap is visible to the reviewer.
-  it("does NOT enforce the anchor today: an outfit without the anchor counts as valid", () => {
+  // Was a pinned gap: the spec says outfits "must include the anchor item if
+  // given". checkRankedOutfits now takes an optional anchorItemId.
+  it("rejects an outfit without the anchor when one is given", () => {
     const withoutAnchor = { itemIds: [ITEM_IDS.shirt, ITEM_IDS.chinos, ITEM_IDS.loafers] };
-    expect(checkRankedOutfits([withoutAnchor], known).valid).toHaveLength(1);
+    const withAnchor = { itemIds: [ITEM_IDS.dress, ITEM_IDS.loafers] };
+    const { valid, rejected } = checkRankedOutfits([withoutAnchor, withAnchor], known, { anchorItemId: ITEM_IDS.dress });
+    expect(valid).toEqual([withAnchor]);
+    expect(rejected[0]?.problem).toMatch(/anchor/);
+  });
+
+  it("doesn't require an anchor when none is given", () => {
+    const outfit = { itemIds: [ITEM_IDS.shirt, ITEM_IDS.chinos, ITEM_IDS.loafers] };
+    expect(checkRankedOutfits([outfit], known).valid).toHaveLength(1);
   });
 });
 

@@ -36,7 +36,8 @@ $$;
 revoke execute on function public.is_email_allowed(text) from public, anon, authenticated;
 grant execute on function public.is_email_allowed(text) to service_role;
 
--- Before an auth user is created: refuse emails that aren't on the allowlist.
+-- Before an auth user is created, or changes their email: refuse emails
+-- that aren't on the allowlist.
 create function public.enforce_email_allowlist()
 returns trigger
 language plpgsql
@@ -53,7 +54,7 @@ end;
 $$;
 
 create trigger enforce_email_allowlist
-  before insert on auth.users
+  before insert or update of email on auth.users
   for each row execute function public.enforce_email_allowlist();
 
 -- After an auth user is created: create their GladRags profile.
@@ -75,5 +76,25 @@ create trigger create_user_profile
   after insert on auth.users
   for each row execute function public.create_user_profile();
 
+-- After an (allowed) email change: keep the profile's copy in step.
+create function public.sync_user_email()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  update public.users set email = lower(new.email) where id = new.id;
+  return new;
+end;
+$$;
+
+create trigger sync_user_email
+  after update of email on auth.users
+  for each row
+  when (new.email is distinct from old.email)
+  execute function public.sync_user_email();
+
 revoke execute on function public.enforce_email_allowlist() from public, anon, authenticated;
 revoke execute on function public.create_user_profile() from public, anon, authenticated;
+revoke execute on function public.sync_user_email() from public, anon, authenticated;

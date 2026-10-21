@@ -24,5 +24,6 @@ export async function GET(request: Request) {
 
   const signIn = new URL("/sign-in", url.origin);
   signIn.searchParams.set("error", "link");
+  if (next !== "/") signIn.searchParams.set("next", next);
   return NextResponse.redirect(signIn);
 }

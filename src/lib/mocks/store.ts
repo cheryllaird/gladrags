@@ -8,8 +8,10 @@
  * real pipeline belongs to outfit-engine in src/lib/outfits/.
  */
 import {
+  LINK_IMPORT_TTL_SECONDS,
   missingCategoriesForOutfits,
   type Category,
+  type LinkProduct,
   type CreateItemRequest,
   type ItemDraft,
   type ItemListQuery,
@@ -25,11 +27,21 @@ import {
 import { MOCK_USER } from "@/lib/auth/session";
 import { MOCK_ITEMS, MOCK_OUTFIT_COPY, MOCK_SUGGESTED_TAGS, MOCK_UPLOAD_IMAGE_URL } from "./fixtures";
 
+export interface MockLinkImport {
+  userId: string;
+  sourceUrl: string;
+  product: LinkProduct;
+  createdAt: number;
+  tagged: boolean;
+}
+
 interface MockState {
   items: Map<string, WardrobeItem>;
   outfits: Map<string, Outfit>;
   /** Image key -> URL for drafts that haven't been saved yet. */
   draftImages: Map<string, string>;
+  /** Add-by-link step 1 results, by original image key (the link_imports table). */
+  linkImports: Map<string, MockLinkImport>;
   /** Rotates which combinations come back, so refining gives a new set. */
   generation: number;
 }
@@ -39,6 +51,7 @@ function freshState(): MockState {
     items: new Map(MOCK_ITEMS.map((item) => [item.id, structuredClone(item)])),
     outfits: new Map(),
     draftImages: new Map(),
+    linkImports: new Map(),
     generation: 0,
   };
 }
@@ -94,6 +107,8 @@ export function createDraft(options: {
   sourceUrl: string | null;
   hasCutout: boolean;
   originalImageKey?: string;
+  /** Simulate tagging failing twice (the empty-tags fallback). */
+  taggingFails?: boolean;
 }): ItemDraft {
   const originalImageKey = options.originalImageKey ?? newImageKey("jpg");
   const cutoutImageKey = options.hasCutout ? newImageKey("png") : null;
@@ -104,13 +119,40 @@ export function createDraft(options: {
     cutoutImageKey,
     originalUrl: MOCK_UPLOAD_IMAGE_URL,
     cutoutUrl: cutoutImageKey ? MOCK_UPLOAD_IMAGE_URL : null,
-    suggestedTags: clone(MOCK_SUGGESTED_TAGS),
+    suggestedTags: options.taggingFails ? null : clone(MOCK_SUGGESTED_TAGS),
   };
 }
 
-/** Link step 1 in mock mode: "store" the product image as the original. */
-export function storeLinkImage(): { originalImageKey: string; originalUrl: string } {
-  return { originalImageKey: newImageKey("jpg"), originalUrl: MOCK_UPLOAD_IMAGE_URL };
+/**
+ * Link step 1 in mock mode: "store" the product image as the original and
+ * remember the import, as the link_imports table does.
+ */
+export function storeLinkImport(
+  userId: string,
+  sourceUrl: string,
+  product: LinkProduct,
+): { originalImageKey: string; originalUrl: string } {
+  const originalImageKey = newImageKey("jpg");
+  state().linkImports.set(originalImageKey, {
+    userId,
+    sourceUrl,
+    product: clone(product),
+    createdAt: Date.now(),
+    tagged: false,
+  });
+  return { originalImageKey, originalUrl: MOCK_UPLOAD_IMAGE_URL };
+}
+
+/**
+ * Link step 2 in mock mode: claim the import once. Null if it doesn't
+ * exist, isn't this user's, has expired, or was already used.
+ */
+export function claimLinkImport(userId: string, originalImageKey: string): MockLinkImport | null {
+  const record = state().linkImports.get(originalImageKey);
+  if (!record || record.userId !== userId || record.tagged) return null;
+  if (Date.now() - record.createdAt > LINK_IMPORT_TTL_SECONDS * 1000) return null;
+  record.tagged = true;
+  return clone(record);
 }
 
 export function createItem(req: CreateItemRequest): WardrobeItem {
@@ -201,7 +243,8 @@ function generate(
 ): OutfitGenerationResponse {
   const s = state();
   const items = [...s.items.values()].filter((i) => !exclude.has(i.id));
-  const missing = missingCategoriesForOutfits(new Set(items.map((i) => i.tags.category)));
+  const anchorCategory = request.anchorItemId ? s.items.get(request.anchorItemId)?.tags.category : undefined;
+  const missing = missingCategoriesForOutfits(new Set(items.map((i) => i.tags.category)), anchorCategory);
   if (missing.length > 0) {
     return {
       status: "incomplete_wardrobe",

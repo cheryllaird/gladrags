@@ -82,8 +82,21 @@ function toApiException(error: unknown): ApiException {
     console.error(error.message);
     return new ApiException("server_misconfigured", "GladRags isn't set up correctly on the server yet");
   }
-  console.error("Unhandled API error", error);
+  console.error("Unhandled API error", describeError(error));
   return new ApiException("internal", "Something went wrong on our side");
+}
+
+/**
+ * What's safe to log about an unexpected error: its name, code and message.
+ * Never the whole object, which can carry request data, headers or keys
+ * (Supabase and fetch errors do).
+ */
+export function describeError(error: unknown): { name: string; code?: string; message: string } {
+  if (error instanceof Error) {
+    const code = (error as { code?: unknown }).code;
+    return { name: error.name, ...(typeof code === "string" ? { code } : {}), message: error.message };
+  }
+  return { name: typeof error, message: "Non-Error value thrown" };
 }
 
 /** Wrap a route handler so thrown errors become typed JSON error responses. */

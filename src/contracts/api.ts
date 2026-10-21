@@ -5,7 +5,7 @@
  * Errors from any route use ApiErrorSchema (see common.ts).
  */
 import { z } from "zod";
-import { IdSchema } from "./common";
+import { IdSchema, singleLineText } from "./common";
 import {
   CategorySchema,
   ColourSchema,
@@ -16,6 +16,7 @@ import {
   ItemTagsSchema,
   SourceUrlSchema,
   WardrobeItemSchema,
+  emptyToNull,
 } from "./item";
 import { OutfitSchema, OutfitStatusSchema } from "./outfit";
 import { PresetStyleIdSchema } from "./styles";
@@ -145,11 +146,27 @@ export const PhotoUploadFieldsSchema = z.object({
 export const LinkImportRequestSchema = z.object({ url: SourceUrlSchema });
 export type LinkImportRequest = z.infer<typeof LinkImportRequestSchema>;
 
+/**
+ * Text scraped from a web page, on its way into a model prompt: whitespace
+ * (including newlines) collapsed to single spaces, cut to `max` characters,
+ * and "" read as null. After that it must be a single line, like every
+ * other prompt-bound text.
+ */
+export function scrapedText(max: number) {
+  return z.preprocess((value) => {
+    if (typeof value !== "string") return emptyToNull(value);
+    const flat = value.replace(/\s+/g, " ").trim().slice(0, max).trim();
+    return flat === "" ? null : flat;
+  }, singleLineText(max).nullable());
+}
+
+export const LINK_PRODUCT_LIMITS = { title: 200, brand: 80, colour: 60 } as const;
+
 /** What the product page told us. Any field may be missing. */
 export const LinkProductSchema = z.object({
-  title: z.string().max(300).nullable(),
-  brand: z.string().max(100).nullable(),
-  colour: z.string().max(100).nullable(),
+  title: scrapedText(LINK_PRODUCT_LIMITS.title),
+  brand: scrapedText(LINK_PRODUCT_LIMITS.brand),
+  colour: scrapedText(LINK_PRODUCT_LIMITS.colour),
 });
 export type LinkProduct = z.infer<typeof LinkProductSchema>;
 
@@ -163,9 +180,18 @@ export const LINK_FALLBACK_REASONS = [
 export const LINK_IMAGE_URL_TTL_SECONDS = 10 * 60;
 
 /**
+ * How long a step-1 import can wait for step 2. After this, or once step 2
+ * has run, the import is spent and step 2 answers not_found.
+ */
+export const LINK_IMPORT_TTL_SECONDS = 60 * 60;
+
+/**
  * Step 1 result. `ok`: the server fetched the page, downloaded the product
- * image (resized to ≤ 1600 px, EXIF stripped) and stored it as the original.
- * The client loads `originalUrl`, cuts the item out, and calls step 2.
+ * image (resized to ≤ 1600 px, EXIF stripped), stored it as the original,
+ * and recorded the import (source URL and product data) in the
+ * link_imports table. The client loads `originalUrl`, cuts the item out,
+ * and calls step 2. `product` is for display only: step 2 uses the
+ * server's own copy.
  *
  * `needs_screenshot` is the spec's fallback: ask for a screenshot of the
  * product and send it to POST /api/items/photo with this `sourceUrl`.
@@ -190,16 +216,18 @@ export type LinkImportResponse = z.infer<typeof LinkImportResponseSchema>;
 
 /**
  * POST /api/items/link/cutout (multipart), step 2 of 2: attach the cut-out
- * and tag the item. Text field `meta` is JSON matching this schema (echo
- * back the step-1 values). File `cutout` is optional: leave it out if
- * background removal failed, and the server tags the original instead.
- * Returns ItemDraftResponseSchema.
+ * and tag the item. Text field `meta` is JSON matching this schema: just
+ * the step-1 `originalImageKey`, which identifies the import. The server
+ * looks up the source URL and product data it stored in step 1; anything
+ * else the client sends is ignored. File `cutout` is optional: leave it out
+ * if background removal failed, and the server tags the original instead.
+ *
+ * Single use: each import can be tagged once. A second call, an expired
+ * import, or someone else's key gets not_found. Counts one item_ingest
+ * against the daily cap. Returns ItemDraftResponseSchema.
  */
 export const LinkCutoutMetaSchema = z.object({
-  sourceUrl: SourceUrlSchema,
   originalImageKey: ImageKeySchema,
-  /** Used as hints for tagging only; never shown as tags without review. */
-  product: LinkProductSchema,
 });
 export type LinkCutoutMeta = z.infer<typeof LinkCutoutMetaSchema>;
 

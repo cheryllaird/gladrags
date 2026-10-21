@@ -16,6 +16,7 @@ import {
   SubcategorySchema,
   WarmthSchema,
 } from "./item";
+import { LinkProductSchema } from "./api";
 import { FeedbackKindSchema } from "./feedback";
 import { OutfitStatusSchema, StoredOutfitRequestSchema } from "./outfit";
 import { PresetStyleIdSchema } from "./styles";
@@ -76,6 +77,18 @@ export const OutfitFeedbackRowSchema = z.object({
   created_at: DbTimestampSchema,
 });
 export type OutfitFeedbackRow = z.infer<typeof OutfitFeedbackRowSchema>;
+
+/** Add-by-link step 1, waiting for step 2. Server only. */
+export const LinkImportRowSchema = z.object({
+  id: IdSchema,
+  user_id: IdSchema,
+  source_url: z.string(),
+  original_image_key: ImageKeySchema,
+  product: LinkProductSchema,
+  created_at: DbTimestampSchema,
+  tagged_at: DbTimestampSchema.nullable(),
+});
+export type LinkImportRow = z.infer<typeof LinkImportRowSchema>;
 
 export const UsageEventRowSchema = z.object({
   id: IdSchema,

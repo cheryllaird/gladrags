@@ -1,5 +1,5 @@
 /**
- * Background removal runs IN THE BROWSER (spec change, 2026-10-21): there is
+ * Background removal runs IN THE BROWSER (spec: "Add by photo"): there is
  * no hosted service and no server-side cost. This interface keeps the model
  * swappable. The ingestion agent builds the implementation in milestone 3.
  *

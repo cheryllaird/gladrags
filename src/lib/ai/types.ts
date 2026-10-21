@@ -25,6 +25,8 @@ export interface ModelCall {
   provider: string;
   /** Model name, for logs. */
   model: string;
+  /** Set (by callWithValidation) when the provider threw instead of returning. */
+  error?: string;
 }
 
 // ---------------------------------------------------------------------------

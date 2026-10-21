@@ -27,6 +27,8 @@ import { ApiException } from "./errors";
 export interface UploadedImage {
   data: Uint8Array;
   mimeType: AcceptedImageType;
+  /** The file name the phone sent. Untrusted: for logs and mock markers only, never for storage keys. */
+  name: string;
 }
 
 interface ImageFieldRules {
@@ -68,7 +70,7 @@ async function readImage(form: FormData, field: string, rules: ImageFieldRules, 
     const allowed = rules.allowedTypes.map((t) => t.replace("image/", "").toUpperCase()).join(", ");
     throw fieldError(field, `The ${rules.label} must be ${allowed}`, `Unsupported file type`);
   }
-  return { data, mimeType };
+  return { data, mimeType, name: value.name };
 }
 
 export interface PhotoUpload {

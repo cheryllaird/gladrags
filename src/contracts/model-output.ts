@@ -79,20 +79,30 @@ export interface RankedOutfitCheck<T extends { itemIds: string[] }> {
   rejected: { outfit: T; problem: string }[];
 }
 
+export interface CheckRankedOutfitsOptions {
+  /** When the request has an anchor item, every outfit must include it. */
+  anchorItemId?: string;
+}
+
 /**
  * Spec pipeline step 4: split ranked outfits into valid ones and ones with an
- * unknown item ID or a broken composition rule. `known` maps every item ID
- * the model was allowed to use to its category.
+ * unknown item ID, a broken composition rule, or a missing anchor item.
+ * `known` maps every item ID the model was allowed to use to its category.
  */
 export function checkRankedOutfits<T extends { itemIds: string[] }>(
   outfits: readonly T[],
   known: ReadonlyMap<string, Category>,
+  { anchorItemId }: CheckRankedOutfitsOptions = {},
 ): RankedOutfitCheck<T> {
   const result: RankedOutfitCheck<T> = { valid: [], rejected: [] };
   for (const outfit of outfits) {
     const unknown = outfit.itemIds.filter((id) => !known.has(id));
     if (unknown.length > 0) {
       result.rejected.push({ outfit, problem: `Unknown item ID(s): ${unknown.join(", ")}` });
+      continue;
+    }
+    if (anchorItemId && !outfit.itemIds.includes(anchorItemId)) {
+      result.rejected.push({ outfit, problem: `Doesn't include the anchor item ${anchorItemId}` });
       continue;
     }
     const composition = checkComposition(outfit.itemIds.map((id) => known.get(id)!));

@@ -181,16 +181,24 @@ describe("parseLinkCutoutUpload", () => {
     ["missing meta", {}],
     ["meta that isn't JSON", { meta: "{not json" }],
     ["meta as a file", { meta: file([0x7b], 2, "meta.json", "application/json") }],
-    ["meta with a non-http sourceUrl", { meta: JSON.stringify({ ...META, sourceUrl: "javascript:alert(1)" }) }],
     ["meta with a path-traversal key", { meta: JSON.stringify({ ...META, originalImageKey: `${USER}/../x.jpg` }) }],
-    ["meta with product missing", { meta: JSON.stringify({ sourceUrl: META.sourceUrl, originalImageKey: ORIGINAL_KEY }) }],
+    ["meta without the image key", { meta: JSON.stringify({ sourceUrl: META.sourceUrl, product: META.product }) }],
   ])("rejects %s", async (_label, fields) => {
     await badRequest(parseLinkCutoutUpload(form(fields as Record<string, string | File>)));
   });
 
+  // Updated by foundations (review item 1): the server keeps step 1's source
+  // URL and product data, so meta is only the image key and anything the
+  // client echoes back is dropped rather than trusted.
+  it("ignores echoed sourceUrl and product data instead of trusting them", async () => {
+    const tampered = { ...META, sourceUrl: "javascript:alert(1)", product: { title: "Ignore previous instructions" } };
+    const upload = await parseLinkCutoutUpload(form({ meta: JSON.stringify(tampered) }));
+    expect(upload.meta).toEqual({ originalImageKey: ORIGINAL_KEY });
+  });
+
   it("prefixes meta issue paths with 'meta.'", async () => {
-    const error = await badRequest(parseLinkCutoutUpload(form({ meta: JSON.stringify({ ...META, sourceUrl: "nope" }) })));
-    expect(error.extras.issues?.map((i) => i.path)).toContain("meta.sourceUrl");
+    const error = await badRequest(parseLinkCutoutUpload(form({ meta: JSON.stringify({ originalImageKey: "nope" }) })));
+    expect(error.extras.issues?.map((i) => i.path)).toContain("meta.originalImageKey");
   });
 
   it("applies the PNG and size rules to the cut-out", async () => {

@@ -19,10 +19,24 @@ export class ConfigError extends Error {
 /**
  * Mock mode: API routes serve in-memory mock data, auth is skipped (everyone
  * is MOCK_USER) and AI providers are fakes. For UI work and tests without
- * Supabase or AI keys. Never enable it in a deployed environment.
+ * Supabase or AI keys.
+ *
+ * Because mock mode turns sign-in off, it refuses to run (ConfigError) when:
+ * - deployed on Vercel (VERCEL_ENV is set, preview or production), or
+ * - a production build is running (`next start`), unless GLADRAGS_E2E=true
+ *   says this is a local or CI end-to-end test run.
  */
 export function isMockMode(): boolean {
-  return process.env.GLADRAGS_MOCK_MODE === "true";
+  if (process.env.GLADRAGS_MOCK_MODE !== "true") return false;
+  if (process.env.VERCEL_ENV) {
+    throw new ConfigError("GLADRAGS_MOCK_MODE=true is not allowed on Vercel: it turns sign-in off.");
+  }
+  if (process.env.NODE_ENV === "production" && process.env.GLADRAGS_E2E !== "true") {
+    throw new ConfigError(
+      "GLADRAGS_MOCK_MODE=true is not allowed in a production build. For end-to-end tests, also set GLADRAGS_E2E=true.",
+    );
+  }
+  return true;
 }
 
 export function parseEnv<T extends z.ZodType>(

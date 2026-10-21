@@ -100,6 +100,13 @@ export const DESCRIPTION_MAX_LENGTH = 120;
 // Item tags
 // ---------------------------------------------------------------------------
 
+/** For optional text: "", whitespace-only and missing all become null. */
+export function emptyToNull(value: unknown): unknown {
+  if (value === undefined) return null;
+  if (typeof value === "string" && value.trim() === "") return null;
+  return value;
+}
+
 function uniqueArray<T extends z.ZodType>(item: T, min: number, max: number) {
   return z
     .array(item)
@@ -120,8 +127,11 @@ const itemTagsShape = {
   warmth: WarmthSchema,
   /** Preset styles this item suits. */
   occasions: uniqueArray(PresetStyleIdSchema, 1, 9),
-  /** Main fabric where visible ("denim", "wool"), otherwise null. */
-  fabric: singleLineText(FABRIC_MAX_LENGTH).nullable(),
+  /**
+   * Main fabric where visible ("denim", "wool"), otherwise null. An empty
+   * or missing value (models often send "") is read as null.
+   */
+  fabric: z.preprocess(emptyToNull, singleLineText(FABRIC_MAX_LENGTH).nullable()),
   /** One line, e.g. "Navy slim-fit chinos". Searchable in the wardrobe. */
   description: singleLineText(DESCRIPTION_MAX_LENGTH),
 };

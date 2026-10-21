@@ -211,12 +211,9 @@ describe("£5/month AI spend cap", () => {
     expect(await guard.isAiPaused()).toBe(true);
   });
 
-  // BUG (low; reported): InMemoryUsageStore sums pence as JS floats, so
-  // 2500 x 0.2p = 499.99999999998p and the cap is never reached at exactly
-  // £5. Postgres numeric sums exactly, so production is fine; mock mode and
-  // tests drift. `it.fails` keeps the suite green: when the store is fixed
-  // (e.g. sum in integer ten-thousandths of a penny), flip this to `it`.
-  it.fails("reaches the cap from estimated costs alone (2500 tagging calls at 0.2p)", async () => {
+  // Was pinned with it.fails (float drift: 2500 x 0.2p summed to
+  // 499.99999999998p). Fixed by summing in ten-thousandths of a penny.
+  it("reaches the cap from estimated costs alone (2500 tagging calls at 0.2p)", async () => {
     const { guard } = setup("2026-10-21T10:00:00Z");
     for (let i = 0; i < 2499; i++) await guard.recordAiCost(i % 2 ? ALICE : BOB, "tagging");
     expect(await guard.isAiPaused()).toBe(false);
