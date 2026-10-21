@@ -60,7 +60,7 @@ A branch merges into `main` only when all of these hold:
 ## Engineering rules
 
 - TypeScript strict mode. Validate every external input (requests, model output, scraped pages) with Zod from `src/contracts/`.
-- AI providers sit behind interfaces in `src/lib/ai/` and `src/lib/images/`, so Gemini and the background-removal service can be swapped. Model output is never trusted: validate, retry once, then fall back as the spec says.
+- AI providers sit behind interfaces in `src/lib/ai/` and `src/lib/images/`, so Gemini and the in-browser background remover can be swapped. Model output is never trusted: validate, retry once, then fall back as the spec says.
 - No real AI or network calls in unit tests. Use recorded fixtures. Journey tests run against mocked providers by default.
 - Enforce the per-user daily caps and the £5/month AI spend cap in code (spec: Cost controls).
 - Mobile first: design and test at a 390 px wide viewport.
@@ -78,7 +78,6 @@ List any of these that are still missing when you reach a step that needs them:
 
 - Supabase project URL, anon key and service role key.
 - Gemini API key (free tier is fine for development; switch to paid before testers join).
-- Background-removal API key (e.g. Replicate).
 - Vercel project linked to this repo, with the same environment variables.
 - Tester email allowlist.
 

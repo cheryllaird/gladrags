@@ -52,10 +52,11 @@ Every item ends up as a clean cut-out image plus structured tags, whichever way 
 
 ### Add by photo
 
-1. User takes a photo or picks one from the camera roll. The client resizes it to max 1600 px before upload.
-2. Server removes the background and stores both the original and the cut-out.
-3. A vision model returns tags as strict JSON (schema below).
-4. User sees the cut-out and pre-filled tags, can correct any, and saves.
+1. User takes a photo or picks one from the camera roll. The client resizes it to max 1600 px.
+2. The client removes the background in the browser and uploads both the original and the cut-out. If removal fails (an older or low-memory phone, say), it uploads the original alone and the item uses the original image wherever a cut-out would appear.
+3. Server strips EXIF, validates both images and stores them.
+4. A vision model returns tags as strict JSON (schema below), working from the cut-out where there is one.
+5. User sees the cut-out and pre-filled tags, can correct any, and saves.
 
 One item per photo in v1. Photos of several items at once are out of scope.
 
@@ -63,7 +64,7 @@ One item per photo in v1. Photos of several items at once are out of scope.
 
 1. User pastes a product URL (or shares it to the PWA from their browser).
 2. Server fetches the page and reads structured product data (Open Graph tags, schema.org Product JSON-LD) for title, brand, image and colour.
-3. The product image goes through the same cut-out and tagging steps.
+3. Server downloads the product image and stores it as the original. The client then cuts it out in the browser and uploads the cut-out, which triggers tagging.
 4. **Fallback** when the site blocks fetching or has no usable data: ask the user to upload a screenshot of the product, which then goes down the photo route.
 
 The source URL is kept on the item.
@@ -132,7 +133,7 @@ Four tables in Postgres. Images live in object storage and are referenced by key
 | Table | Key fields |
 | --- | --- |
 | users | id, email, display_name, created_at |
-| items | id, user_id, source (photo, link), source_url, original_image_key, cutout_image_key, category, subcategory, colours[], pattern, formality (1–5), seasons[], warmth, occasions[], fabric, description, tags_edited (bool), created_at |
+| items | id, user_id, source (photo, link), source_url, original_image_key, cutout_image_key (null if background removal failed), category, subcategory, colours[], pattern, formality (1–5), seasons[], warmth, occasions[], fabric, description, tags_edited (bool), created_at |
 | outfits | id, user_id, request (style, guidance, anchor_item_id), name, reason, item_ids[], status (suggested, saved, liked, rejected), parent_outfit_id (for refinements), created_at |
 | outfit_feedback | id, outfit_id, user_id, kind (swap, guidance, reject), detail, created_at |
 
@@ -140,19 +141,19 @@ The tagging model must return JSON that validates against the items schema (a sh
 
 ## Architecture and stack
 
-One Next.js app on Vercel, with Supabase for auth, database and image storage, and two external AI services. That keeps the moving parts few enough for a prototype.
+One Next.js app on Vercel, with Supabase for auth, database and image storage, and one external AI service (Gemini). Background removal runs on the user's phone. That keeps the moving parts few enough for a prototype.
 
 | Layer | Choice | Why |
 | --- | --- | --- |
 | App | Next.js (App Router) + TypeScript, deployed as a PWA on Vercel | One codebase; camera upload and "add to home screen" work on phones |
 | UI | Tailwind CSS + shadcn/ui | Fast to build, easy for agents to keep consistent |
 | Auth, DB, storage | Supabase (email magic link, Postgres, Storage) | One service for three needs; row-level security keeps each tester's wardrobe private |
-| Background removal | Hosted model via API (e.g. a rembg-style model on Replicate), behind an interface so it can be swapped | No ML hosting to run ourselves |
+| Background removal | In the browser, using an open-source segmentation model run on the phone (WebAssembly/WebGPU), behind an interface so it can be swapped | Free, no extra API key, and photos aren't sent to another third party; the model downloads once and is cached |
 | Tagging and outfit ranking | Gemini API (a Flash model): vision for tagging, ranking in two passes, structured JSON output. Behind a provider interface so it can be swapped | Free tier for development; ranking shortlists on tags and only sends thumbnails for the shortlist, so it stays cheap |
 | Link import | Server-side fetch + Open Graph / JSON-LD parsing | No scraping service needed for v1 |
 | Testing | Vitest for logic, Playwright for the core journeys on a mobile viewport | Gives review agents something to run |
 
-**Cost controls:** each tester gets a daily cap on new items and outfit requests. Tags are generated once per item and stored. Outfit requests send images only for the shortlist, as small thumbnails, which keeps image costs bounded. Real per-request costs get measured in the first tester week. Total AI spend (Gemini plus background removal) is capped at £5 a month during testing. Budget alerts fire at 50% and 90%, but they don't stop charges, so the app tracks its own spend and pauses AI features when the cap is reached. Bring-your-own API key is a later option (see Scope).
+**Cost controls:** each tester gets a daily cap on new items and outfit requests. Tags are generated once per item and stored. Outfit requests send images only for the shortlist, as small thumbnails, which keeps image costs bounded. Real per-request costs get measured in the first tester week. Total AI spend (Gemini) is capped at £5 a month during testing. Budget alerts fire at 50% and 90%, but they don't stop charges, so the app tracks its own spend and pauses AI features when the cap is reached. Bring-your-own API key is a later option (see Scope).
 
 ## Privacy and security
 
@@ -164,7 +165,7 @@ Even with only a few testers, photos can be taken in someone's bedroom, so treat
 - Strip EXIF data (including location) from uploads before storing them.
 - Users can delete an item and its images, or delete their whole account and data.
 - Secrets live only in environment variables (`.env.local` locally, Vercel in deployment), never in the repo.
-- A one-page privacy note for testers listing the third-party services that see their images (background removal, Google Gemini). Switch Gemini to the paid tier before testers join: on the free tier, Google can use prompts and images to improve its products.
+- A one-page privacy note for testers listing the third-party services that see their images (Google Gemini; background removal runs on their phone, so it sees nothing). Switch Gemini to the paid tier before testers join: on the free tier, Google can use prompts and images to improve its products.
 - Body photos for try-on are out of v1 entirely, which avoids the most sensitive data until it's needed.
 
 ## Agent swarm build plan
@@ -203,6 +204,7 @@ A branch merges only when it is reviewed, tests pass, and it has no changes to a
 - v1 outfits use clothes and shoes only; bags and accessories come later.
 - For men and women: categories and the collage layout cover menswear and womenswear.
 - Supabase for auth, database and storage; Gemini API for tagging and ranking. Cheryl owns both accounts and keys.
+- Background removal runs in the browser, not through a hosted service (decided 2026-10-21, replacing Replicate). The model and runtime must have a licence that allows use in this app; check with Cheryl before using anything copyleft (e.g. AGPL) or non-commercial.
 - Code lives in this private repo, `cheryllaird/gladrags`.
 - AI costs capped at £5 a month during testing.
 
