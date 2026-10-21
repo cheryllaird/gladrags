@@ -20,19 +20,36 @@ The code is the precise version: Zod schemas in `src/contracts/`, SQL in `supaba
 
 Set `GLADRAGS_MOCK_MODE=true` and the app runs with no accounts at all:
 
-- Sign-in is skipped. Everyone is a fixed mock user, and in this mode any 6-digit code "works".
+- Sign-in is skipped. Everyone is a fixed mock user, and in this mode any code of 6 to 10 digits "works".
 - The API routes serve an in-memory wardrobe of 12 items covering every category, menswear and womenswear. One of them (the camel coat) has no cut-out, so the UI's fallback path gets exercised.
 - Adding, editing, deleting, outfit requests, swaps and saves all work, and reset when the server restarts.
 
 The UI agents build against mock mode until the backend branches merge. Outside mock mode the stub routes refuse with `not_implemented`, so a deployed build can never hand out the shared mock data.
 
+Because mock mode turns sign-in off, the app refuses to start in it on Vercel, or in a production build (`pnpm start`), and reports a configuration error. The one exception is end-to-end tests, which set `GLADRAGS_E2E=true` to run mock mode against `pnpm start`.
+
 Try it: `GLADRAGS_MOCK_MODE=true pnpm dev`, then open <http://localhost:3000> or <http://localhost:3000/api/items>.
+
+**Markers for the error and fallback states.** Put one of these texts where the mock routes look, and they answer as if it really happened:
+
+| Marker | Result |
+| --- | --- |
+| `mock-no-tags` | The draft comes back with `suggestedTags: null`: tagging failed twice, so the user fills the tags in |
+| `mock-ai-paused` | `503 ai_paused`: the monthly AI spend cap is reached |
+| `mock-daily-cap` | `429 daily_cap_reached`: today's cap for that action is used up |
+
+Where to put them:
+- Add by photo: in the original file's name, e.g. `shirt-mock-no-tags.jpg`.
+- Add by link: anywhere in the URL, e.g. `https://shop.example.com/p?x=mock-ai-paused`.
+- Outfits and refinements: in the guidance or the custom style text.
+
+On top of that, a link whose host contains `blocked`, `nodata` or `noimage` gives the screenshot fallback, with that reason.
 
 ---
 
 ## 2. Data model
 
-Five tables in Postgres: the spec's four, plus `usage_events`. Row-level security (RLS) is on for every table: a signed-in user can only see and change their own rows. Signed-out visitors get nothing.
+Seven tables in Postgres: the spec's four (`users`, `items`, `outfits`, `outfit_feedback`), plus three the server needs: `usage_events`, `allowed_emails` and `link_imports`. Row-level security (RLS) is on for every table. Signed-out visitors get nothing. A signed-in user can only see and change their own rows in the spec's four tables, and can read their own `usage_events`. The other two tables are server-only.
 
 ### users
 | Field | Notes |
@@ -82,7 +99,7 @@ Feedback is append-only: users can't edit or delete it. Rejections become "avoid
 **[Decision]** One row per capped action or Gemini call: `kind`, `cost_pence` and `provider`. It backs the daily caps and the £5/month cap (section 7). Only the server can write here, so users can't reset their own counters. When an account is deleted its rows are kept but unlinked, so the month's spend still counts.
 
 ### allowed_emails (the tester allowlist)
-**[Decision]** The allowlist is a table, not an environment variable. A trigger on Supabase's auth table refuses to create an account for any other email. That holds even if someone calls Supabase's auth API directly with the public key, which an env-var check in our code couldn't stop. Only the server can read it.
+**[Decision]** The allowlist is a table, not an environment variable. A trigger on Supabase's auth table refuses to create an account for any other email, or to change an account's email to one that isn't listed. That holds even if someone calls Supabase's auth API directly with the public key, which an env-var check in our code couldn't stop. Only the server can read it.
 
 Add a tester in the Supabase SQL editor:
 
@@ -90,8 +107,11 @@ Add a tester in the Supabase SQL editor:
 insert into public.allowed_emails (email, note) values ('someone@example.com', 'tester');
 ```
 
+### link_imports (add-by-link in progress)
+One row per add-by-link step 1: the source URL, the product data the server read, the stored image's key, and `tagged_at`. Step 2 claims the row in one statement, and only if it's unused, under an hour old, and the user's own. So each link can be tagged once, and step 2 uses what the server read rather than anything the phone sends back. Server-only.
+
 ### Image storage
-Two private buckets, `originals` and `cutouts`. Object names are `<user id>/<random id>.<ext>`, and a user can only reach their own folder. Images are served through signed URLs that expire: one hour for wardrobe and outfit images, and 10 minutes for the product image in add-by-link.
+Two private buckets, `originals` and `cutouts`. Object names are `<user id>/<random id>.<ext>`. Only the server writes images, after checking them and stripping EXIF. A signed-in user can read and delete objects in their own folder, but can't upload or change them directly. Images are served through signed URLs that expire: one hour for wardrobe and outfit images, and 10 minutes for the product image in add-by-link.
 
 ---
 
@@ -111,12 +131,12 @@ Two private buckets, `originals` and `cutouts`. Object names are `<user id>/<ran
 | seasons | 1 to 4 of `spring`, `summer`, `autumn`, `winter`. All four means all year. **[Decision]** |
 | warmth | `light` (linen shirt, sandals), `medium` (jeans, cotton jumper), `warm` (wool coat, chunky knit) **[Decision]** |
 | occasions | At least one of the nine preset style IDs (section 4) |
-| fabric | Short text such as "denim", or empty if it can't be seen |
+| fabric | Short text such as "denim", or empty if it can't be seen. A blank or missing value from the model counts as empty. |
 | description | One line of at most 120 characters, such as "Navy slim-fit chinos". Wardrobe search uses it. |
 
 The spec lists subcategories as "t-shirt" and so on. In code they're lower-case IDs with underscores (`t_shirt`), and the UI shows friendly labels.
 
-Text fields are single-line. That stops a model or a user smuggling extra instructions into later prompts.
+Every text field that can reach a model prompt (tags, guidance, custom styles, scraped product data) is a single line with a length limit. That stops anyone adding new lines that look like separate prompt sections. It does **not** stop prompt injection on its own: "Ignore previous instructions" fits on one line. The prompts themselves must treat user and scraped text as data, and the outputs are checked against these schemas, which limits what a successful injection could do.
 
 ---
 
@@ -152,7 +172,7 @@ The rule is one shared function, `checkComposition`. The outfit engine uses it b
 
 ### When outfits can't be made
 This isn't an error. The response says `incomplete_wardrobe`, with one of two reasons:
-- `missing_category`: no valid combination exists at all. It also lists what to add, e.g. `["shoes"]`, or `["top", "bottom"]` if there are no separates and no dresses.
+- `missing_category`: no valid combination exists at all. It also lists what to add, e.g. `["shoes"]`, or `["top", "bottom"]` if there are no separates and no dresses. With an anchor item, the list is about outfits that include the anchor. For example, building around a top with no bottoms in the wardrobe gives `["bottom"]`, even if there's a dress, because the dress can't be worn with the top. The shared function `missingCategoriesForOutfits(present, anchorCategory)` works this out.
 - `nothing_fits`: combinations exist, but none suit this style or anchor.
 
 ---
@@ -184,7 +204,7 @@ All routes are under `/api` and return JSON. Every route except the sign-in ones
 | Route | Send | Get back |
 | --- | --- | --- |
 | `POST /api/auth/magic-link` | `{ email, next? }` | `{ sent: true }`, or `not_invited` |
-| `POST /api/auth/verify-code` | `{ email, code, next? }` (code is 6 digits) | `{ signedIn: true, next }` |
+| `POST /api/auth/verify-code` | `{ email, code, next? }`. The code is whatever Supabase emails: 6 digits by default, and the route accepts 6 to 10 because Supabase lets the length be changed. | `{ signedIn: true, next }` |
 | `POST /api/auth/sign-out` | nothing | `{ signedOut: true }`. A plain HTML form post is redirected to /sign-in instead. |
 | `GET /auth/callback?code=…` | (link from the default email) | Signs in, then redirects to `next` |
 | `GET /auth/confirm?token_hash=…&type=email` | (link from a customised email) | Signs in, then redirects to `next` |
@@ -206,7 +226,7 @@ A **WardrobeItem** is `{ id, source, sourceUrl, originalUrl, cutoutUrl (or null)
 
 ### Add by photo (stub; owner: ingestion)
 On the phone:
-1. Resize the photo to at most 1600 px on its longest side.
+1. Resize the photo to at most 1600 px on its longest side, and re-encode it as JPEG. iPhones take HEIC photos by default, and the server rejects HEIC.
 2. Try to cut the item out in the browser.
 3. Upload. If the cut-out failed (old or low-memory phones), upload without one.
 
@@ -219,11 +239,13 @@ On the phone:
 | `sourceUrl` | no | Set for the screenshot fallback from add-by-link, so the item keeps its link |
 
 On the server:
-1. Check each file's real type from its bytes, not the name the phone gives it. Check size and pixel dimensions too.
-2. Strip EXIF data, including location, from both images.
-3. Store both in the private buckets.
-4. Tag the cut-out if there is one, otherwise the original.
-5. Return `{ draft }`.
+1. Check the daily item cap, and count this item: tagging happens in this request.
+2. Check each file's real type from its bytes, not the name the phone gives it. HEIC, GIF and anything else are refused. Check size and pixel dimensions too.
+3. Check the cut-out really has an alpha (transparency) channel. A PNG without one isn't a cut-out, so it's treated as missing. (The stub can't check this yet; the ingestion agent adds it with the image decoder.)
+4. Strip EXIF data, including location, from both images.
+5. Store both in the private buckets.
+6. Tag the cut-out if there is one, otherwise the original.
+7. Return `{ draft }`.
 
 A **draft** is `{ source, sourceUrl, originalImageKey, cutoutImageKey (or null), originalUrl, cutoutUrl (or null), suggestedTags (or null) }`. If tagging fails twice, `suggestedTags` is null and the user fills the tags in. The user reviews the draft and saves it with `POST /api/items`.
 
@@ -232,29 +254,35 @@ A **draft** is `{ source, sourceUrl, originalImageKey, cutoutImageKey (or null),
 ### Add by link, two steps (stubs; owner: link-import)
 **Step 1:** `POST /api/items/link` with `{ url }`.
 
-The server fetches the page, reads the product data, downloads the product image, resizes it, strips EXIF and stores it as the original. It returns either:
-- `{ status: "ok", sourceUrl, originalImageKey, originalUrl, product: { title, brand, colour } }`. Here `originalUrl` is a signed URL that lasts 10 minutes.
+The server first checks the daily item cap, so a user at their limit isn't sent through step 2 for nothing. It doesn't count the item yet; no AI runs in this step. It then fetches the page, reads the product data, downloads the product image, resizes it, strips EXIF and stores it as the original. It records the import (source URL and product data) in `link_imports`, and returns either:
+- `{ status: "ok", sourceUrl, originalImageKey, originalUrl, product: { title, brand, colour } }`. Here `originalUrl` is a signed URL that lasts 10 minutes. `product` is for display only.
 - `{ status: "needs_screenshot", reason, sourceUrl, message }`. The reason is `fetch_blocked`, `no_product_data` or `no_image`. The phone asks for a screenshot and sends it through add-by-photo with `sourceUrl`, so the item keeps its link.
+
+Scraped product text is cleaned before it's used: line breaks are flattened to spaces, it's trimmed and length-limited (title 200, brand 80, colour 60 characters), and blanks become empty.
 
 **Step 2:** the phone loads `originalUrl`, cuts the item out, and calls `POST /api/items/link/cutout`, as a multipart form:
 
 | Field | Required | Rules |
 | --- | --- | --- |
-| `meta` | yes | JSON text: `{ sourceUrl, originalImageKey, product }`, echoed back from step 1 |
+| `meta` | yes | JSON text: `{ originalImageKey }` from step 1. Anything else in it is ignored. |
 | `cutout` | no | PNG, as for add-by-photo. Leave it out if removal failed. |
 
-The server checks the image is the user's, stores the cut-out, and tags it (or the original). It uses the product title, brand and colour as hints. It returns `{ draft }`, exactly as add-by-photo does.
+The server:
+1. Checks the daily item cap.
+2. Claims the import: it must be the user's, unused, and less than an hour old. Otherwise the answer is `404 not_found`, meaning "paste the link again". **Each import can be tagged only once**, so replaying step 2 can't run Gemini again.
+3. Counts the item against the daily cap.
+4. Checks and stores the cut-out.
+5. Tags the cut-out (or the original), using the product title, brand and colour **it stored in step 1** as hints. It never uses data the phone sends back.
+6. Returns `{ draft }`, exactly as add-by-photo does.
 
-The daily item cap counts once, at step 1.
-
-Mock mode shows every state. A link whose host contains `blocked`, `nodata` or `noimage` gives `needs_screenshot`; anything else gives `ok`.
+An import that's never finished leaves an unused image in storage. The link-import agent should clear out old unused imports and their images.
 
 Android can "share" a product page straight to the installed app; it opens `/add/link?url=…` (a wardrobe-ui page). iPhone doesn't support this, so users paste the link.
 
 ### Outfits (stubs; owner: outfit-engine)
 | Route | Send | Get back |
 | --- | --- | --- |
-| `POST /api/outfits` | The outfit request (section 4) | `{ status: "ok", outfits }` or `{ status: "incomplete_wardrobe", reason, missingCategories, message }` |
+| `POST /api/outfits` | The outfit request (section 4) | `{ status: "ok", outfits }` or `{ status: "incomplete_wardrobe", reason, missingCategories, message }`. `missingCategories` takes the anchor item into account (see section 4). |
 | `GET /api/outfits?status=saved` | `status` optional | `{ outfits }`, newest first |
 | `GET /api/outfits/:id` | | `{ outfit }` |
 | `PATCH /api/outfits/:id` | `{ status: "saved" }`, `"liked"`, `"suggested"`, or `{ status: "rejected", reason? }` | `{ outfit }`. Rejecting also records feedback. |
@@ -277,9 +305,27 @@ The model's output is never trusted. Each reply is checked against a schema. If 
 - **Tagging:** exactly the item tags from section 3.
 - **Ranking pass 1 (tags only):** `{ outfits: [{ itemIds }] }`, 1 to 10 outfits.
 - **Ranking pass 2 (with ~256 px thumbnails):** `{ outfits: [{ itemIds, name, reason }] }`, 1 to 5. The name is up to 40 characters and the reason up to 160.
-- After parsing, `checkRankedOutfits` throws out any outfit that uses an item ID the model wasn't given, or that breaks the composition rule.
+- After parsing, `checkRankedOutfits` throws out any outfit that uses an item ID the model wasn't given, breaks the composition rule, or (when the request has an anchor item) leaves the anchor out.
 
-The tests include recorded bad replies: an invented "accessory" category, a colour like "dusty heather", formality as a word, a description containing "Ignore previous instructions", truncated JSON, prose instead of JSON, and made-up item IDs.
+**One retry covers both kinds of failure.** Some mistakes only show up with context: an invented item ID, a broken composition, a missing anchor. `callWithValidation` takes an optional `check` for these. It runs after the schema passes, and a failure there uses the same single retry, so there are never more than two calls. The pattern for ranking:
+
+```ts
+const result = await callWithValidation(RankingFinalOutputSchema, () => provider.pickFinal(input), {
+  check: (out) => {
+    const { rejected } = checkRankedOutfits(out.outfits, knownItems, { anchorItemId });
+    return rejected.length ? rejected.map((r) => r.problem).join("; ") : null;
+  },
+  onCall: (call) => usage.recordAiCost(user.id, "ranking_final", call.costPence, call.provider),
+  provider: "gemini",
+});
+if (!result.ok) throw new ApiException("ai_failed", "…");
+```
+
+`onCall` runs for every attempt, including one where the provider threw (a timed-out call may still be billed). For a thrown attempt `costPence` is empty, so the estimated cost is recorded.
+
+Optional text the model returns as `""` (such as `fabric`) is read as empty rather than rejected.
+
+The tests include recorded bad replies: an invented "accessory" category, a colour like "dusty heather", formality as a word, a multi-line description, truncated JSON, prose instead of JSON, made-up item IDs and a missing anchor.
 
 ---
 
@@ -293,7 +339,9 @@ The tests include recorded bad replies: an invented "accessory" category, a colo
 | Estimated cost per Gemini call, when the real cost isn't known | tagging 0.2p, shortlist 0.2p, final pick 0.5p [Decision] | same |
 | Day and month boundaries | UK time (handles British Summer Time) | same |
 
-Before starting work, every route that uses AI asks the usage guard whether it's allowed. After each Gemini call it records the cost. Once the month's total reaches £5, AI features pause (`ai_paused`) until the 1st, but browsing the wardrobe and saved outfits still works. Real per-call costs should replace the estimates after the first tester week.
+Before starting work, every route that uses AI asks the usage guard whether it's allowed. The item cap is counted where tagging runs: in add-by-photo and in add-by-link step 2. Step 1 only checks it. After each Gemini call the route records the cost. Once the month's total reaches £5, AI features pause (`ai_paused`) until the 1st, but browsing the wardrobe and saved outfits still works. Real per-call costs should replace the estimates after the first tester week.
+
+**Known limitation:** checking a cap and recording usage are two separate steps. Two requests sent at the same moment can both pass the check, so a user can go one or two over a daily cap, and the month can go slightly over £5. At tester scale this is a few pence at most, so it's accepted for now. A test pins the behaviour. Fixing it means an atomic check-and-record in the database.
 
 ---
 
@@ -323,7 +371,8 @@ Environment variables (see `.env.example`):
 | `SUPABASE_SECRET_KEY` | `sb_secret_…`: server only, bypasses RLS. Only one server-only module reads it. |
 | `NEXT_PUBLIC_SITE_URL` | The deployed URL, for links in sign-in emails |
 | `GEMINI_API_KEY` | Gemini |
-| `GLADRAGS_MOCK_MODE` | `true` only for local UI work |
+| `GLADRAGS_MOCK_MODE` | `true` only for local UI work. Refused on Vercel and in production builds. |
+| `GLADRAGS_E2E` | `true` only for end-to-end test runs, to allow mock mode against `pnpm start` |
 
 There's no background-removal key: it runs in the browser.
 
@@ -343,8 +392,9 @@ In the Supabase dashboard:
 4. **One top per outfit** in v1 (no layering).
 5. **Deleting an item deletes the outfits that used it**, saved ones included.
 6. **The allowlist lives in a database table**, enforced by the database, rather than in an env var.
-7. **A fifth table, `usage_events`**, for the caps and the spend.
+7. **Three tables beyond the spec's four:** `usage_events` (caps and spend), `allowed_emails` (the allowlist) and `link_imports` (keeps add-by-link single-use and server-trusted).
 8. **Cap values**: 40 items and 25 outfit requests per person per day; £5 a month for Gemini; the per-call cost estimates in section 7.
-9. **Upload sizes**: original up to 1.5 MB, cut-out PNG up to 2.5 MB, both at most 1600 px. If PNG cut-outs prove too big on real phones, the options are to allow WebP cut-outs or to upload straight to storage.
+9. **Upload sizes**: original up to 1.5 MB, cut-out PNG up to 2.5 MB, both at most 1600 px. If PNG cut-outs prove too big on real phones, the options are to allow WebP cut-outs, or to upload to storage via short-lived signed upload URLs (the server would still need to check and strip the files afterwards, since users can't write to storage directly).
 10. **Sign-in by code as well as link**, for the iPhone home-screen app. This needs the email template change in section 9.
 11. **Signed image URLs** last 1 hour, or 10 minutes for the add-by-link product image.
+12. **Caps can be overshot slightly** by requests sent at the same moment (section 7). Accepted at tester scale for now.
