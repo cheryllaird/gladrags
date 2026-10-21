@@ -21,18 +21,18 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 
 | Task | Status | Notes |
 | --- | --- | --- |
-| Next.js App Router + TS strict + Tailwind + shadcn/ui scaffold, pnpm scripts | ◐ | |
-| PWA manifest and service worker basics | ◐ | |
-| Supabase migrations: users, items, outfits, outfit_feedback; RLS on all tables | ◐ | |
-| Private storage buckets for originals and cut-outs | ◐ | |
-| `src/contracts/`: item tags, preset styles + formality bands, outfit request/result, feedback, API types | ◐ | |
-| API route stubs validating with contracts, returning typed mocks | ◐ | |
-| AI and image provider interfaces; usage tracking for daily caps and £5/month cap | ◐ | |
-| Magic-link auth restricted to email allowlist | ◐ | |
-| `.env.example`, GitHub Actions CI (lint, typecheck, test) | ◐ | |
-| `docs/CONTRACTS.md` | ◐ | |
+| Next.js App Router + TS strict + Tailwind + shadcn/ui scaffold, pnpm scripts | ☑ | Next 16.4, React 19.3, Tailwind 4.3, Zod 4.6. TypeScript 6.0 and ESLint 9 (TS 7 and ESLint 10 aren't supported by typescript-eslint / eslint-plugin-react yet). Button and Input as the shadcn pattern. |
+| PWA manifest and service worker basics | ☑ | Manifest with share target `/add/link` (page belongs to wardrobe-ui); SW caches only static build assets plus an offline page; placeholder icons |
+| Supabase migrations: users, items, outfits, outfit_feedback; RLS on all tables | ☑ | Plus `usage_events` and `allowed_emails`. Verified on local Postgres 16 with a Supabase stub (`pnpm db:verify`, also in CI). Not yet applied to a real Supabase project. |
+| Private storage buckets for originals and cut-outs | ☑ | Per-user folder policies; cut-out optional (`items.cutout_image_key` nullable) |
+| `src/contracts/`: item tags, preset styles + formality bands, outfit request/result, feedback, API types | ☑ | Includes model-output schemas (tagging, both ranking passes) and the composition rule |
+| API route stubs validating with contracts, returning typed mocks | ☑ | Mock mode only (`GLADRAGS_MOCK_MODE=true`); `not_implemented` otherwise. Photo upload with optional cut-out; two-step link import. |
+| AI and image provider interfaces; usage tracking for daily caps and £5/month cap | ☑ | Background removal is a browser-side interface (spec change). Cap counts Gemini only. |
+| Magic-link auth restricted to email allowlist | ☑ | Link + typed code (for the iPhone home-screen app); allowlist enforced by a DB trigger. Unverified against a live Supabase project. |
+| `.env.example`, GitHub Actions CI (lint, typecheck, test) | ☑ | New Supabase key names (publishable / secret). CI also runs build and the migration checks. |
+| `docs/CONTRACTS.md` | ☑ | Decisions for Cheryl listed in section 10 |
 | Review (`reviewer`) | ☐ | |
-| Tests (`qa`) | ☐ | |
+| Tests (`qa`) | ☐ | Playwright smoke test written but not run here (no browser download available) |
 | Merge | ☐ | |
 | **Checkpoint 2: Cheryl approves contracts** | ☐ | |
 
@@ -61,9 +61,9 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 
 | Item | Needed by | Status |
 | --- | --- | --- |
-| Supabase project URL, anon key, service role key | End-to-end check of foundations (auth, migrations) | ☐ Missing |
+| Supabase project URL, publishable key (sb_publishable_…), secret key (sb_secret_…) | End-to-end check of foundations (auth, migrations) | ☐ Missing |
 | Gemini API key (free tier OK for dev; paid before testers) | Milestone 3 (ingestion, outfit-engine live runs) | ☐ Missing |
-| Background-removal API key (e.g. Replicate) | Milestone 3 (ingestion live runs) | ☐ Missing |
+| ~~Background-removal API key~~ | Not needed: removal now runs in the browser | n/a |
 | Vercel project linked to repo, with the same env vars | Milestone 4 preview deploy | ☐ Missing |
 | Tester email allowlist | Milestone 6 (and her own email for testing earlier) | ☐ Missing |
 
