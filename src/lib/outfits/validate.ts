@@ -1,15 +1,23 @@
 /**
  * Pipeline step 4: check every outfit the model returns. Pure.
  *
- * The model only chooses and explains; this decides what's valid. An
- * outfit is thrown out when it:
+ * The model only chooses and explains; this decides what's valid. Each
+ * outfit in a reply is judged on its own, so one bad outfit never costs the
+ * good ones next to it. An outfit is thrown out when it:
+ * - fails the contract's per-outfit schema (not UUIDs, an item twice, a
+ *   name over 40 or a reason over 160 characters, …);
  * - uses an item ID the model wasn't given (so never one outside the
  *   user's wardrobe), breaks the composition rule, or leaves out the anchor
  *   (all via the shared checkRankedOutfits);
  * - leaves out another required item (the items kept in a swap);
- * - repeats an outfit that's excluded (rejected before, or being refined);
- * - repeats an earlier outfit in the same reply.
+ * - isn't one of the outfits offered (pass 1: the code-generated
+ *   candidates; pass 2: the shortlist), so the formality-spread and
+ *   avoid-hint guarantees of candidate generation always hold;
+ * - repeats an outfit that's excluded (rejected before, or being refined),
+ *   or an earlier outfit in the same reply;
+ * - shows the model's internal item refs ("I3") in its name or reason.
  */
+import { z } from "zod";
 import { checkRankedOutfits, type Category } from "@/contracts";
 import { outfitKey } from "./candidates";
 
@@ -21,6 +29,8 @@ export interface OutfitRules {
   requiredIds?: readonly string[];
   /** Exact combinations that mustn't come back. */
   excludeOutfits?: readonly (readonly string[])[];
+  /** When set, only these exact combinations (in any order) are allowed. */
+  allowedOutfits?: readonly (readonly string[])[];
 }
 
 export interface OutfitCheck<T> {
@@ -28,10 +38,17 @@ export interface OutfitCheck<T> {
   rejected: { outfit: T; problem: string }[];
 }
 
-export function validateOutfits<T extends { itemIds: string[] }>(outfits: readonly T[], rules: OutfitRules): OutfitCheck<T> {
+/** An item ref like "I3", as the Gemini prompts call items. */
+const ITEM_REF = /\bI\d+\b/;
+
+export function validateOutfits<T extends { itemIds: string[]; name?: string; reason?: string }>(
+  outfits: readonly T[],
+  rules: OutfitRules,
+): OutfitCheck<T> {
   const shared = checkRankedOutfits(outfits, rules.known, { anchorItemId: rules.anchorItemId ?? undefined });
   const result: OutfitCheck<T> = { valid: [], rejected: [...shared.rejected] };
   const excluded = new Set((rules.excludeOutfits ?? []).map(outfitKey));
+  const allowed = rules.allowedOutfits ? new Set(rules.allowedOutfits.map(outfitKey)) : null;
   const seen = new Set<string>();
 
   for (const outfit of shared.valid) {
@@ -39,8 +56,12 @@ export function validateOutfits<T extends { itemIds: string[] }>(outfits: readon
     const key = outfitKey(outfit.itemIds);
     let problem: string | null = null;
     if (missing.length > 0) problem = `Doesn't include required item(s): ${missing.join(", ")}`;
+    else if (allowed && !allowed.has(key)) problem = "Isn't one of the outfits offered";
     else if (excluded.has(key)) problem = "Repeats an outfit that was rejected or is being refined";
     else if (seen.has(key)) problem = "Repeats an earlier outfit in the same reply";
+    else if (ITEM_REF.test(outfit.name ?? "") || ITEM_REF.test(outfit.reason ?? "")) {
+      problem = "Mentions an item ref in its name or reason";
+    }
 
     if (problem) {
       result.rejected.push({ outfit, problem });
@@ -52,8 +73,51 @@ export function validateOutfits<T extends { itemIds: string[] }>(outfits: readon
   return result;
 }
 
-/** One line describing every problem, for callWithValidation's `check`. Null when all are valid. */
-export function describeProblems(check: OutfitCheck<unknown>): string | null {
-  if (check.rejected.length === 0) return null;
-  return check.rejected.map((r) => r.problem).join("; ");
+/**
+ * A ranking reply's envelope: just `{ outfits: [...] }` with at least one
+ * entry. Each entry is then checked on its own with the contract's
+ * per-outfit schema (parseEachOutfit), so a schema problem in one outfit
+ * doesn't throw away the others.
+ */
+export const RankingReplyEnvelopeSchema = z.object({ outfits: z.array(z.unknown()).min(1) });
+
+export interface ParsedOutfits<T> {
+  parsed: T[];
+  problems: string[];
+}
+
+/** Parse each outfit with `schema` (the contract's per-outfit schema), keeping the ones that pass. */
+export function parseEachOutfit<T>(outfits: readonly unknown[], schema: z.ZodType<T>): ParsedOutfits<T> {
+  const result: ParsedOutfits<T> = { parsed: [], problems: [] };
+  outfits.forEach((outfit, index) => {
+    const parsed = schema.safeParse(outfit);
+    if (parsed.success) result.parsed.push(parsed.data);
+    else result.problems.push(`Outfit ${index + 1}: ${z.prettifyError(parsed.error).replace(/\s+/g, " ")}`);
+  });
+  return result;
+}
+
+export interface ReplyCheck<T> {
+  valid: T[];
+  /** Null when the reply is good enough; otherwise why it should be retried. */
+  problem: string | null;
+}
+
+/**
+ * Judge one reply: parse each outfit, apply the rules, and decide whether
+ * it's good enough. A reply with at least `enough` valid outfits is
+ * accepted even if others were bad (they're dropped), so a usable reply is
+ * never retried.
+ */
+export function checkReply<T extends { itemIds: string[]; name?: string; reason?: string }>(
+  outfits: readonly unknown[],
+  schema: z.ZodType<T>,
+  rules: OutfitRules,
+  enough: number,
+): ReplyCheck<T> {
+  const { parsed, problems } = parseEachOutfit(outfits, schema);
+  const check = validateOutfits(parsed, rules);
+  const allProblems = [...problems, ...check.rejected.map((r) => r.problem)];
+  if (check.valid.length >= enough || allProblems.length === 0) return { valid: check.valid, problem: null };
+  return { valid: check.valid, problem: allProblems.join("; ") };
 }

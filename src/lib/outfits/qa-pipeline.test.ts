@@ -145,20 +145,17 @@ describe("QA validation: partial-good results keep the good ones", () => {
     await expectAiFailed(runOutfitPipeline(input({ anchorItemId: W.coat }), deps(ranking)));
   });
 
-  // FINDING (medium): a per-outfit problem that the Zod schema catches (an
-  // item twice in one outfit, a name over 40 characters, a non-UUID ref)
-  // fails the WHOLE reply's schema parse, so the good outfits next to it are
-  // lost. Twice in a row gives ai_failed although every reply had a good,
-  // valid outfit. README step 6 says bad outfits are dropped and the good
-  // ones kept.
-  it.fails("keeps the good outfit when the other one repeats an item, on both attempts", async () => {
+  // Was FINDING (medium), fixed: each outfit is now parsed on its own, so a
+  // schema problem in one (an item twice, a name over 40 characters, a
+  // non-UUID ref) no longer loses the good outfits next to it.
+  it("keeps the good outfit when the other one repeats an item, on both attempts", async () => {
     const reply = { outfits: [good, BAD_AROUND_COAT.duplicate.outfits[0]] };
     const ranking = new FakeRankingProvider({ shortlist: [shortlistReplies.aroundCoat], final: [reply] });
     const result = await runOutfitPipeline(input({ anchorItemId: W.coat }), deps(ranking));
     expect(result).toEqual({ status: "ok", outfits: [good] });
   });
 
-  it.fails("keeps the good outfits when one name is too long, on both attempts", async () => {
+  it("keeps the good outfits when one name is too long, on both attempts", async () => {
     const longName = named([W.dress, W.shoes2, W.coat], "An extremely long outfit name that goes on and on");
     const ranking = new FakeRankingProvider({ shortlist: [shortlistReplies.aroundCoat], final: [{ outfits: [good, longName] }] });
     const result = await runOutfitPipeline(input({ anchorItemId: W.coat }), deps(ranking));
@@ -251,8 +248,8 @@ describe("QA item refs never leak and can't map outside the wardrobe", () => {
   it("maps refs back to wardrobe IDs; made-up refs and outside UUIDs are dropped", async () => {
     const outsider = "2b000000-0000-4000-8000-000000000999"; // looks real, not in this wardrobe
     const gemini = new ScriptedGemini((data, call) => {
-      // Call 1: pass 1 with a made-up ref. Call 2: pass 1 retry, clean.
-      // Call 3: pass 2 with a real-looking UUID from outside. Call 4: clean.
+      // Call 1: pass 1 with a made-up ref among six good outfits (enough: no retry).
+      // Call 2: pass 2 with a real-looking UUID from outside. Call 3: retry, clean.
       if (data.candidates) {
         const good = data.candidates.slice(0, 6).map((itemIds) => ({ itemIds }));
         return { outfits: call === 1 ? [...good, { itemIds: ["I1", "I999", "I2"] }] : good };
@@ -262,7 +259,7 @@ describe("QA item refs never leak and can't map outside the wardrobe", () => {
         outfits: [
           { itemIds: a, name: "One", reason: "First pick" },
           { itemIds: b, name: "Two", reason: "Second pick" },
-          ...(call === 3 ? [{ itemIds: [...c!.slice(0, -1), outsider], name: "Three", reason: "Outsider" }] : []),
+          ...(call === 2 ? [{ itemIds: [...c!.slice(0, -1), outsider], name: "Three", reason: "Outsider" }] : []),
         ],
       };
     });
@@ -276,16 +273,16 @@ describe("QA item refs never leak and can't map outside the wardrobe", () => {
         expect(wardrobeIds.has(id)).toBe(true);
       }
     }
-    // The made-up ref (non-UUID) fails the schema and is retried; the
-    // outsider in pass 2 is rejected by the check and retried.
-    expect(gemini.prompts).toHaveLength(4);
+    // The made-up ref (non-UUID) fails that outfit's schema and is dropped;
+    // the other six are enough, so pass 1 isn't retried. The outsider in
+    // pass 2 is rejected, leaving 2 of 3, so pass 2 is retried once.
+    expect(gemini.prompts).toHaveLength(3);
     expect(result.outfits).toHaveLength(2);
   });
 
-  // FINDING (medium, same cause as the duplicate-item case above): one
-  // made-up ref among good outfits fails the whole reply's schema. Twice in
-  // a row gives ai_failed, losing six good shortlisted outfits.
-  it.fails("one made-up ref on both pass 1 attempts still keeps the good shortlisted outfits", async () => {
+  // Was FINDING (medium), fixed with the duplicate-item case above: a
+  // made-up ref only loses its own outfit, not the six good ones.
+  it("one made-up ref on both pass 1 attempts still keeps the good shortlisted outfits", async () => {
     const gemini = new ScriptedGemini((data) => {
       if (data.candidates) return { outfits: [...data.candidates.slice(0, 6).map((itemIds) => ({ itemIds })), { itemIds: ["I1", "I999", "I2"] }] };
       return { outfits: [{ itemIds: data.shortlist![0], name: "One", reason: "First" }] };
@@ -318,22 +315,38 @@ describe("QA item refs never leak and can't map outside the wardrobe", () => {
     }
   });
 
-  // FINDING (low): the model is told to call items "I3", but nothing stops
-  // it writing those refs in the name or reason ("I3 and I7 work well
-  // together"). They pass validation and reach the user as-is.
-  it.fails("doesn't show the model's item refs to the user in a name or reason", async () => {
+  // Was FINDING (low), fixed: the prompt says not to mention refs, and a
+  // pick whose name or reason shows one is treated as bad (dropped; the
+  // good picks next to it are kept, and all-bad twice is ai_failed).
+  it("doesn't show the model's item refs to the user in a name or reason", async () => {
     const gemini = new ScriptedGemini((data) => {
       if (data.candidates) return { outfits: data.candidates.slice(0, 8).map((itemIds) => ({ itemIds })) };
-      const first = data.shortlist![0]!;
-      return { outfits: [{ itemIds: first, name: `${first[0]} look`, reason: `${first[0]} and ${first[1]} keep this smart` }] };
+      const [first, second] = data.shortlist!;
+      return {
+        outfits: [
+          { itemIds: first, name: `${first![0]} look`, reason: `${first![0]} and ${first![1]} keep this smart` },
+          { itemIds: second, name: "Clean pick", reason: "Navy and tan keep this smart" },
+        ],
+      };
     });
     const result = await runOutfitPipeline(input(), deps(new GeminiRankingProvider(gemini, "m")));
     expect(result.status).toBe("ok");
     if (result.status !== "ok") return;
+    expect(result.outfits.map((o) => o.name)).toEqual(["Clean pick"]);
     for (const o of result.outfits) {
       expect(o.name).not.toMatch(/\bI\d+\b/);
       expect(o.reason).not.toMatch(/\bI\d+\b/);
     }
+  });
+
+  it("a reply where every pick shows refs is retried, then ai_failed", async () => {
+    const gemini = new ScriptedGemini((data) => {
+      if (data.candidates) return { outfits: data.candidates.slice(0, 8).map((itemIds) => ({ itemIds })) };
+      const first = data.shortlist![0]!;
+      return { outfits: [{ itemIds: first, name: `${first[0]} look`, reason: "Works" }] };
+    });
+    await expectAiFailed(runOutfitPipeline(input(), deps(new GeminiRankingProvider(gemini, "m"))));
+    expect(gemini.prompts).toHaveLength(3); // pass 1 once, pass 2 twice
   });
 });
 

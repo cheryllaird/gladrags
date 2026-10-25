@@ -8,9 +8,12 @@
  * saves the result. Everything it needs is passed in, so tests run it with
  * fake providers and recorded replies.
  */
+import type { z } from "zod";
 import {
+  OUTFIT_COUNT,
   RankingFinalOutputSchema,
   RankingShortlistOutputSchema,
+  SHORTLIST_MAX,
   missingCategoriesForOutfits,
   type AiCostKind,
   type Category,
@@ -25,7 +28,7 @@ import { FILTER_LEVELS, filterItems } from "./filter";
 import { seasonAt } from "./season";
 import type { ThumbnailSource } from "./thumbnails";
 import type { RankedOutfit, WardrobeEntry } from "./types";
-import { describeProblems, validateOutfits, type OutfitRules } from "./validate";
+import { RankingReplyEnvelopeSchema, checkReply, type OutfitRules } from "./validate";
 
 export interface PipelineDeps {
   /** Makes the ranking provider; called only once the model is needed. */
@@ -133,11 +136,12 @@ export async function runOutfitPipeline(input: PipelineInput, deps: PipelineDeps
     avoidPairs,
     refinement: input.refinement,
   };
-  const rulesFor = (known: readonly WardrobeEntry[]): OutfitRules => ({
+  const rulesFor = (known: readonly WardrobeEntry[], allowedOutfits: string[][]): OutfitRules => ({
     known: new Map<string, Category>(known.map((i) => [i.id, i.tags.category])),
     anchorItemId: input.anchorItemId,
     requiredIds,
     excludeOutfits,
+    allowedOutfits,
   });
 
   // Created only now, so an incomplete wardrobe never needs the model, and
@@ -152,42 +156,37 @@ export async function runOutfitPipeline(input: PipelineInput, deps: PipelineDeps
   if (candidates.length <= SHORTLIST_SIZE) {
     shortlist = candidates;
   } else {
-    const rules = rulesFor(items);
-    let lastValid: { itemIds: string[] }[] = [];
-    const result = await callWithValidation(
-      RankingShortlistOutputSchema,
-      () =>
+    // Only items that appear in a candidate (plus required ones) are sent.
+    const offeredIds = new Set([...candidates.flat(), ...requiredIds]);
+    const offered = items.filter((i) => offeredIds.has(i.id));
+    const picks = await rankPass({
+      schema: SHORTLIST_OUTFIT_SCHEMA,
+      max: SHORTLIST_MAX,
+      rules: rulesFor(offered, candidates),
+      enough: shortlistEnough(input.count),
+      call: () =>
         ranking.shortlist({
           ...context,
-          items: items.map(({ id, tags }) => ({ id, tags })),
+          items: offered.map(({ id, tags }) => ({ id, tags })),
           candidates,
           shortlistSize: SHORTLIST_SIZE,
         }),
-      {
-        check: (out) => {
-          const check = validateOutfits(out.outfits, rules);
-          lastValid = check.valid;
-          return describeProblems(check);
-        },
-        onCall: (call) => deps.recordAiCost("ranking_shortlist", call),
-        provider: ranking.name,
-      },
-    );
-    // Step 4 for pass 1: with one retry used up, drop the bad outfits and keep the rest.
-    const valid = result.ok ? result.data.outfits : lastValid;
-    if (valid.length === 0) throw aiFailed();
-    shortlist = valid.map((o) => o.itemIds);
+      onCall: (call) => deps.recordAiCost("ranking_shortlist", call),
+      provider: ranking.name,
+    });
+    shortlist = picks.map((o) => o.itemIds);
   }
 
   // Step 3b: pick the best N, looking at thumbnails of the shortlisted items.
   const shortlistIds = [...new Set(shortlist.flat())];
   const shortlistItems = shortlistIds.map((id) => byId.get(id)!);
   const thumbnails = await deps.thumbnails.getThumbnails(shortlistItems);
-  const rules = rulesFor(shortlistItems);
-  let lastValid: RankedOutfit[] = [];
-  const result = await callWithValidation(
-    RankingFinalOutputSchema,
-    () =>
+  const picked = await rankPass({
+    schema: FINAL_OUTFIT_SCHEMA,
+    max: OUTFIT_COUNT.max,
+    rules: rulesFor(shortlistItems, shortlist),
+    enough: input.count,
+    call: () =>
       ranking.pickFinal({
         ...context,
         shortlist: shortlist.map((itemIds) => ({
@@ -199,18 +198,53 @@ export async function runOutfitPipeline(input: PipelineInput, deps: PipelineDeps
         })),
         count: input.count,
       }),
-    {
-      check: (out) => {
-        const check = validateOutfits(out.outfits, rules);
-        lastValid = check.valid;
-        return describeProblems(check);
-      },
-      onCall: (call) => deps.recordAiCost("ranking_final", call),
-      provider: ranking.name,
-    },
-  );
-  // Step 4 for pass 2: same rule. Never more than asked for.
-  const picked = result.ok ? result.data.outfits : lastValid;
-  if (picked.length === 0) throw aiFailed();
+    onCall: (call) => deps.recordAiCost("ranking_final", call),
+    provider: ranking.name,
+  });
   return { status: "ok", outfits: picked.slice(0, input.count) };
+}
+
+/** The contract's schema for one outfit in each pass's reply. */
+const SHORTLIST_OUTFIT_SCHEMA = RankingShortlistOutputSchema.shape.outfits.element;
+const FINAL_OUTFIT_SCHEMA = RankingFinalOutputSchema.shape.outfits.element;
+
+/**
+ * Valid shortlisted outfits that make pass 1 good enough without a retry:
+ * a little more than the final count, so pass 2 still has a choice.
+ */
+export function shortlistEnough(count: number): number {
+  return Math.min(SHORTLIST_SIZE, count + 2);
+}
+
+interface RankPass<T> {
+  schema: z.ZodType<T>;
+  /** Most outfits read from one reply; any beyond are ignored. */
+  max: number;
+  rules: OutfitRules;
+  /** This many valid outfits make a reply good enough (no retry). */
+  enough: number;
+  call: () => Promise<ModelCall>;
+  onCall: (call: ModelCall) => Promise<void>;
+  provider: string;
+}
+
+/**
+ * One ranking pass with the single retry (step 4). Each outfit in a reply
+ * is judged on its own: bad ones are dropped, never the good ones next to
+ * them. A reply with enough valid outfits isn't retried. After two tries,
+ * the attempt with the most valid outfits is used; none at all is ai_failed.
+ */
+async function rankPass<T extends { itemIds: string[]; name?: string; reason?: string }>(pass: RankPass<T>): Promise<T[]> {
+  let best: T[] = [];
+  await callWithValidation(RankingReplyEnvelopeSchema, pass.call, {
+    check: (reply) => {
+      const { valid, problem } = checkReply(reply.outfits.slice(0, pass.max), pass.schema, pass.rules, pass.enough);
+      if (valid.length > best.length) best = valid;
+      return problem;
+    },
+    onCall: pass.onCall,
+    provider: pass.provider,
+  });
+  if (best.length === 0) throw aiFailed();
+  return best;
 }

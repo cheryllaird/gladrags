@@ -185,13 +185,16 @@ describe("QA candidates: formality spread (style coherence)", () => {
     }
   });
 
-  // FINDING (low): above ENUMERATE_LIMIT combinations, candidates are found
+  // Was FINDING (low), fixed: slots are first narrowed to items within the
+  // formality spread of the required items, so the few coherent outfits
+  // around an anchor are listed rather than sampled. Original finding:
+  // above ENUMERATE_LIMIT combinations, candidates are found
   // by random draws (limit x 40 = 2,400). When only a handful of the
   // combinations are coherent around the anchor, the draws usually miss
   // them, and the pipeline answers "nothing_fits" although a valid,
   // coherent outfit exists. Realistic only for big wardrobes with a custom
   // style (no formality filter) and an anchor far from the rest.
-  it.fails("finds the one coherent outfit around a formal anchor in a big, mostly casual wardrobe", () => {
+  it("finds the one coherent outfit around a formal anchor in a big, mostly casual wardrobe", () => {
     const casual = wardrobe({ top: 150, bottom: 150 }, { formality: 1 });
     const smartTop = entry(1001, "top", { formality: 5 });
     const smartBottom = entry(1002, "bottom", { formality: 5 });

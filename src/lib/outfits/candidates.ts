@@ -95,11 +95,21 @@ interface Slots<T> {
  * The items available for each slot, with required items fixing theirs.
  * Null when the required items can't be in one outfit together.
  */
-function slotsFor<T extends TaggedItem>(items: readonly T[], requiredIds: readonly string[]): Slots<T> | null {
-  const byCategory = (c: Category) => items.filter((i) => i.tags.category === c);
+function slotsFor<T extends TaggedItem>(items: readonly T[], requiredIds: readonly string[], maxSpread: number): Slots<T> | null {
   const required = requiredIds.map((id) => items.find((i) => i.id === id));
   if (required.some((r) => r === undefined)) return null;
   const requiredItems = required as T[];
+
+  // Every candidate contains the required items, so only items within
+  // `maxSpread` of all of them can be in a coherent candidate. Pruning the
+  // slots first means a combination around an anchor is never missed by
+  // sampling: a formal anchor in a big casual wardrobe leaves few options,
+  // which are then all listed.
+  const levels = requiredItems.map((i) => i.tags.formality);
+  const lowest = levels.length ? Math.max(...levels) - maxSpread : -Infinity;
+  const highest = levels.length ? Math.min(...levels) + maxSpread : Infinity;
+  const byCategory = (c: Category) =>
+    items.filter((i) => i.tags.category === c && i.tags.formality >= lowest && i.tags.formality <= highest);
   const requiredOf = (c: Category) => requiredItems.filter((i) => i.tags.category === c);
 
   const fixed = {
@@ -161,12 +171,14 @@ export function shuffle<T>(values: readonly T[], random: () => number): T[] {
 }
 
 export function generateCandidates<T extends TaggedItem>(items: readonly T[], options: CandidateOptions): CandidateResult {
-  const slots = slotsFor(items, options.requiredIds ?? []);
-  if (!slots) return { candidates: [], combinations: 0 };
-  const combinations = combinationCount(slots);
-  if (combinations === 0 || options.limit <= 0) return { candidates: [], combinations };
-
   const maxSpread = options.maxFormalitySpread ?? MAX_FORMALITY_SPREAD;
+  const allSlots = slotsFor(items, options.requiredIds ?? [], Infinity);
+  if (!allSlots) return { candidates: [], combinations: 0 };
+  const combinations = combinationCount(allSlots);
+  const slots = slotsFor(items, options.requiredIds ?? [], maxSpread)!;
+  const coherentCombinations = combinationCount(slots);
+  if (coherentCombinations === 0 || options.limit <= 0) return { candidates: [], combinations };
+
   const excluded = new Set((options.excludeOutfits ?? []).map(outfitKey));
   const avoid = new Set((options.avoidPairs ?? []).map(([a, b]) => pairKey(a, b)));
 
@@ -176,13 +188,13 @@ export function generateCandidates<T extends TaggedItem>(items: readonly T[], op
 
   // Combination numbers to consider, in random order.
   let order: Iterable<number>;
-  if (combinations <= ENUMERATE_LIMIT) {
+  if (coherentCombinations <= ENUMERATE_LIMIT) {
     order = shuffle(
-      Array.from({ length: combinations }, (_, i) => i),
+      Array.from({ length: coherentCombinations }, (_, i) => i),
       options.random,
     );
   } else {
-    order = randomDraws(combinations, options.limit * SAMPLE_ATTEMPTS_PER_CANDIDATE, options.random);
+    order = randomDraws(coherentCombinations, options.limit * SAMPLE_ATTEMPTS_PER_CANDIDATE, options.random);
   }
 
   const clean: string[][] = [];
