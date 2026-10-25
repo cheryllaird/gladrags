@@ -2,7 +2,7 @@
 
 Maintained by the orchestrator (main Claude Code session). Source of truth for scope: `docs/SPEC.md`.
 
-**Current status:** Milestone 3 (parallel build) in progress. outfit-ui merged. ingestion, outfit-engine and wardrobe-ui are fixing review/QA findings; link-import waits for ingestion to merge.
+**Current status:** Milestone 3 (parallel build) in progress. outfit-ui and outfit-engine merged. ingestion in re-review; wardrobe-ui fixing review/QA findings; link-import waits for ingestion to merge.
 
 Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 
@@ -40,8 +40,8 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 
 | Task | Agent | Branch | Status | Depends on |
 | --- | --- | --- | --- | --- |
-| Photo upload, EXIF strip, in-browser background removal, Gemini tagging, item cap | ingestion | `feat/ingestion` | ◐ fixing review/QA (time budget, corrupt images, cost headroom) | Foundations |
-| Filter, candidates, two-pass ranking, validation, refinement, feedback hints, outfit cap | outfit-engine | `feat/outfit-engine` | ◐ fixing review/QA (SDK retry, keep good outfits) | Foundations |
+| Photo upload, EXIF strip, in-browser background removal, Gemini tagging, item cap | ingestion | `feat/ingestion` | ◐ re-review at b7481aa | Foundations |
+| Filter, candidates, two-pass ranking, validation, refinement, feedback hints, outfit cap | outfit-engine | `feat/outfit-engine` | ☑ merged | Review: changes needed (SDK retry made up to 4 uncosted calls) → fixed, approved at c51d0ad. QA: 3 findings fixed. Ranking prompts still unverified against live Gemini (quota). | Foundations |
 | URL fetch, OG / JSON-LD parsing, screenshot fallback | link-import | `feat/link-import` | ☐ | Ingestion tagging merged |
 | Sign-in, add-item flow, tag review, wardrobe grid + filters, item detail | wardrobe-ui | `feat/wardrobe-ui` | ◐ fixing review/QA (expiring URLs, expired session, account sheet) | Foundations (mocked APIs) |
 | Style request + chips, results, canvas collages, swap/refine, saved outfits | outfit-ui | `feat/outfit-ui` | ☑ merged | Foundations (mocked APIs). Review: changes needed (anchor errors, expiring image URLs) → fixed, approved at 2f7f6d2. QA: 6 low findings, all fixed. 83/83 e2e at 390 px on the merged tree. |
@@ -73,6 +73,8 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 - 2026-10-25: UI routes agreed between the UI agents: wardrobe-ui owns the app shell, bottom nav, `/sign-in`, `/wardrobe`, `/wardrobe/[id]`, `/add`, `/add/link`; outfit-ui owns `/outfits`, `/outfits/saved`. "Build an outfit around this" links to `/outfits?anchor=<itemId>`.
 - 2026-10-25: Ingestion cut-out rules (orchestrator): a cut-out larger than its original is rejected; an image counts as a cut-out only if at least 1% of pixels have alpha < 250.
 - 2026-10-25: Avoid hints come from outfits whose status is currently `rejected`, so undoing a reject removes its hint.
+- 2026-10-25: Gemini JSON schemas use only SDK-documented keywords (no `maxLength`), because unsupported ones couldn't be checked live and a 400 would break every call. Zod enforces the limits.
+- 2026-10-25: E2E runs in mock mode give each request a fresh usage counter, so parallel test files don't exhaust the shared mock user's daily caps. Cap behaviour is covered by unit tests and markers.
 - 2026-10-21: Cheryl chose in-browser background removal instead of Replicate. No background-removal key is needed; the spend cap covers Gemini only; `cutout_image_key` is nullable (the original is used if removal fails); add-by-link becomes two steps (the server stores the product image, then the client uploads the cut-out). SPEC.md, CLAUDE.md and the ingestion agent are updated, and the foundations agent has been told.
 
 ## Follow-ups from foundations review
@@ -96,7 +98,8 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 | Schedule the orphaned-image cleanup (`src/lib/ingestion/cleanup.ts`), daily | orchestrator | Milestone 4 |
 | Swap wardrobe-ui's FakeBackgroundRemover for `getBackgroundRemover()` + `preloadBackgroundRemover()`; pick one resize/re-encode path | orchestrator | When ingestion and wardrobe-ui are both merged |
 | Mock markers for ai_failed, missing_category, nothing_fits | orchestrator | Milestone 4 (nice to have) |
-| Record real Gemini fixtures for tagging and ranking | orchestrator | Once Gemini quota allows (paid tier) |
+| Record real Gemini fixtures for tagging and ranking; confirm gemini-3.8-flash prices | orchestrator | Once Gemini quota allows (paid tier) |
+| Shared Gemini client module for tagging and ranking (both use `attempts: 1`) | orchestrator | Milestone 4, minor |
 | Saved-screen lazy collages: check freshness before first draw | outfit-ui | Minor, milestone 4 |
 | CONTRACTS.md: routes now built, `GEMINI_MODEL`, new image-processor methods | orchestrator | As each backend merges |
 
