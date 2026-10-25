@@ -2,7 +2,7 @@
 
 Maintained by the orchestrator (main Claude Code session). Source of truth for scope: `docs/SPEC.md`.
 
-**Current status:** Milestone 3 (parallel build) in progress. outfit-ui and outfit-engine merged. ingestion in re-review; wardrobe-ui fixing review/QA findings; link-import waits for ingestion to merge.
+**Current status:** Milestone 3 (parallel build) in progress. outfit-ui, outfit-engine and ingestion merged. wardrobe-ui fixing review/QA findings; link-import starting.
 
 Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 
@@ -40,9 +40,9 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 
 | Task | Agent | Branch | Status | Depends on |
 | --- | --- | --- | --- | --- |
-| Photo upload, EXIF strip, in-browser background removal, Gemini tagging, item cap | ingestion | `feat/ingestion` | ◐ re-review at b7481aa | Foundations |
+| Photo upload, EXIF strip, in-browser background removal, Gemini tagging, item cap | ingestion | `feat/ingestion` | ☑ merged | Review: changes needed (Gemini time budget) → fixed, approved at b7481aa. QA: corrupt images gave 500 and were counted, `*` search wildcard, and others; all fixed. U²-Netp (Apache-2.0, 4.6 MB) runs in the browser, ~2–4 s per photo expected on a mid-range phone. | Foundations |
 | Filter, candidates, two-pass ranking, validation, refinement, feedback hints, outfit cap | outfit-engine | `feat/outfit-engine` | ☑ merged | Review: changes needed (SDK retry made up to 4 uncosted calls) → fixed, approved at c51d0ad. QA: 3 findings fixed. Ranking prompts still unverified against live Gemini (quota). | Foundations |
-| URL fetch, OG / JSON-LD parsing, screenshot fallback | link-import | `feat/link-import` | ☐ | Ingestion tagging merged |
+| URL fetch, OG / JSON-LD parsing, screenshot fallback | link-import | `feat/link-import` | ◐ | Ingestion tagging merged |
 | Sign-in, add-item flow, tag review, wardrobe grid + filters, item detail | wardrobe-ui | `feat/wardrobe-ui` | ◐ fixing review/QA (expiring URLs, expired session, account sheet) | Foundations (mocked APIs) |
 | Style request + chips, results, canvas collages, swap/refine, saved outfits | outfit-ui | `feat/outfit-ui` | ☑ merged | Foundations (mocked APIs). Review: changes needed (anchor errors, expiring image URLs) → fixed, approved at 2f7f6d2. QA: 6 low findings, all fixed. 83/83 e2e at 390 px on the merged tree. |
 | Preview build of screens for Cheryl | orchestrator | | ☐ | UI branches |
@@ -101,7 +101,8 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 | Record real Gemini fixtures for tagging and ranking; confirm gemini-3.8-flash prices | orchestrator | Once Gemini quota allows (paid tier) |
 | Shared Gemini client module for tagging and ranking (both use `attempts: 1`) | orchestrator | Milestone 4, minor |
 | Saved-screen lazy collages: check freshness before first draw | outfit-ui | Minor, milestone 4 |
-| CONTRACTS.md: routes now built, `GEMINI_MODEL`, new image-processor methods | orchestrator | As each backend merges |
+| ~~CONTRACTS.md: routes now built, `GEMINI_MODEL`, new image-processor methods~~ | orchestrator | Done at ingestion merge |
+| Tell Cheryl: sharp's prebuilt libvips binaries are LGPL-3.0 (server-side only) | orchestrator | Next checkpoint |
 
 ## Blockers
 

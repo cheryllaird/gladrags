@@ -1,0 +1,23 @@
+GladRags background-removal model
+=================================
+
+u2netp.onnx
+-----------
+U^2-Net (small version, "U2-Netp") salient object detection model.
+
+  Xuebin Qin, Zichen Zhang, Chenyang Huang, Masood Dehghan, Osmar R. Zaiane
+  and Martin Jagersand. "U^2-Net: Going Deeper with Nested U-Structure for
+  Salient Object Detection." Pattern Recognition 106, 2020.
+
+  Original weights: https://github.com/xuebinqin/U-2-Net
+  Licence: Apache License, Version 2.0 (full text in u2netp.LICENSE.txt)
+
+This file is the ONNX export distributed by the rembg project
+(https://github.com/danielgatis/rembg, MIT), unmodified:
+
+  MD5     8e83ca70e441ab06c318d82300c84806 (matches rembg's published checksum)
+  SHA-256 309c8469258dda742793dce0ebea8e6dd393174f89934733ecc8b14c76f4ddd8
+  Size    4,574,861 bytes
+
+It runs in the user's browser with ONNX Runtime Web (MIT,
+https://onnxruntime.ai). No image leaves the phone for background removal.

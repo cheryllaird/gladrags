@@ -1,0 +1,2 @@
+# The background-removal model is a binary file: no text diffs or line-ending changes.
+public/models/*.onnx binary -diff

@@ -135,6 +135,24 @@ const VALID_CALLS: [string, () => Promise<Response>][] = [
   ],
 ];
 
+/** Routes with a real implementation now (ingestion): wardrobe items and add-by-photo. */
+const BUILT_ROUTES = new Set([
+  "GET /api/items",
+  "POST /api/items",
+  "GET /api/items/[id]",
+  "PATCH /api/items/[id]",
+  "DELETE /api/items/[id]",
+  "POST /api/items/photo",
+  // Built by outfit-engine; outfits/outfits-live.test.ts covers them in depth.
+  "GET /api/outfits",
+  "POST /api/outfits",
+  "GET /api/outfits/[id]",
+  "PATCH /api/outfits/[id]",
+  "POST /api/outfits/[id]/refine",
+]);
+const BUILT_CALLS = VALID_CALLS.filter(([label]) => BUILT_ROUTES.has(label));
+const STUB_CALLS = VALID_CALLS.filter(([label]) => !BUILT_ROUTES.has(label));
+
 beforeEach(() => {
   vi.stubEnv("GLADRAGS_MOCK_MODE", "false");
   vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://qa-project.supabase.co");
@@ -171,13 +189,18 @@ describe("signed in, mock mode off", () => {
     fake.user = USER;
   });
 
-  // The outfit routes are built (outfit-engine); outfits/outfits-live.test.ts
-  // covers them with mock mode off.
-  const STUB_CALLS = VALID_CALLS.filter(([label]) => !label.includes("/api/outfits"));
-
   it.each(STUB_CALLS)("stub %s refuses with 501 not_implemented instead of mock data", async (_label, call) => {
     const error = await expectError(await call(), "not_implemented");
     expect(JSON.stringify(error)).not.toContain("mock");
+  });
+
+  // Built by ingestion: outside mock mode these go to Supabase (faked here
+  // without tables or storage, so they fail), never to the mock wardrobe.
+  it.each(BUILT_CALLS)("built %s never serves mock data outside mock mode", async (_label, call) => {
+    const res = await call();
+    expect(res.status).not.toBe(API_ERROR_STATUS.not_implemented);
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(await res.text()).not.toMatch(/\/mock\//);
   });
 
   it.each([

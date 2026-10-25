@@ -24,7 +24,7 @@ Set `GLADRAGS_MOCK_MODE=true` and the app runs with no accounts at all:
 - The API routes serve an in-memory wardrobe of 12 items covering every category, menswear and womenswear. One of them (the camel coat) has no cut-out, so the UI's fallback path gets exercised.
 - Adding, editing, deleting, outfit requests, swaps and saves all work, and reset when the server restarts.
 
-The UI agents build against mock mode until the backend branches merge. Outside mock mode the stub routes refuse with `not_implemented`, so a deployed build can never hand out the shared mock data.
+The UI agents build against mock mode until the backend branches merge. Outside mock mode any route that is still a stub refuses with `not_implemented` (today: the two add-by-link routes), so a deployed build can never hand out the shared mock data.
 
 Because mock mode turns sign-in off, the app refuses to start in it on Vercel, or in a production build (`pnpm start`), and reports a configuration error. The one exception is end-to-end tests, which set `GLADRAGS_E2E=true` to run mock mode against `pnpm start`.
 
@@ -213,7 +213,7 @@ All routes are under `/api` and return JSON. Every route except the sign-in ones
 
 **Why a code as well as a link:** on iPhone, an app added to the home screen doesn't share cookies with Safari. Tapping the emailed link signs you into Safari, not the app. Typing the code into the app works everywhere. For this, the Supabase email template needs `{{ .Token }}` added (see section 9). A minimal working sign-in page is at `/sign-in`, which wardrobe-ui will restyle.
 
-### Wardrobe items (stubs; owner: ingestion, and link-import for the link routes)
+### Wardrobe items (built; owner: ingestion)
 | Route | Send | Get back |
 | --- | --- | --- |
 | `GET /api/items?category=&colour=&occasion=&q=` | All filters optional; `q` searches descriptions | `{ items: WardrobeItem[] }` |
@@ -224,7 +224,7 @@ All routes are under `/api` and return JSON. Every route except the sign-in ones
 
 A **WardrobeItem** is `{ id, source, sourceUrl, originalUrl, cutoutUrl (or null), tags, tagsEdited, createdAt }`. Show `cutoutUrl` if there is one, otherwise `originalUrl`; the helper `displayImageUrl(item)` does this.
 
-### Add by photo (stub; owner: ingestion)
+### Add by photo (built; owner: ingestion)
 On the phone:
 1. Resize the photo to at most 1600 px on its longest side, and re-encode it as JPEG. iPhones take HEIC photos by default, and the server rejects HEIC.
 2. Try to cut the item out in the browser.
@@ -241,7 +241,7 @@ On the phone:
 On the server:
 1. Check the daily item cap, and count this item: tagging happens in this request.
 2. Check each file's real type from its bytes, not the name the phone gives it. HEIC, GIF and anything else are refused. Check size and pixel dimensions too.
-3. Check the cut-out really has an alpha (transparency) channel. A PNG without one isn't a cut-out, so it's treated as missing. (The stub can't check this yet; the ingestion agent adds it with the image decoder.)
+3. Check the cut-out is really a cut-out: it counts only if at least 1% of its pixels have alpha below 250, otherwise it's treated as missing. A cut-out wider or taller than its (upright) original is refused with `bad_request` on `cutout`. A corrupt or truncated image of either kind is `bad_request` on its field and isn't counted.
 4. Strip EXIF data, including location, from both images.
 5. Store both in the private buckets.
 6. Tag the cut-out if there is one, otherwise the original.
@@ -279,7 +279,7 @@ An import that's never finished leaves an unused image in storage. The link-impo
 
 Android can "share" a product page straight to the installed app; it opens `/add/link?url=…` (a wardrobe-ui page). iPhone doesn't support this, so users paste the link.
 
-### Outfits (stubs; owner: outfit-engine)
+### Outfits (built; owner: outfit-engine)
 | Route | Send | Get back |
 | --- | --- | --- |
 | `POST /api/outfits` | The outfit request (section 4) | `{ status: "ok", outfits }` or `{ status: "incomplete_wardrobe", reason, missingCategories, message }`. `missingCategories` takes the anchor item into account (see section 4). |
@@ -352,7 +352,7 @@ Before starting work, every route that uses AI asks the usage guard whether it's
 | `TaggingProvider.tagItem(image, productHints?)` | `src/lib/ai/types.ts` | ingestion (Gemini) |
 | `RankingProvider.shortlist(...)` and `.pickFinal(...)` | `src/lib/ai/types.ts` | outfit-engine (Gemini) |
 | `BackgroundRemover.removeBackground(Blob or ImageBitmap) → PNG Blob`, in the browser | `src/lib/images/types.ts` | ingestion |
-| `ServerImageProcessor.inspect / stripMetadata / resize` | `src/lib/images/server.ts` | ingestion (link-import reuses it) |
+| `ServerImageProcessor.inspect / stripMetadata / resize / hasTransparency / prepareForModel` | `src/lib/images/server.ts` | ingestion (link-import reuses it, plus `checkUploadedCutout`, `cleanImage` and `suggestTags` from `src/lib/ingestion`) |
 | `UsageGuard` (caps and spend) | `src/lib/usage/` | built; others call it |
 | `requireUser()` | `src/lib/auth/session.ts` | built; first line of every route |
 
@@ -371,6 +371,7 @@ Environment variables (see `.env.example`):
 | `SUPABASE_SECRET_KEY` | `sb_secret_…`: server only, bypasses RLS. Only one server-only module reads it. |
 | `NEXT_PUBLIC_SITE_URL` | The deployed URL, for links in sign-in emails |
 | `GEMINI_API_KEY` | Gemini |
+| `GEMINI_MODEL` | Optional. Gemini model for tagging and ranking; defaults to `gemini-3.8-flash`. Must have known prices (`GEMINI_MODEL_PRICES`), otherwise startup fails with a config error. |
 | `GLADRAGS_MOCK_MODE` | `true` only for local UI work. Refused on Vercel and in production builds. |
 | `GLADRAGS_E2E` | `true` only for end-to-end test runs, to allow mock mode against `pnpm start` |
 
