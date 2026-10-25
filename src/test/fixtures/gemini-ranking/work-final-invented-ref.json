@@ -1,0 +1,8 @@
+{
+  "model": "none",
+  "synthetic": true,
+  "note": "work-final with the second outfit's skirt ref changed to I99, which the prompt never offered, to test the invented-item retry.",
+  "recordedAt": null,
+  "text": "{\"outfits\": [{\"itemIds\": [\"I1\", \"I2\", \"I3\", \"I4\"], \"name\": \"Sharp office\", \"reason\": \"Navy blazer over a light blue shirt keeps tan chinos and loafers smart\"}, {\"itemIds\": [\"I1\", \"I99\", \"I3\", \"I6\"], \"name\": \"Camel and black\", \"reason\": \"A camel coat softens the black skirt for a polished autumn office look\"}, {\"itemIds\": [\"I7\", \"I3\", \"I4\"], \"name\": \"Dress for meetings\", \"reason\": \"The blazer gives the floral dress structure for work, with flat loafers\"}]}",
+  "editedFrom": "work-final"
+}

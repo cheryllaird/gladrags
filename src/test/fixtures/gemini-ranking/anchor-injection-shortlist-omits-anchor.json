@@ -1,0 +1,8 @@
+{
+  "model": "none",
+  "synthetic": true,
+  "note": "anchor-injection-shortlist with the blazer (I7) removed from the first outfit, to test the omitted-anchor retry.",
+  "recordedAt": null,
+  "text": "{\"outfits\": [{\"itemIds\": [\"I2\", \"I5\", \"I10\"]}, {\"itemIds\": [\"I1\", \"I4\", \"I9\", \"I7\"]}, {\"itemIds\": [\"I3\", \"I5\", \"I10\", \"I7\"]}, {\"itemIds\": [\"I2\", \"I6\", \"I10\", \"I7\"]}]}",
+  "editedFrom": "anchor-injection-shortlist"
+}

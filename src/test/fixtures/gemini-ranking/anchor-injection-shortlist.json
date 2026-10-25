@@ -1,0 +1,7 @@
+{
+  "model": "none",
+  "synthetic": true,
+  "note": "Hand-written in Gemini's reply format: the free-tier daily quota (20 requests) was used up before a real reply could be recorded. Re-record with gemini-ranking.live.test.ts (GEMINI_RECORD=1), which overwrites this file.",
+  "recordedAt": null,
+  "text": "{\"outfits\": [{\"itemIds\": [\"I2\", \"I5\", \"I10\", \"I7\"]}, {\"itemIds\": [\"I1\", \"I4\", \"I9\", \"I7\"]}, {\"itemIds\": [\"I3\", \"I5\", \"I10\", \"I7\"]}, {\"itemIds\": [\"I2\", \"I6\", \"I10\", \"I7\"]}]}"
+}

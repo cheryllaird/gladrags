@@ -171,7 +171,11 @@ describe("signed in, mock mode off", () => {
     fake.user = USER;
   });
 
-  it.each(VALID_CALLS)("stub %s refuses with 501 not_implemented instead of mock data", async (_label, call) => {
+  // The outfit routes are built (outfit-engine); outfits/outfits-live.test.ts
+  // covers them with mock mode off.
+  const STUB_CALLS = VALID_CALLS.filter(([label]) => !label.includes("/api/outfits"));
+
+  it.each(STUB_CALLS)("stub %s refuses with 501 not_implemented instead of mock data", async (_label, call) => {
     const error = await expectError(await call(), "not_implemented");
     expect(JSON.stringify(error)).not.toContain("mock");
   });
