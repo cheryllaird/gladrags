@@ -98,6 +98,13 @@ describe("service worker updates keep the model cache", () => {
     expect(names).not.toContain("gladrags-shell-v0");
     expect(names).toContain("someone-elses-cache");
     expect(sw.stores.get(MODEL_CACHE_NAME)!.entries.size).toBe(1);
+    // Review fix: a model cache from an earlier MODEL_CACHE_NAME is deleted.
+    expect(names).not.toContain("gladrags-models-v0-old");
+  });
+
+  it("the worker's model cache name matches MODEL_CACHE_NAME in the app", () => {
+    expect(SW_SOURCE).toContain(`const MODEL_CACHE = "${MODEL_CACHE_NAME}";`);
+    expect(MODEL_CACHE_NAME).toMatch(/^gladrags-models-/);
   });
 
   it("the model cache's name can't be mistaken for a shell cache", () => {

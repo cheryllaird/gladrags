@@ -29,7 +29,12 @@ import { tagging } from "@/test/fixtures/model-output";
 import { cutoutPng } from "@/test/images";
 import {
   DEFAULT_GEMINI_MODEL,
+  GEMINI_MODEL_PRICES,
   GEMINI_PRICING,
+  PRICE_HEADROOM,
+  SUPPORTED_SCHEMA_KEYWORDS,
+  TAGGING_ATTEMPT_TIMEOUT_MS,
+  priceFor,
   GeminiTaggingProvider,
   TAGGING_INSTRUCTIONS,
   TAGGING_RESPONSE_SCHEMA,
@@ -131,43 +136,105 @@ describe("the structured-output schema matches the contract", () => {
 describe("GeminiTaggingProvider", () => {
   it("returns the model's text and its cost from the recorded token counts", async () => {
     const { client } = fakeClient([REC.good.tshirtCutout]);
-    const call = await new GeminiTaggingProvider(client, "gemini-test").tagItem({ image: IMAGE });
-    expect(call).toMatchObject({ raw: REC.good.tshirtCutout.text, provider: "gemini", model: "gemini-test" });
+    const call = await new GeminiTaggingProvider(client, DEFAULT_GEMINI_MODEL).tagItem({ image: IMAGE });
+    expect(call).toMatchObject({ raw: REC.good.tshirtCutout.text, provider: "gemini", model: DEFAULT_GEMINI_MODEL });
     expect(call.costPence).toBeCloseTo(costPenceFromUsage(REC.good.tshirtCutout.usageMetadata)!);
     expect(call.costPence).toBeGreaterThan(0);
   });
 
   it("reports no cost when Gemini doesn't say (the estimate is used instead)", async () => {
     const { client } = fakeClient([{ text: "{}" }]);
-    expect((await new GeminiTaggingProvider(client, "m").tagItem({ image: IMAGE })).costPence).toBeUndefined();
+    expect((await new GeminiTaggingProvider(client, DEFAULT_GEMINI_MODEL).tagItem({ image: IMAGE })).costPence).toBeUndefined();
   });
 
   it("passes SDK errors up, so callWithValidation counts them as a failed attempt", async () => {
     const { client } = fakeClient([new Error("503 UNAVAILABLE")]);
-    await expect(new GeminiTaggingProvider(client, "m").tagItem({ image: IMAGE })).rejects.toThrow("503");
+    await expect(new GeminiTaggingProvider(client, DEFAULT_GEMINI_MODEL).tagItem({ image: IMAGE })).rejects.toThrow("503");
   });
 });
 
 describe("costPenceFromUsage", () => {
-  it("prices input and output (thinking included) tokens in pence", () => {
+  it("prices input and output (thinking included) tokens in pence, with 25% headroom", () => {
     const usage = { promptTokenCount: 1_000_000, candidatesTokenCount: 600_000, thoughtsTokenCount: 400_000 };
     const usd = GEMINI_PRICING.inputUsdPerMillionTokens + GEMINI_PRICING.outputUsdPerMillionTokens;
-    expect(costPenceFromUsage(usage)).toBeCloseTo(usd * GEMINI_PRICING.gbpPerUsd * 100);
+    expect(PRICE_HEADROOM).toBe(1.25);
+    expect(costPenceFromUsage(usage)).toBeCloseTo(usd * 1.25 * GEMINI_PRICING.gbpPerUsd * 100);
     expect(costPenceFromUsage(undefined)).toBeUndefined();
     expect(costPenceFromUsage({})).toBeUndefined();
+  });
+
+  it("every allowed model has a price", () => {
+    expect(Object.keys(GEMINI_MODEL_PRICES)).toContain(DEFAULT_GEMINI_MODEL);
+    for (const price of Object.values(GEMINI_MODEL_PRICES)) {
+      expect(price.inputUsdPerMillionTokens).toBeGreaterThan(0);
+      expect(price.outputUsdPerMillionTokens).toBeGreaterThan(0);
+    }
+  });
+
+  it("refuses to create a provider for a model without a known price", () => {
+    const { client } = fakeClient([{ text: "{}" }]);
+    expect(() => new GeminiTaggingProvider(client, "gemini-unpriced-flash")).toThrow(ConfigError);
+    expect(() => priceFor("toString")).toThrow(ConfigError);
+  });
+});
+
+describe("the structured-output schema uses only keywords the SDK supports", () => {
+  function keywordsOf(schema: unknown, found = new Set<string>()): Set<string> {
+    if (Array.isArray(schema)) {
+      for (const item of schema) keywordsOf(item, found);
+    } else if (schema && typeof schema === "object") {
+      for (const [key, value] of Object.entries(schema)) {
+        found.add(key);
+        if (key === "properties" || key === "$defs") {
+          // Keys here are field names, not keywords.
+          for (const sub of Object.values(value as object)) keywordsOf(sub, found);
+        } else if (key !== "enum" && key !== "required") {
+          keywordsOf(value, found);
+        }
+      }
+    }
+    return found;
+  }
+
+  it("has nothing outside the documented list (no maxLength, pattern or format)", () => {
+    const used = [...keywordsOf(TAGGING_RESPONSE_SCHEMA)];
+    expect(used.filter((k) => !(SUPPORTED_SCHEMA_KEYWORDS as readonly string[]).includes(k))).toEqual([]);
+    for (const risky of ["maxLength", "minLength", "pattern", "format", "propertyOrdering"]) {
+      expect(used).not.toContain(risky);
+    }
+  });
+
+  it("keeps the text limits in the descriptions (and in Zod)", () => {
+    expect(TAGGING_RESPONSE_SCHEMA.properties.description.description).toContain("120");
+    expect(TAGGING_RESPONSE_SCHEMA.properties.fabric.description).toContain("40");
+  });
+});
+
+describe("time budget", () => {
+  it("two tagging attempts plus 15 s for the image work fit inside the photo route's maxDuration", async () => {
+    const { maxDuration } = await import("@/app/api/items/photo/route");
+    const request = buildTaggingRequest(DEFAULT_GEMINI_MODEL, { image: IMAGE });
+    expect(request.config?.httpOptions?.timeout).toBe(TAGGING_ATTEMPT_TIMEOUT_MS);
+    expect(2 * TAGGING_ATTEMPT_TIMEOUT_MS + 15_000).toBeLessThan(maxDuration * 1000);
   });
 });
 
 describe("getGeminiTaggingEnv", () => {
   afterEach(() => vi.unstubAllEnvs());
 
-  it("defaults the model and lets GEMINI_MODEL override it", () => {
+  it("defaults the model and accepts a model with a known price", () => {
     vi.stubEnv("GEMINI_API_KEY", "test-key");
     vi.stubEnv("GEMINI_MODEL", "");
     expect(getGeminiTaggingEnv()).toEqual({ GEMINI_API_KEY: "test-key", GEMINI_MODEL: DEFAULT_GEMINI_MODEL });
     expect(DEFAULT_GEMINI_MODEL).toBe("gemini-3.8-flash");
+    vi.stubEnv("GEMINI_MODEL", "gemini-3.8-flash");
+    expect(getGeminiTaggingEnv().GEMINI_MODEL).toBe("gemini-3.8-flash");
+  });
+
+  it("refuses a GEMINI_MODEL with no known price (ConfigError)", () => {
+    vi.stubEnv("GEMINI_API_KEY", "test-key");
     vi.stubEnv("GEMINI_MODEL", "gemini-other-flash");
-    expect(getGeminiTaggingEnv().GEMINI_MODEL).toBe("gemini-other-flash");
+    expect(() => getGeminiTaggingEnv()).toThrow(ConfigError);
   });
 
   it("is a configuration error without a real key", () => {
@@ -186,7 +253,7 @@ describe("the tagging step with Gemini: validate, retry once, then empty tags", 
   function withReplies(replies: Reply[]) {
     const fake = fakeClient(replies);
     store = new InMemoryUsageStore();
-    deps = { images: new SharpImageProcessor(), tagger: new GeminiTaggingProvider(fake.client, "gemini-test"), usage: new UsageGuard(store) };
+    deps = { images: new SharpImageProcessor(), tagger: new GeminiTaggingProvider(fake.client, DEFAULT_GEMINI_MODEL), usage: new UsageGuard(store) };
     return fake;
   }
 

@@ -12,6 +12,15 @@ import type { AcceptedImageType } from "@/contracts";
 import type { ImageInput } from "@/lib/ai/types";
 import type { ImageInfo, ServerImageProcessor } from "./server";
 import { InvalidImageError } from "./server-errors";
+import { sniffImageType } from "./sniff";
+
+/**
+ * A cut-out must have at least this share of its pixels see-through (alpha
+ * below TRANSPARENT_ALPHA_BELOW); otherwise it's treated as no cut-out. A
+ * real cut-out has a transparent background around the item.
+ */
+export const MIN_TRANSPARENT_SHARE = 0.01;
+export const TRANSPARENT_ALPHA_BELOW = 250;
 
 /** Plain light grey behind transparent cut-outs sent to a vision model. The tagging prompt mentions it. */
 export const MODEL_BACKGROUND = "#e6e6e6";
@@ -60,6 +69,10 @@ async function run(pipeline: Sharp, mimeType: AcceptedImageType): Promise<ImageI
 
 export class SharpImageProcessor implements ServerImageProcessor {
   async inspect(data: Uint8Array): Promise<ImageInfo> {
+    // Check the magic bytes before libvips sees anything, so it never parses
+    // SVG, TIFF, HEIF or the other formats it happens to support.
+    const sniffed = sniffImageType(data);
+    if (!sniffed) throw new InvalidImageError("Must be a JPEG, PNG or WebP image");
     let metadata: Metadata;
     try {
       metadata = await open(data).metadata();
@@ -67,13 +80,15 @@ export class SharpImageProcessor implements ServerImageProcessor {
       throw new InvalidImageError();
     }
     const mimeType = metadata.format ? FORMAT_TO_TYPE[metadata.format] : undefined;
-    if (!mimeType || !metadata.width || !metadata.height) {
+    if (mimeType !== sniffed || !metadata.width || !metadata.height) {
       throw new InvalidImageError("Must be a JPEG, PNG or WebP image");
     }
+    // Upright size: EXIF orientations 5–8 swap width and height.
+    const upright = metadata.autoOrient ?? { width: metadata.width, height: metadata.height };
     return {
       mimeType,
-      width: metadata.width,
-      height: metadata.height,
+      width: upright.width,
+      height: upright.height,
       bytes: data.byteLength,
       hasAlpha: metadata.hasAlpha ?? false,
     };
@@ -84,8 +99,14 @@ export class SharpImageProcessor implements ServerImageProcessor {
       const pipeline = open(image.data);
       const { hasAlpha } = await pipeline.metadata();
       if (!hasAlpha) return false;
-      const stats = await pipeline.stats();
-      return !stats.isOpaque;
+      // Decodes every pixel, so a truncated or corrupt file fails here too.
+      const { data, info } = await pipeline.extractChannel("alpha").raw().toBuffer({ resolveWithObject: true });
+      const pixels = info.width * info.height;
+      let seeThrough = 0;
+      for (let i = 0; i < data.length; i++) {
+        if (data[i]! < TRANSPARENT_ALPHA_BELOW) seeThrough++;
+      }
+      return pixels > 0 && seeThrough / pixels >= MIN_TRANSPARENT_SHARE;
     } catch {
       throw new InvalidImageError();
     }

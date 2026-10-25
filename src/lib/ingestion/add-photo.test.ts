@@ -15,7 +15,7 @@ import { CapReachedError } from "@/lib/usage/errors";
 import { TEST_USER, makeTestDeps } from "@/test/ingestion-deps";
 import { tagging } from "@/test/fixtures/model-output";
 import { cutoutPng, opaquePngWithAlpha, phoneJpeg, readMetadata } from "@/test/images";
-import { addItemFromPhoto } from "./add-photo";
+import { addItemFromPhoto, removeQuietly } from "./add-photo";
 import type { ImageStorage } from "./storage";
 
 async function upload(options: { cutout?: boolean | "opaque"; width?: number; height?: number; sourceUrl?: string } = {}): Promise<PhotoUpload> {
@@ -198,7 +198,80 @@ describe("addItemFromPhoto: caps", () => {
   });
 });
 
+describe("addItemFromPhoto: cut-out rules", () => {
+  /** An unrotated 800×600 photo with a cut-out of the given size. */
+  async function withCutout(width: number, height: number): Promise<PhotoUpload> {
+    return {
+      original: { ...(await phoneJpeg({ width: 800, height: 600 })), name: "IMG.jpg" },
+      cutout: { ...(await cutoutPng({ width, height })), name: "c.png" },
+      sourceUrl: undefined,
+    };
+  }
+
+  it.each([
+    ["wider", 801, 300],
+    ["taller", 300, 601],
+  ])("refuses a cut-out %s than the photo with a 400 on `cutout`", async (_label, width, height) => {
+    const deps = makeTestDeps({ taggerOutputs: [tagging.valid] });
+    const error = await apiError(addItemFromPhoto(deps, TEST_USER, await withCutout(width, height)));
+    expect(error.extras.issues).toEqual([{ path: "cutout", message: "Must not be larger than the photo it was cut from" }]);
+    expect(deps.storage.objects.size).toBe(0);
+    expect(deps.usageStore.events).toEqual([]);
+  });
+
+  it("accepts a cut-out exactly the photo's size", async () => {
+    const deps = makeTestDeps({ taggerOutputs: [tagging.valid] });
+    expect((await addItemFromPhoto(deps, TEST_USER, await withCutout(800, 600))).cutoutImageKey).not.toBeNull();
+  });
+
+  it("compares against the upright photo: a rotated phone JPEG and a matching cut-out are fine", async () => {
+    const deps = makeTestDeps({ taggerOutputs: [tagging.valid] });
+    // Stored 1600×1200 with orientation 6, i.e. 1200×1600 upright, like the cut-out.
+    const original = await phoneJpeg({ width: 1600, height: 1200, orientation: 6 });
+    const request = {
+      original: { ...original, name: "IMG.jpg" },
+      cutout: { ...(await cutoutPng({ width: 1200, height: 1600 })), name: "c.png" },
+      sourceUrl: undefined,
+    };
+    expect((await addItemFromPhoto(deps, TEST_USER, request)).cutoutImageKey).not.toBeNull();
+  });
+
+  it("treats a cut-out with under 1% see-through pixels as no cut-out", async () => {
+    const deps = makeTestDeps({ taggerOutputs: [tagging.valid] });
+    const rgba = Buffer.alloc(200 * 300 * 4, 255);
+    for (let i = 0; i < 500; i++) rgba[i * 4 + 3] = 0; // 0.83%
+    const png = await sharp(rgba, { raw: { width: 200, height: 300, channels: 4 } }).png().toBuffer();
+    const request = { ...(await upload()), cutout: { data: new Uint8Array(png), mimeType: "image/png" as const, name: "c.png" } };
+    const draft = await addItemFromPhoto(deps, TEST_USER, request);
+    expect(draft.cutoutImageKey).toBeNull();
+    expect(await deps.storage.listObjects(STORAGE_BUCKETS.cutouts, TEST_USER)).toEqual([]);
+  });
+});
+
 describe("addItemFromPhoto: storage failures leave nothing behind", () => {
+  it("doesn't count the item if storing the original fails", async () => {
+    const deps = makeTestDeps({ taggerOutputs: [tagging.valid] });
+    const storage: ImageStorage = Object.create(deps.storage);
+    storage.upload = async () => {
+      throw new Error("storage down");
+    };
+    await expect(addItemFromPhoto({ ...deps, storage }, TEST_USER, await upload())).rejects.toThrow("storage down");
+    expect(deps.usageStore.events).toEqual([]);
+    expect(deps.fakeTagger.calls).toHaveLength(0);
+  });
+
+  it("removeQuietly tries every removal even if one fails", async () => {
+    const deps = makeTestDeps();
+    const removed: string[] = [];
+    const storage: ImageStorage = Object.create(deps.storage);
+    storage.remove = async (bucket, keys) => {
+      removed.push(`${bucket}/${keys.join()}`);
+      if (bucket === STORAGE_BUCKETS.originals) throw new Error("storage down");
+    };
+    await removeQuietly(storage, { originalKey: "o.jpg", cutoutKey: "c.png" });
+    expect(removed.sort()).toEqual(["cutouts/c.png", "originals/o.jpg"]);
+  });
+
   it("removes the original if storing the cut-out fails", async () => {
     const deps = makeTestDeps({ taggerOutputs: [tagging.valid] });
     const storage: ImageStorage = Object.create(deps.storage);

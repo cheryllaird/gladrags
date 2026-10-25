@@ -43,9 +43,14 @@ export interface ImageReferences {
 const ITEM_COLUMNS =
   "id, user_id, source, source_url, original_image_key, cutout_image_key, category, subcategory, colours, pattern, formality, seasons, warmth, occasions, fabric, description, tags_edited, created_at";
 
-/** Escape % and _ (and the escape character) for an ILIKE pattern, so the search is literal. */
+/**
+ * Make search text safe for an ILIKE pattern: %, _ and the escape character
+ * are escaped so they match literally. PostgREST also treats `*` as `%` in
+ * like patterns (escaped or not), so each `*` becomes `_`, which matches
+ * exactly one character: "a*b" still finds "a*b", and can't list everything.
+ */
 export function escapeLikePattern(text: string): string {
-  return text.replace(/[\\%_]/g, (c) => `\\${c}`);
+  return text.replace(/[\\%_]/g, (c) => `\\${c}`).replace(/\*/g, "_");
 }
 
 function parseRows(data: unknown): ItemRow[] {

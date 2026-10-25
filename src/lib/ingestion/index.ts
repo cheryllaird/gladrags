@@ -8,7 +8,7 @@
 export { addItemFromPhoto, type PhotoIngestionDeps } from "./add-photo";
 export { cleanUpOrphanedImages, ORPHAN_MIN_AGE_MS, type CleanupReport } from "./cleanup";
 export { getPhotoIngestionDeps, getWardrobeDeps } from "./deps";
-export { CUTOUT_RULES, ORIGINAL_RULES, checkUploadedCutout, checkUploadedImage, cleanImage } from "./images";
+export { CUTOUT_RULES, ORIGINAL_RULES, checkUploadedCutout, checkUploadedImage, cleanImage, invalidImage, type CheckedImage } from "./images";
 export {
   InMemoryItemRepository,
   SupabaseImageReferences,

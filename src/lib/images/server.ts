@@ -23,18 +23,7 @@ export const RANKING_THUMBNAIL_PX = 256;
  */
 export const TAGGING_IMAGE_PX = 768;
 
-/**
- * Work out the image type from its first bytes, ignoring what the client
- * claimed. Returns null for anything that isn't JPEG, PNG or WebP.
- */
-export function sniffImageType(bytes: Uint8Array): AcceptedImageType | null {
-  const starts = (sig: number[], offset = 0) => sig.every((b, i) => bytes[offset + i] === b);
-  if (starts([0xff, 0xd8, 0xff])) return "image/jpeg";
-  if (starts([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return "image/png";
-  // "RIFF" .... "WEBP"
-  if (starts([0x52, 0x49, 0x46, 0x46]) && starts([0x57, 0x45, 0x42, 0x50], 8)) return "image/webp";
-  return null;
-}
+export { sniffImageType } from "./sniff";
 
 export interface ImageInfo {
   mimeType: AcceptedImageType;
@@ -75,20 +64,24 @@ export const ANY_ACCEPTED_TYPE: readonly AcceptedImageType[] = ACCEPTED_IMAGE_TY
  */
 export interface ServerImageProcessor {
   /**
-   * Read the header only: real type (from bytes), pixel size and whether
-   * there's an alpha channel. Throws InvalidImageError if it isn't a
-   * readable JPEG, PNG or WebP. Cheap: doesn't decode the pixels.
+   * Read the header only: real type (magic bytes checked first, so nothing
+   * but JPEG, PNG or WebP reaches the decoder), upright pixel size (EXIF
+   * orientation applied) and whether there's an alpha channel. Throws
+   * InvalidImageError otherwise. Cheap: doesn't decode the pixels, so a
+   * truncated file can still pass; stripMetadata decodes it fully.
    */
   inspect(data: Uint8Array): Promise<ImageInfo>;
   /**
-   * True if the image has an alpha channel AND at least one pixel that
-   * isn't fully opaque. A PNG without that isn't a cut-out.
+   * True if at least 1% of the pixels are see-through (alpha < 250). A PNG
+   * without that isn't a cut-out. Decodes every pixel: throws
+   * InvalidImageError for a truncated or corrupt file.
    */
   hasTransparency(image: ImageInput): Promise<boolean>;
   /**
    * Re-encode without EXIF or other metadata (location!), keeping the
    * format and the transparency of PNG cut-outs. Applies the EXIF
-   * orientation first so the picture isn't left rotated.
+   * orientation first so the picture isn't left rotated. Decodes every
+   * pixel: throws InvalidImageError for a truncated or corrupt file.
    */
   stripMetadata(image: ImageInput): Promise<ImageInput>;
   /**

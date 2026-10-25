@@ -15,7 +15,7 @@ import type { PhotoUpload } from "@/lib/api/upload";
 import { SIGNED_URL_TTL_SECONDS, type ServerImageProcessor } from "@/lib/images/server";
 import type { UsageGuard } from "@/lib/usage/guard";
 import { CUTOUT_RULES, ORIGINAL_RULES, checkUploadedCutout, checkUploadedImage, cleanImage } from "./images";
-import { newImageKey, type ImageStorage } from "./storage";
+import { newImageKey, type ImageBucket, type ImageStorage } from "./storage";
 import { suggestTags } from "./tagging";
 
 export interface PhotoIngestionDeps {
@@ -29,20 +29,22 @@ export async function addItemFromPhoto(deps: PhotoIngestionDeps, userId: string,
   // 1. Caps first (AI paused, or today's items used up), before any work.
   await deps.usage.assertCanStart(userId, "item_ingest");
 
-  // 2–3. Real type, size and pixel dimensions; the cut-out must be transparent.
+  // 2–3. Real type, size and pixel dimensions. The cut-out can't be larger
+  // than the photo and must be see-through, or it's treated as missing.
   const original = await checkUploadedImage(deps.images, upload.original, UPLOAD_FIELDS.original, "photo", ORIGINAL_RULES);
-  const cutout = upload.cutout ? await checkUploadedCutout(deps.images, upload.cutout, UPLOAD_FIELDS.cutout) : null;
+  const cutout = upload.cutout ? await checkUploadedCutout(deps.images, upload.cutout, UPLOAD_FIELDS.cutout, original) : null;
 
-  // The upload is valid: count it now, because tagging (which costs) happens in this request.
-  await deps.usage.recordAction(userId, "item_ingest");
-
-  // 4. Strip EXIF (location included) from both.
-  const cleanOriginal = await cleanImage(deps.images, original, ORIGINAL_RULES.maxBytes);
-  const cleanCutout = cutout ? await cleanImage(deps.images, cutout, CUTOUT_RULES.maxBytes) : null;
+  // 4. Strip EXIF (location included) from both. This fully decodes them,
+  // so a truncated or corrupt file is a 400 here, before anything counts.
+  const cleanOriginal = await cleanImage(deps.images, original, ORIGINAL_RULES.maxBytes, UPLOAD_FIELDS.original, "photo");
+  const cleanCutout = cutout ? await cleanImage(deps.images, cutout, CUTOUT_RULES.maxBytes, UPLOAD_FIELDS.cutout, "cut-out") : null;
 
   // 5. Store both in the private buckets.
   const stored = await storeImages(deps.storage, userId, cleanOriginal, cleanCutout);
   try {
+    // Stored and valid: count the item now, because tagging (which costs) happens in this request.
+    await deps.usage.recordAction(userId, "item_ingest");
+
     // 6. Tag the cut-out if there is one, otherwise the original.
     const suggestedTags = await suggestTags(deps, userId, cleanCutout ?? cleanOriginal);
 
@@ -72,7 +74,7 @@ export async function addItemFromPhoto(deps: PhotoIngestionDeps, userId: string,
   }
 }
 
-interface StoredKeys {
+export interface StoredKeys {
   originalKey: string;
   cutoutKey: string | null;
 }
@@ -98,11 +100,15 @@ async function storeImages(
 }
 
 /** Best effort: anything left behind is caught by the orphaned-image cleanup. */
-async function removeQuietly(storage: ImageStorage, keys: StoredKeys): Promise<void> {
-  try {
-    await storage.remove(STORAGE_BUCKETS.originals, [keys.originalKey]);
-    if (keys.cutoutKey) await storage.remove(STORAGE_BUCKETS.cutouts, [keys.cutoutKey]);
-  } catch (error) {
-    console.error("Couldn't remove images after a failed upload", error instanceof Error ? error.message : "unknown");
+export async function removeQuietly(storage: ImageStorage, keys: StoredKeys): Promise<void> {
+  const removals: [ImageBucket, string][] = [[STORAGE_BUCKETS.originals, keys.originalKey]];
+  if (keys.cutoutKey) removals.push([STORAGE_BUCKETS.cutouts, keys.cutoutKey]);
+  // Try every removal, even if an earlier one fails.
+  const results = await Promise.allSettled(removals.map(([bucket, key]) => storage.remove(bucket, [key])));
+  for (const result of results) {
+    if (result.status === "rejected") {
+      const reason: unknown = result.reason;
+      console.error("Couldn't remove an image after a failed upload", reason instanceof Error ? reason.message : "unknown");
+    }
   }
 }

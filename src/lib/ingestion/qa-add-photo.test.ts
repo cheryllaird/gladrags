@@ -88,31 +88,28 @@ describe("a refused upload is never counted against the daily cap", () => {
     nothingKept(deps);
   });
 
-  it.fails("BUG: a truncated original is a 400 and isn't counted (today: 500 internal, and counted)", async () => {
+  // Was BUG (it.fails): 500 internal, and counted. Fixed: images are fully
+  // decoded and cleaned before the item is counted.
+  it("a truncated original is a 400 on the original field, nothing stored, not counted", async () => {
     const deps = makeTestDeps({ taggerOutputs: [tagging.valid] });
     const broken = truncated(await phoneJpeg({ width: 800, height: 600 }));
     const error = await failure(addItemFromPhoto(deps, TEST_USER, await upload({ original: named(broken, "IMG.jpg") })));
     expect(counted(deps)).toBe(0);
     expect(error).toBeInstanceOf(ApiException);
     expect((error as ApiException).code).toBe("bad_request");
+    expect((error as ApiException).extras.issues?.[0]?.path).toBe("original");
+    nothingKept(deps);
+    expect(deps.fakeTagger.calls).toHaveLength(0);
   });
 
-  it.fails("BUG: a truncated cut-out is a 400 on the cut-out field (today: InvalidImageError, a 500)", async () => {
+  // Was BUG (it.fails): InvalidImageError from hasTransparency, a 500.
+  it("a truncated cut-out is a 400 on the cut-out field, nothing stored, not counted", async () => {
     const deps = makeTestDeps({ taggerOutputs: [tagging.valid] });
     const broken = truncated(await cutoutPng(), 0.6);
     const error = await failure(addItemFromPhoto(deps, TEST_USER, await upload({ cutout: named(broken, "c.png") })));
     expect(error).toBeInstanceOf(ApiException);
     expect((error as ApiException).extras.issues?.[0]?.path).toBe("cutout");
-  });
-
-  it("pins today's behaviour for the truncated original: an uncaught InvalidImageError after the item was counted", async () => {
-    // Companion to the BUG test above, so the reproduction is explicit.
-    const deps = makeTestDeps({ taggerOutputs: [tagging.valid] });
-    const broken = truncated(await phoneJpeg({ width: 800, height: 600 }));
-    const error = await failure(addItemFromPhoto(deps, TEST_USER, await upload({ original: named(broken, "IMG.jpg") })));
-    expect(error).not.toBeInstanceOf(ApiException);
-    expect((error as Error).name).toBe("InvalidImageError");
-    expect(counted(deps)).toBe(1);
+    expect(counted(deps)).toBe(0);
     nothingKept(deps);
   });
 });
@@ -215,21 +212,25 @@ describe("other awkward uploads", () => {
     expect(Buffer.from(stored.data).includes("QaSecretCam")).toBe(false);
   });
 
-  it("a cut-out larger than the original is accepted as it is (documents today's behaviour; no rule says otherwise)", async () => {
+  // Rule changed by the orchestrator: a cut-out can't be larger than the
+  // photo it was cut from (this test used to document that it was accepted).
+  it("a cut-out larger than the original is a 400 on the cut-out field", async () => {
     const deps = makeTestDeps({ taggerOutputs: [tagging.valid] });
-    const draft = await addItemFromPhoto(
-      deps,
-      TEST_USER,
-      await upload({
-        original: named(await phoneJpeg({ width: 200, height: 150 }), "small.jpg"),
-        cutout: named(await cutoutPng({ width: 1600, height: 1600 }), "big.png"),
-      }),
+    const error = await failure(
+      addItemFromPhoto(
+        deps,
+        TEST_USER,
+        await upload({
+          original: named(await phoneJpeg({ width: 200, height: 150 }), "small.jpg"),
+          cutout: named(await cutoutPng({ width: 1600, height: 1600 }), "big.png"),
+        }),
+      ),
     );
-    expect(draft.cutoutImageKey).not.toBeNull();
-    // The model is sent the cut-out, not the original.
-    const sent = deps.fakeTagger.calls[0]!.image;
-    const sharp = (await import("sharp")).default;
-    expect((await sharp(sent.data).metadata()).width).toBe(768);
+    expect((error as ApiException).code).toBe("bad_request");
+    expect((error as ApiException).extras.issues?.[0]?.path).toBe("cutout");
+    expect(counted(deps)).toBe(0);
+    nothingKept(deps);
+    expect(deps.fakeTagger.calls).toHaveLength(0);
   });
 
   it("the stored key's extension follows the real type, not the name the phone sent", async () => {

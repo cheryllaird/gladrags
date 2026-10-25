@@ -177,26 +177,19 @@ describe("POST /api/items/photo: claimed type vs real type", () => {
     expect(counted()).toBe(0);
   });
 
-  it.fails("BUG: a truncated JPEG original answers 400 (today: 500 internal, and today's item count goes up)", async () => {
+  // Both were BUG pins (it.fails): 500 internal, and the original was counted.
+  it("a truncated JPEG original answers 400 on `original` and isn't counted", async () => {
     const broken = truncated(await phoneJpeg({ width: 800, height: 600 }));
     const res = await itemPhoto.POST(photoForm({ original: file(broken.data, "IMG.jpg", "image/jpeg") }));
     expect({ status: res.status, counted: counted() }).toEqual({ status: 400, counted: 0 });
   });
 
-  it.fails("BUG: a truncated PNG cut-out answers 400 (today: 500 internal)", async () => {
+  it("a truncated PNG cut-out answers 400 on `cutout` and isn't counted", async () => {
     const broken = truncated(await cutoutPng(), 0.6);
     const res = await itemPhoto.POST(photoForm({ original: await jpegFile(), cutout: file(broken.data, "c.png", "image/png") }));
     expect(res.status).toBe(400);
-  });
-
-  it("pins today's answers for truncated files, so the reproduction is explicit", async () => {
-    const brokenOriginal = truncated(await phoneJpeg({ width: 800, height: 600 }));
-    const a = await itemPhoto.POST(photoForm({ original: file(brokenOriginal.data, "IMG.jpg", "image/jpeg") }));
-    expect([a.status, (await errorOf(a)).code, counted()]).toEqual([500, "internal", 1]);
-
-    const brokenCutout = truncated(await cutoutPng(), 0.6);
-    const b = await itemPhoto.POST(photoForm({ original: await jpegFile(), cutout: file(brokenCutout.data, "c.png", "image/png") }));
-    expect([b.status, (await errorOf(b)).code, counted()]).toEqual([500, "internal", 1]);
+    const error = await errorOf(res);
+    expect([error.code, error.issues?.[0]?.path, counted()]).toEqual(["bad_request", "cutout", 0]);
   });
 
   it("AI paused: 503 ai_paused, nothing stored, no usage rows added", async () => {

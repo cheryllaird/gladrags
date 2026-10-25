@@ -144,6 +144,12 @@ describe("search escaping", () => {
   it("treats % and _ in the search as literal characters", () => {
     expect(escapeLikePattern("100%_cotton\\")).toBe("100\\%\\_cotton\\\\");
   });
+
+  it("turns PostgREST's * wildcard into a single-character match", () => {
+    expect(escapeLikePattern("*")).toBe("_");
+    expect(escapeLikePattern("a*b")).toBe("a_b");
+    expect(escapeLikePattern("a*b")).not.toContain("*");
+  });
 });
 
 describe("get, edit and delete", () => {

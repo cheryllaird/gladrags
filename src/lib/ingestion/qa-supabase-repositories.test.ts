@@ -118,7 +118,7 @@ describe("search escaping", () => {
     expect(escapeLikePattern("Navy slim-fit chinos")).toBe("Navy slim-fit chinos");
   });
 
-  it.fails("BUG (low): '*' is PostgREST's alias for % in like/ilike, so it must not reach the pattern unescaped", async () => {
+  it("'*' is PostgREST's alias for % in like/ilike, so it must not reach the pattern unescaped", async () => {
     const { client, queries } = fakeClient();
     await new SupabaseItemRepository(client).list(TEST_USER, { q: "a*b" });
     const pattern = queries[0]!.calls.find(([m]) => m === "ilike")![2] as string;

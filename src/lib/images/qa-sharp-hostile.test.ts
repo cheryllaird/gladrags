@@ -218,12 +218,15 @@ describe("hostile uploads", () => {
   });
 
   describe("alpha", () => {
-    it("one transparent pixel is enough to count as a cut-out (documents the threshold)", async () => {
-      expect(await images.hasTransparency(await pngWithOneTransparentPixel())).toBe(true);
+    // Threshold changed by the orchestrator: a cut-out needs at least 1% of
+    // its pixels with alpha < 250 (these two used to document "any pixel
+    // below 255 counts").
+    it("one transparent pixel is not enough to count as a cut-out", async () => {
+      expect(await images.hasTransparency(await pngWithOneTransparentPixel())).toBe(false);
     });
 
-    it("alpha 254 everywhere counts as transparent (documents the threshold)", async () => {
-      expect(await images.hasTransparency(await pngNearlyOpaque())).toBe(true);
+    it("alpha 254 everywhere doesn't count as transparent", async () => {
+      expect(await images.hasTransparency(await pngNearlyOpaque())).toBe(false);
     });
 
     it("a JPEG never counts as a cut-out", async () => {

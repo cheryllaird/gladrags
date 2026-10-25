@@ -60,8 +60,11 @@ async function tagWith(provider = realProvider()) {
   return { tags, costs, deps };
 }
 
-/** Independent of costPenceFromUsage: (input × $0.50 + output × $3.00) per million, × 0.8 £/$, in pence. */
-const expectedPence = (input: number, output: number) => ((input * 0.5 + output * 3.0) / 1_000_000) * 0.8 * 100;
+/**
+ * Independent of costPenceFromUsage: (input × $0.50 + output × $3.00) per
+ * million, plus 25% headroom (review fix), × 0.8 £/$, in pence.
+ */
+const expectedPence = (input: number, output: number) => ((input * 0.5 + output * 3.0) / 1_000_000) * 1.25 * 0.8 * 100;
 
 beforeEach(() => {
   vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -129,7 +132,8 @@ describe("retry and fallback through the real SDK: never a third HTTP call", () 
     expect(costs[0]!.costPence).toBeCloseTo(expectedPence(1712, 0), 10);
   });
 
-  it("a hung request is cut off by the 30 s timeout and counts as a failed attempt", async () => {
+  // The per-attempt timeout is 20 s since the review (was 30 s), so two attempts fit maxDuration.
+  it("a hung request is cut off by the 20 s timeout and counts as a failed attempt", async () => {
     const { fn } = stubFetch([() => reply(200, {})]);
     fn.mockImplementation(
       (_url, init) =>
@@ -152,11 +156,11 @@ describe("retry and fallback through the real SDK: never a third HTTP call", () 
     await settle(1);
     const timers = vi.getTimerCount();
     expect(timers).toBeGreaterThan(0);
-    await vi.advanceTimersByTimeAsync(29_999);
+    await vi.advanceTimersByTimeAsync(19_999);
     expect(fn).toHaveBeenCalledTimes(1); // not cut off early
     await vi.advanceTimersByTimeAsync(1);
     await settle(2);
-    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(20_000);
     const result = await pending;
     expect(result.ok).toBe(false);
     expect(fn).toHaveBeenCalledTimes(2);
@@ -167,7 +171,7 @@ describe("retry and fallback through the real SDK: never a third HTTP call", () 
 describe("cost maths from tokens", () => {
   it("prices the recorded token counts independently of the implementation", () => {
     expect(costPenceFromUsage(USAGE)).toBeCloseTo(expectedPence(1712, 96 + 184), 12);
-    expect(costPenceFromUsage(USAGE)).toBeCloseTo(0.135_68, 10);
+    expect(costPenceFromUsage(USAGE)).toBeCloseTo(0.1696, 10);
   });
 
   it("thinking tokens are billed as output", () => {
@@ -185,9 +189,9 @@ describe("cost maths from tokens", () => {
     expect(costPenceFromUsage({ promptTokenCount: 0 })).toBe(0);
   });
 
-  it("the £5 cap holds about 3,700 typical tagging calls at these prices", () => {
+  it("the £5 cap holds about 2,900 typical tagging calls at these prices (with headroom)", () => {
     const perCall = costPenceFromUsage(USAGE)!;
-    expect(Math.floor(500 / perCall)).toBeGreaterThan(3000);
+    expect(Math.floor(500 / perCall)).toBeGreaterThan(2500);
     expect(GEMINI_PRICING.gbpPerUsd).toBeGreaterThan(0);
   });
 
@@ -268,8 +272,8 @@ describe("product hints are data, never instructions", () => {
 });
 
 describe("timeouts vs the route's time limit", () => {
-  it.fails(
-    "BUG (medium): two timed-out attempts fit inside POST /api/items/photo's maxDuration, so the empty-tags fallback can be reached",
+  it(
+    "two timed-out attempts fit inside POST /api/items/photo's maxDuration, so the empty-tags fallback can be reached",
     async () => {
       const { maxDuration } = await import("@/app/api/items/photo/route");
       const request = buildTaggingRequest(MODEL, { image: { data: new Uint8Array([1]), mimeType: "image/jpeg" } });

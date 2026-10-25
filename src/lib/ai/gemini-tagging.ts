@@ -25,24 +25,46 @@ import {
   SUBCATEGORIES,
   WARMTH_LEVELS,
 } from "@/contracts";
-import { parseEnv } from "@/lib/env";
+import { ConfigError, parseEnv } from "@/lib/env";
 import type { ModelCall, TaggingInput, TaggingProvider } from "./types";
 
 export const DEFAULT_GEMINI_MODEL = "gemini-3.8-flash";
 
-/** How long one tagging call may take before it counts as a failed attempt. */
-const REQUEST_TIMEOUT_MS = 30_000;
+/**
+ * How long one tagging attempt may take before it counts as failed. Two
+ * attempts (the spec's one retry) plus the image work must fit inside
+ * POST /api/items/photo's maxDuration (60 s); a test checks this.
+ */
+export const TAGGING_ATTEMPT_TIMEOUT_MS = 20_000;
+
+/** List prices per million tokens, in US dollars. Output includes "thinking" tokens. */
+export interface GeminiListPrice {
+  inputUsdPerMillionTokens: number;
+  outputUsdPerMillionTokens: number;
+}
 
 /**
- * Prices used to turn token counts into pence for the monthly cap. Set on
- * the high side for a Flash model; check them against Google's price list
- * when switching to the paid tier, and after the first tester week.
+ * The models GladRags may use for tagging, with their prices. GEMINI_MODEL
+ * must be one of these, so the £5 cap is never counted at the wrong price.
+ * To allow another model, add it here with its published price.
+ *
+ * gemini-3.8-flash: its published price couldn't be checked from the build
+ * environment; these are Gemini 3 Flash list prices. PRICE_HEADROOM covers
+ * the difference. Confirm against Google's price list before testers join.
  */
+export const GEMINI_MODEL_PRICES: Readonly<Record<string, GeminiListPrice>> = {
+  "gemini-3.8-flash": { inputUsdPerMillionTokens: 0.5, outputUsdPerMillionTokens: 3.0 },
+};
+
+/** Safety margin on top of list prices, so the cap errs on the side of stopping early. */
+export const PRICE_HEADROOM = 1.25;
+export const GBP_PER_USD = 0.8;
+
+/** The default model's pricing, as used for the cap. */
 export const GEMINI_PRICING = {
-  inputUsdPerMillionTokens: 0.5,
-  /** Output includes "thinking" tokens. */
-  outputUsdPerMillionTokens: 3.0,
-  gbpPerUsd: 0.8,
+  ...GEMINI_MODEL_PRICES[DEFAULT_GEMINI_MODEL]!,
+  headroom: PRICE_HEADROOM,
+  gbpPerUsd: GBP_PER_USD,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -51,9 +73,17 @@ export const GEMINI_PRICING = {
 
 const GeminiEnvSchema = z.object({
   GEMINI_API_KEY: z.string().min(1).refine((key) => key !== "replace-me"),
-  GEMINI_MODEL: z.string().trim().min(1).default(DEFAULT_GEMINI_MODEL),
+  GEMINI_MODEL: z
+    .string()
+    .trim()
+    .min(1)
+    .default(DEFAULT_GEMINI_MODEL)
+    .refine((model) => Object.hasOwn(GEMINI_MODEL_PRICES, model), {
+      error: "Not a model with known prices (add it to GEMINI_MODEL_PRICES)",
+    }),
 });
 
+/** Throws ConfigError if the key is missing or GEMINI_MODEL has no known price. */
 export function getGeminiTaggingEnv(): z.infer<typeof GeminiEnvSchema> {
   return parseEnv(
     GeminiEnvSchema,
@@ -67,10 +97,22 @@ export function getGeminiTaggingEnv(): z.infer<typeof GeminiEnvSchema> {
 // ---------------------------------------------------------------------------
 
 /**
+ * The JSON Schema keywords @google/genai documents as supported for
+ * `responseJsonSchema` (GenerateContentConfig, SDK 2.28). Anything else
+ * (maxLength, pattern, format...) could make Gemini refuse every call, so
+ * a test checks the schema uses only these. Text length limits live in the
+ * descriptions and in the Zod contract instead.
+ */
+export const SUPPORTED_SCHEMA_KEYWORDS = [
+  "$id", "$defs", "$ref", "$anchor", "type", "title", "description", "enum", "items", "prefixItems",
+  "minItems", "maxItems", "minimum", "maximum", "anyOf", "oneOf", "properties", "additionalProperties", "required",
+] as const;
+
+/**
  * JSON Schema for Gemini's structured output. It mirrors ItemTagsSchema in
  * src/contracts/item.ts, built from the same vocabularies, so the model can
  * only pick allowed values. The reply is still validated against the
- * contract afterwards (e.g. subcategory must match category).
+ * contract afterwards (e.g. subcategory must match category, text lengths).
  */
 export const TAGGING_RESPONSE_SCHEMA = {
   type: "object",
@@ -88,8 +130,8 @@ export const TAGGING_RESPONSE_SCHEMA = {
       minItems: 1,
       maxItems: PRESET_STYLE_IDS.length,
     },
-    fabric: { type: "string", maxLength: FABRIC_MAX_LENGTH },
-    description: { type: "string", maxLength: DESCRIPTION_MAX_LENGTH },
+    fabric: { type: "string", description: `Main visible fabric, at most ${FABRIC_MAX_LENGTH} characters, or "" if unsure` },
+    description: { type: "string", description: `One line, at most ${DESCRIPTION_MAX_LENGTH} characters` },
   },
   required: [
     "category",
@@ -155,13 +197,23 @@ export interface TokenUsage {
   thoughtsTokenCount?: number;
 }
 
-/** Cost of one call in pence, or undefined if Gemini didn't report usage (the estimate is then used). */
-export function costPenceFromUsage(usage: TokenUsage | undefined, pricing = GEMINI_PRICING): number | undefined {
+/**
+ * Cost of one call in pence, with PRICE_HEADROOM added, or undefined if
+ * Gemini didn't report usage (the estimate is then used).
+ */
+export function costPenceFromUsage(usage: TokenUsage | undefined, price: GeminiListPrice = GEMINI_PRICING): number | undefined {
   if (!usage || usage.promptTokenCount === undefined) return undefined;
   const input = usage.promptTokenCount;
   const output = (usage.candidatesTokenCount ?? 0) + (usage.thoughtsTokenCount ?? 0);
-  const usd = (input * pricing.inputUsdPerMillionTokens + output * pricing.outputUsdPerMillionTokens) / 1_000_000;
-  return usd * pricing.gbpPerUsd * 100;
+  const usd = (input * price.inputUsdPerMillionTokens + output * price.outputUsdPerMillionTokens) / 1_000_000;
+  return usd * PRICE_HEADROOM * GBP_PER_USD * 100;
+}
+
+/** The model's price, or a ConfigError if it isn't on the known list. */
+export function priceFor(model: string): GeminiListPrice {
+  const price = Object.hasOwn(GEMINI_MODEL_PRICES, model) ? GEMINI_MODEL_PRICES[model] : undefined;
+  if (!price) throw new ConfigError(`Gemini model "${model}" has no known price. Add it to GEMINI_MODEL_PRICES first.`);
+  return price;
 }
 
 // ---------------------------------------------------------------------------
@@ -195,7 +247,7 @@ export function buildTaggingRequest(model: string, input: TaggingInput): Generat
       // Tagging is a quick look, not a puzzle: little thinking keeps it fast and cheap.
       thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
       httpOptions: {
-        timeout: REQUEST_TIMEOUT_MS,
+        timeout: TAGGING_ATTEMPT_TIMEOUT_MS,
         // callWithValidation does the one retry the spec allows; the SDK mustn't add more.
         retryOptions: { attempts: 1 },
       },
@@ -205,24 +257,28 @@ export function buildTaggingRequest(model: string, input: TaggingInput): Generat
 
 export class GeminiTaggingProvider implements TaggingProvider {
   readonly name = "gemini";
+  private readonly price: GeminiListPrice;
 
+  /** Throws ConfigError for a model without a known price. */
   constructor(
     private readonly client: GeminiModelsClient,
     private readonly model: string,
-  ) {}
+  ) {
+    this.price = priceFor(model);
+  }
 
   async tagItem(input: TaggingInput): Promise<ModelCall> {
     const response = await this.client.models.generateContent(buildTaggingRequest(this.model, input));
     return {
       raw: response.text ?? "",
-      costPence: costPenceFromUsage(response.usageMetadata),
+      costPence: costPenceFromUsage(response.usageMetadata, this.price),
       provider: this.name,
       model: this.model,
     };
   }
 }
 
-/** The real provider, from the environment. Throws ConfigError if GEMINI_API_KEY isn't set. */
+/** The real provider, from the environment. Throws ConfigError if GEMINI_API_KEY isn't set or GEMINI_MODEL has no known price. */
 export function createGeminiTaggingProvider(): GeminiTaggingProvider {
   const env = getGeminiTaggingEnv();
   return new GeminiTaggingProvider(new GoogleGenAI({ apiKey: env.GEMINI_API_KEY }), env.GEMINI_MODEL);

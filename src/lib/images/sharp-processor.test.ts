@@ -18,7 +18,7 @@ import {
   rgbPng,
 } from "@/test/images";
 import { InvalidImageError } from "./server";
-import { SharpImageProcessor } from "./sharp-processor";
+import { MIN_TRANSPARENT_SHARE, SharpImageProcessor, TRANSPARENT_ALPHA_BELOW } from "./sharp-processor";
 
 const processor = new SharpImageProcessor();
 
@@ -109,6 +109,43 @@ describe("hasTransparency (the cut-out alpha check)", () => {
 
   it("is false for a PNG with no alpha channel", async () => {
     expect(await processor.hasTransparency(await rgbPng())).toBe(false);
+  });
+
+  /** A 100×100 PNG with `seeThrough` pixels at the given alpha, the rest opaque. */
+  async function partlyTransparent(seeThrough: number, alpha = 0) {
+    const rgba = Buffer.alloc(100 * 100 * 4, 255);
+    for (let i = 0; i < seeThrough; i++) rgba[i * 4 + 3] = alpha;
+    const png = await sharp(rgba, { raw: { width: 100, height: 100, channels: 4 } }).png().toBuffer();
+    return { data: new Uint8Array(png), mimeType: "image/png" as const };
+  }
+
+  it("needs at least 1% of pixels see-through (alpha < 250)", async () => {
+    expect(MIN_TRANSPARENT_SHARE).toBe(0.01);
+    expect(TRANSPARENT_ALPHA_BELOW).toBe(250);
+    expect(await processor.hasTransparency(await partlyTransparent(99))).toBe(false); // 0.99%
+    expect(await processor.hasTransparency(await partlyTransparent(100))).toBe(true); // exactly 1%
+    expect(await processor.hasTransparency(await partlyTransparent(100, 249))).toBe(true);
+    expect(await processor.hasTransparency(await partlyTransparent(5000, 250))).toBe(false); // alpha 250 isn't see-through
+  });
+
+  it("throws InvalidImageError for a truncated PNG instead of crashing", async () => {
+    const png = await cutoutPng();
+    const truncated = { data: png.data.slice(0, Math.floor(png.data.byteLength * 0.6)), mimeType: png.mimeType };
+    await expect(processor.hasTransparency(truncated)).rejects.toBeInstanceOf(InvalidImageError);
+  });
+});
+
+describe("inspect checks the magic bytes before decoding", () => {
+  it("refuses SVG and TIFF, which libvips could otherwise parse", async () => {
+    const svg = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>');
+    const tiff = new Uint8Array(await sharp({ create: { width: 4, height: 4, channels: 3, background: "#fff" } }).tiff().toBuffer());
+    expect(await sharp(tiff).metadata()).toMatchObject({ format: "tiff" }); // libvips reads it…
+    for (const data of [svg, tiff]) await expect(processor.inspect(data)).rejects.toBeInstanceOf(InvalidImageError);
+  });
+
+  it("reports the upright size of a photo with an EXIF rotation", async () => {
+    const info = await processor.inspect((await phoneJpeg({ width: 400, height: 300, orientation: 6 })).data);
+    expect([info.width, info.height]).toEqual([300, 400]);
   });
 });
 
