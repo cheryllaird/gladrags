@@ -74,4 +74,10 @@ Pass 1 sends every filtered item's tags (about 60 tokens each), so a 200-item wa
 
 ## Tests
 
-All without network: `*.test.ts` here, `src/lib/ai/gemini-ranking.test.ts` (prompts, and recorded Gemini replies in `src/test/fixtures/gemini-ranking/`) and `src/app/api/outfits/outfits-live.test.ts` (routes with mock mode off, fake Supabase). `src/lib/ai/gemini-ranking.live.test.ts` re-records the Gemini replies and is skipped unless `GEMINI_RECORD=1`.
+All without network: `*.test.ts` here, `src/lib/ai/gemini-ranking.test.ts` (prompts, and recorded Gemini replies in `src/test/fixtures/gemini-ranking/`) and `src/app/api/outfits/outfits-live.test.ts` (routes with mock mode off, fake Supabase). `src/lib/ai/gemini-ranking.live.test.ts` re-records the Gemini replies and is skipped unless `GEMINI_RECORD=1`:
+
+```sh
+GEMINI_RECORD=1 NODE_USE_ENV_PROXY=1 pnpm vitest run src/lib/ai/gemini-ranking.live.test.ts
+```
+
+**Not yet recorded live.** The Gemini key's free-tier quota (20 requests per model per day) ran out before a real reply could be recorded, so the reply fixtures are hand-written in Gemini's format and marked `"synthetic": true`. Run the command above (4 calls) to replace them. The two `editedFrom` fixtures (an invented item ref, an omitted anchor) stay hand-edited on purpose.

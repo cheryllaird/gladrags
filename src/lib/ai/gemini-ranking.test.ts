@@ -1,7 +1,11 @@
 /**
  * The Gemini ranking provider, with no network: prompts are inspected, and
- * model replies are played back from recordings in
- * src/test/fixtures/gemini-ranking/ (recorded by gemini-ranking.live.test.ts).
+ * model replies are played back from src/test/fixtures/gemini-ranking/.
+ *
+ * Those files are written by gemini-ranking.live.test.ts. Until a real
+ * recording has been made they're hand-written in the same format and
+ * marked `"synthetic": true` with a note saying why (the free-tier quota ran
+ * out); re-recording replaces them and these tests stay the same.
  */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -34,9 +38,12 @@ const FIXTURES = fileURLToPath(new URL("../../test/fixtures/gemini-ranking/", im
 
 interface Recording {
   model: string;
-  recordedAt: string;
+  recordedAt: string | null;
   text: string | null;
-  /** Set on fixtures made by editing a real recording. */
+  /** True for a hand-written reply, not yet replaced by a real recording. */
+  synthetic?: boolean;
+  note?: string;
+  /** Set on fixtures made by editing another fixture. */
   editedFrom?: string;
 }
 
@@ -225,7 +232,25 @@ describe("provider", () => {
   });
 });
 
-describe("recorded Gemini replies", () => {
+describe("Gemini reply fixtures", () => {
+  it.each([
+    "work-shortlist",
+    "anchor-injection-shortlist",
+    "anchor-injection-shortlist-omits-anchor",
+    "work-final",
+    "work-final-invented-ref",
+    "swap-final",
+  ])("%s says whether it's a real recording", (name) => {
+    const rec = recording(name);
+    if (rec.synthetic) {
+      expect(rec.model).toBe("none");
+      expect(rec.note?.length).toBeGreaterThan(0);
+    } else {
+      expect(rec.model).toMatch(/^gemini-/);
+      expect(rec.recordedAt).not.toBeNull();
+    }
+  });
+
   it("pass 1, work: a valid shortlist of real wardrobe items", async () => {
     const rec = recording("work-shortlist");
     const input = workShortlistInput();

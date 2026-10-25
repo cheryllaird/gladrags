@@ -1,0 +1,7 @@
+{
+  "model": "none",
+  "synthetic": true,
+  "note": "Hand-written in Gemini's reply format: the free-tier daily quota (20 requests) was used up before a real reply could be recorded. Re-record with gemini-ranking.live.test.ts (GEMINI_RECORD=1), which overwrites this file.",
+  "recordedAt": null,
+  "text": "{\"outfits\": [{\"itemIds\": [\"I1\", \"I2\", \"I3\", \"I4\"], \"name\": \"Blazer and trainers\", \"reason\": \"Clean white trainers relax the blazer while the shirt and chinos stay\"}, {\"itemIds\": [\"I1\", \"I2\", \"I3\"], \"name\": \"Easy smart casual\", \"reason\": \"White trainers keep the shirt and tan chinos crisp but relaxed\"}, {\"itemIds\": [\"I1\", \"I2\", \"I3\", \"I5\"], \"name\": \"Autumn layers\", \"reason\": \"The camel coat ties in with the tan chinos for cooler days\"}]}"
+}
