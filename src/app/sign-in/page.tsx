@@ -9,9 +9,9 @@ export const metadata: Metadata = { title: "Sign in" };
 export default async function SignInPage({
   searchParams,
 }: {
-  searchParams: Promise<{ next?: string; error?: string }>;
+  searchParams: Promise<{ next?: string; error?: string; reason?: string }>;
 }) {
-  const { next, error } = await searchParams;
+  const { next, error, reason } = await searchParams;
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col px-6 pt-[max(env(safe-area-inset-top),3rem)] pb-[max(env(safe-area-inset-bottom),2rem)]">
       <div className="flex flex-1 flex-col justify-center gap-8">
@@ -27,6 +27,11 @@ export default async function SignInPage({
             </p>
           </div>
         </div>
+        {reason === "expired" && error !== "link" && (
+          <p role="status" className="bg-muted rounded-md p-3 text-sm">
+            You&apos;ve been signed out. Sign in again and we&apos;ll take you back to where you were.
+          </p>
+        )}
         {error === "link" && (
           <p role="alert" className="bg-muted rounded-md p-3 text-sm">
             That sign-in link didn&apos;t work or has expired. Ask for a new one below.

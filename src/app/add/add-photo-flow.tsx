@@ -3,25 +3,29 @@
 import { LinkIcon } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
-import type { WardrobeItem } from "@/contracts";
+import type { ItemTags, WardrobeItem } from "@/contracts";
 import { PageBody, PageHeader } from "@/components/app-shell/page-header";
 import { Button } from "@/components/ui/button";
 import { ApiErrorNotice, errorCopy } from "@/components/wardrobe/api-error-notice";
 import { DraftReview } from "@/components/wardrobe/add/draft-review";
+import { notePhotoLost } from "@/components/wardrobe/add/pending-add";
 import { PhotoPicker } from "@/components/wardrobe/add/photo-picker";
 import { ProgressSteps } from "@/components/wardrobe/add/progress-steps";
+import { RestoredNotice } from "@/components/wardrobe/add/restored-notice";
 import { SavedPanel } from "@/components/wardrobe/add/saved-panel";
 import { UsageNote } from "@/components/wardrobe/add/usage-note";
 import { usePreviewUrl } from "@/components/wardrobe/add/use-preview-url";
+import { useRestorePendingAdd } from "@/components/wardrobe/add/use-restore-pending-add";
 import { addingBlockedBy, useUsage } from "@/components/wardrobe/add/use-usage";
 import { ADD_STAGE_LABELS, addByPhoto, type AddResult, type AddStage } from "@/lib/client/add-item";
+import { ApiClientError } from "@/lib/client/api";
 
 const PHOTO_STEPS = (["preparing", "cutting_out", "uploading"] as const).map((id) => ({ id, label: ADD_STAGE_LABELS[id] }));
 
 type Step =
   | { kind: "choose" }
   | { kind: "processing"; stage: AddStage }
-  | { kind: "review"; result: AddResult }
+  | { kind: "review"; result: AddResult; restoredTags?: ItemTags | null }
   | { kind: "saved"; item: WardrobeItem }
   | { kind: "error"; error: unknown };
 
@@ -31,6 +35,15 @@ export function AddPhotoFlow() {
   const [preview, setPreview] = usePreviewUrl();
   const { usage, refresh: refreshUsage } = useUsage();
   const blocked = addingBlockedBy(usage);
+  // Shown after signing in again, if the session expired mid-add.
+  const [restored, setRestored] = useState<"draft" | "photo_lost" | null>(null);
+
+  useRestorePendingAdd((pending) => {
+    setRestored(pending.kind);
+    if (pending.kind === "draft") {
+      go({ kind: "review", result: { draft: pending.draft, cutoutFailed: pending.cutoutFailed }, restoredTags: pending.tags });
+    }
+  });
 
   function go(next: Step) {
     setStep(next);
@@ -39,15 +52,24 @@ export function AddPhotoFlow() {
 
   async function start(file: File) {
     setPreview(file);
+    setRestored(null);
     go({ kind: "processing", stage: "preparing" });
     try {
       const result = await addByPhoto(file, { onStage: (stage) => setStep({ kind: "processing", stage }) });
       go({ kind: "review", result });
     } catch (error) {
+      // Signed out before the photo reached us: it can't be kept, so say so after sign-in.
+      if (error instanceof ApiClientError && error.code === "unauthorized") notePhotoLost();
       go({ kind: "error", error });
     } finally {
       refreshUsage();
     }
+  }
+
+  function backToChoose() {
+    setRestored(null);
+    setPreview(null);
+    go({ kind: "choose" });
   }
 
   const title = step.kind === "review" ? "Check the tags" : step.kind === "saved" ? "Saved" : "Add an item";
@@ -56,6 +78,8 @@ export function AddPhotoFlow() {
     <>
       <PageHeader title={title} />
       <PageBody className="space-y-5">
+        {restored && <RestoredNotice kind={restored} />}
+
         {step.kind === "choose" && (
           <>
             <UsageNote usage={usage} />
@@ -81,15 +105,14 @@ export function AddPhotoFlow() {
           <DraftReview
             draft={step.result.draft}
             cutoutFailed={step.result.cutoutFailed}
+            restoredTags={step.restoredTags}
             onSaved={(item) => {
+              setRestored(null);
               setPreview(null);
               go({ kind: "saved", item });
               refreshUsage();
             }}
-            onDiscard={() => {
-              setPreview(null);
-              go({ kind: "choose" });
-            }}
+            onDiscard={backToChoose}
           />
         )}
 
@@ -102,16 +125,17 @@ export function AddPhotoFlow() {
           </SavedPanel>
         )}
 
-        {step.kind === "error" && (
-          <ErrorStep error={step.error} onRetry={() => go({ kind: "choose" })} />
-        )}
+        {step.kind === "error" && <ErrorStep error={step.error} onRetry={backToChoose} />}
       </PageBody>
     </>
   );
 }
 
 function ErrorStep({ error, onRetry }: { error: unknown; onRetry: () => void }) {
-  const limited = errorCopy(error).kind !== "error";
+  const { kind } = errorCopy(error);
+  // Signed out: already on the way to sign-in, so there's nothing to tap.
+  if (kind === "signed_out") return <ApiErrorNotice error={error} />;
+  const limited = kind === "cap" || kind === "paused";
   return (
     <div className="space-y-4">
       <ApiErrorNotice error={error} />

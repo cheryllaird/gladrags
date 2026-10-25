@@ -9,6 +9,9 @@ import { ApiClientError, apiRequest } from "@/lib/client/api";
 
 type Step = { kind: "email" } | { kind: "code"; email: string };
 
+// Here `unauthorized` means a wrong or expired code, not a lost session.
+const NO_REDIRECT = { redirectOnUnauthorized: false };
+
 function postJson(body: unknown): RequestInit {
   return { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) };
 }
@@ -27,7 +30,7 @@ export function SignInForm({ next }: { next: string }) {
     setMessage(null);
     const email = String(formData.get("email") ?? "");
     try {
-      await apiRequest(MagicLinkResponseSchema, "/api/auth/magic-link", postJson({ email, next }));
+      await apiRequest(MagicLinkResponseSchema, "/api/auth/magic-link", postJson({ email, next }), NO_REDIRECT);
       setStep({ kind: "code", email });
     } catch (error) {
       setMessage(messageFor(error));
@@ -45,6 +48,7 @@ export function SignInForm({ next }: { next: string }) {
         VerifyCodeResponseSchema,
         "/api/auth/verify-code",
         postJson({ email: step.email, code: String(formData.get("code") ?? ""), next }),
+        NO_REDIRECT,
       );
       window.location.assign(result.next);
     } catch (error) {

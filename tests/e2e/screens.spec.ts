@@ -106,6 +106,38 @@ test("add by link", async ({ page }) => {
   await shot(page, "17-add-link-screenshot-fallback");
 });
 
+test("account sheet", async ({ page }) => {
+  await page.goto("/wardrobe");
+  await page.getByRole("button", { name: "Account" }).click();
+  await page.getByRole("dialog", { name: "Account" }).waitFor();
+  await shot(page, "20-account-sheet");
+  await page.getByRole("button", { name: "Delete my account" }).click();
+  await page.getByRole("alertdialog").waitFor();
+  await shot(page, "21-account-delete-confirm");
+});
+
+test("signed out mid-add", async ({ page }) => {
+  await page.route(
+    (url) => url.pathname === "/api/items",
+    (route) =>
+      route.request().method() === "POST"
+        ? route.fulfill({ status: 401, json: { error: { code: "unauthorized", message: "Sign in to continue." } } })
+        : route.continue(),
+  );
+  await page.goto("/add");
+  await choosePhoto(page, "shirt.jpg");
+  await page.getByRole("button", { name: "Save to wardrobe" }).click();
+  await page.getByRole("heading", { name: "Sign in to GladRags" }).waitFor();
+  await shot(page, "22-sign-in-after-expiry");
+  await page.unrouteAll();
+  await page.getByLabel("Email").fill("cheryl@example.com");
+  await page.getByRole("button", { name: "Email me a sign-in link" }).click();
+  await page.getByLabel("Code from the email").fill("123456");
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.getByText("We kept the item you were adding.").waitFor();
+  await shot(page, "23-add-restored-after-sign-in");
+});
+
 test("caps and paused AI", async ({ page }) => {
   await page.goto("/add");
   await choosePhoto(page, "shirt-mock-daily-cap.jpg");

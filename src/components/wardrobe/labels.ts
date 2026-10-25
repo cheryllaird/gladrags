@@ -12,6 +12,7 @@ import {
   WARMTH_LEVELS,
   type Category,
   type Colour,
+  type Formality,
   type Pattern,
   type PresetStyleId,
   type Season,
@@ -122,14 +123,17 @@ export const WARMTH_LABELS: Record<Warmth, string> = {
   warm: "Warm",
 };
 
-/** 1 = loungewear … 5 = formal (spec: Tags per item). */
-export const FORMALITY_LABELS: Record<1 | 2 | 3 | 4 | 5, string> = {
-  1: "Lounge",
-  2: "Casual",
-  3: "Smart casual",
-  4: "Smart",
-  5: "Formal",
-};
+/** Names for formality 1 (loungewear) to 5 (formal), in order (spec: Tags per item). */
+const FORMALITY_NAMES = ["Lounge", "Casual", "Smart casual", "Smart", "Formal"] as const;
+
+/**
+ * "3 · Smart casual". Takes the contract's Formality (a whole number 1–5);
+ * anything outside the scale, which validation stops, shows just the number.
+ */
+export function formalityLabel(formality: Formality): string {
+  const name = FORMALITY_NAMES[formality - 1];
+  return name ? `${formality} · ${name}` : String(formality);
+}
 
 export const OCCASION_LABELS: Record<PresetStyleId, string> = Object.fromEntries(
   PRESET_STYLES.map((style) => [style.id, style.label]),
@@ -148,7 +152,7 @@ export const WARMTH_OPTIONS: Option<Warmth>[] = WARMTH_LEVELS.map((value) => ({ 
 export const OCCASION_OPTIONS: Option<PresetStyleId>[] = PRESET_STYLES.map((style) => ({ value: style.id, label: style.label }));
 export const FORMALITY_OPTIONS: Option<number>[] = ([1, 2, 3, 4, 5] as const).map((value) => ({
   value,
-  label: `${value} · ${FORMALITY_LABELS[value]}`,
+  label: formalityLabel(value),
 }));
 
 export function subcategoryOptions(category: Category): Option<Subcategory>[] {

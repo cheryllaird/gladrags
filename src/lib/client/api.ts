@@ -53,11 +53,53 @@ export class ApiClientError extends Error {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Signed out (an expired session)
+// ---------------------------------------------------------------------------
+
+/** Where to sign in again and come back to `current` (a path plus query string). */
+export function signInPath(current: string, reason: "expired" | null = "expired"): string {
+  const params = new URLSearchParams();
+  if (current && current !== "/" && current.startsWith("/") && !current.startsWith("/sign-in")) {
+    params.set("next", current);
+  }
+  if (reason) params.set("reason", reason);
+  const search = params.toString();
+  return `/sign-in${search ? `?${search}` : ""}`;
+}
+
+/**
+ * What happens when any API call answers `unauthorized`: the browser goes
+ * to sign-in and comes back here afterwards. The navigation is deferred a
+ * tick, so the screen's own catch block runs first (the add flow uses it
+ * to keep the item being added). Tests replace `navigate`.
+ */
+export const unauthorizedRedirect = {
+  navigate(url: string): void {
+    window.location.assign(url);
+  },
+};
+
+function goToSignIn(): void {
+  if (typeof window === "undefined") return;
+  const url = signInPath(`${window.location.pathname}${window.location.search}`);
+  window.setTimeout(() => unauthorizedRedirect.navigate(url), 0);
+}
+
+export interface ApiRequestOptions {
+  /**
+   * Send the user to sign-in when the API answers `unauthorized` (default).
+   * The sign-in form turns this off: there, `unauthorized` means a wrong code.
+   */
+  redirectOnUnauthorized?: boolean;
+}
+
 /** Fetch, then parse the success body with `schema` or turn the error body into an ApiClientError. */
 export async function apiRequest<T extends z.ZodType>(
   schema: T,
   input: string,
   init?: RequestInit,
+  options: ApiRequestOptions = {},
 ): Promise<z.infer<T>> {
   let response: Response;
   try {
@@ -77,6 +119,7 @@ export async function apiRequest<T extends z.ZodType>(
     const parsed = ApiErrorSchema.safeParse(body);
     if (parsed.success) {
       const { code, message, cap, issues } = parsed.data.error;
+      if (code === "unauthorized" && options.redirectOnUnauthorized !== false) goToSignIn();
       throw new ApiClientError(code, message, { status: response.status, cap, issues });
     }
     throw new ApiClientError("internal", "Something went wrong. Try again.", { status: response.status });
@@ -179,4 +222,13 @@ export async function uploadLinkCutout(upload: { originalImageKey: string; cutou
 
 export async function getUsage(): Promise<UsageSummary> {
   return apiRequest(UsageSummarySchema, "/api/usage");
+}
+
+// ---------------------------------------------------------------------------
+// Account
+// ---------------------------------------------------------------------------
+
+/** DELETE /api/account: the user's images, items, outfits and account all go. */
+export async function deleteAccount(): Promise<void> {
+  await apiRequest(DeletedResponseSchema, "/api/account", { method: "DELETE" });
 }

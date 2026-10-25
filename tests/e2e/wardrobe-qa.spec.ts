@@ -816,7 +816,8 @@ test.describe("an expired session leads to sign-in", () => {
     page.getByRole("heading", { name: "Sign in to GladRags" }).or(page.getByRole("link", { name: /sign in/i }));
 
   test("on the wardrobe", async ({ page }) => {
-    await page.route("**/api/items", (route) => route.fulfill({ status: 401, json: apiError("unauthorized", "Sign in to continue.") }));
+    // Match by path: a "**/api/items" glob misses /api/items?category=shoes.
+    await page.route((url) => url.pathname === "/api/items", (route) => route.fulfill({ status: 401, json: apiError("unauthorized", "Sign in to continue.") }));
     await page.goto("/wardrobe?category=shoes");
     await expect(signIn(page)).toBeVisible();
   });

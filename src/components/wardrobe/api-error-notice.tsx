@@ -1,4 +1,4 @@
-import { AlertCircleIcon, PauseCircleIcon, TimerIcon } from "lucide-react";
+import { AlertCircleIcon, LogInIcon, PauseCircleIcon, TimerIcon } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { ApiClientError } from "@/lib/client/api";
 
@@ -19,7 +19,7 @@ export function formatResetTime(iso: string, now: Date = new Date()): string {
 export interface ErrorCopy {
   title: string;
   message: string;
-  kind: "cap" | "paused" | "error";
+  kind: "cap" | "paused" | "signed_out" | "error";
 }
 
 /** Plain-English copy for an error from the API client (or anything else thrown). */
@@ -43,6 +43,13 @@ export function errorCopy(error: unknown): ErrorCopy {
           message: `GladRags has reached its AI budget for this month, so adding items is paused. Your wardrobe still works.${when}`,
         };
       }
+      case "unauthorized":
+        // The API client is already on its way to /sign-in.
+        return {
+          kind: "signed_out",
+          title: "You've been signed out",
+          message: "Taking you to sign in. You'll come back here afterwards.",
+        };
       case "ai_failed":
         return { kind: "error", title: "Tagging didn't work", message: "Our tagging service had a problem. Try again." };
       case "not_found":
@@ -59,7 +66,7 @@ export function errorCopy(error: unknown): ErrorCopy {
 
 export function ApiErrorNotice({ error, children }: { error: unknown; children?: React.ReactNode }) {
   const copy = errorCopy(error);
-  const Icon = copy.kind === "cap" ? TimerIcon : copy.kind === "paused" ? PauseCircleIcon : AlertCircleIcon;
+  const Icon = copy.kind === "cap" ? TimerIcon : copy.kind === "paused" ? PauseCircleIcon : copy.kind === "signed_out" ? LogInIcon : AlertCircleIcon;
   return (
     <Alert variant={copy.kind === "error" ? "destructive" : "default"} data-error-kind={copy.kind}>
       <Icon />

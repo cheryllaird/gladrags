@@ -15,12 +15,15 @@ export function ItemImage({
   className,
   fit = "contain",
   priority = false,
+  onError,
 }: {
   item: { cutoutUrl: string | null; originalUrl: string };
   alt: string;
   className?: string;
   fit?: "contain" | "cover";
   priority?: boolean;
+  /** The image failed to load: its signed URL may have expired (see useSignedUrlRefresh). */
+  onError?: () => void;
 }) {
   return (
     <div className={cn("bg-muted relative aspect-square overflow-hidden rounded-lg", className)}>
@@ -30,6 +33,7 @@ export function ItemImage({
         alt={alt}
         loading={priority ? "eager" : "lazy"}
         decoding="async"
+        onError={onError}
         className={cn("size-full", fit === "contain" ? "object-contain p-2" : "object-cover")}
       />
     </div>
