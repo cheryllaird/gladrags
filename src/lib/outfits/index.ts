@@ -17,15 +17,25 @@ import { PlaceholderThumbnailSource, ResizingThumbnailSource, SupabaseImageStore
 
 export { OutfitService } from "./service";
 
-/** Thumbnails need the server image processor (built by ingestion). Without it, pass 2 ranks on tags alone. */
+/**
+ * Thumbnails need the server image processor (built by ingestion). It's
+ * looked up only when pass 2 needs pictures; without it, pass 2 ranks on
+ * the shortlist alone rather than failing the request.
+ */
 function storageThumbnails(client: Awaited<ReturnType<typeof createClient>>): ThumbnailSource {
-  try {
-    const processor = getServerImageProcessor();
-    return new ResizingThumbnailSource(new SupabaseImageStore(client), (image, maxPx) => processor.resize(image, maxPx));
-  } catch (error) {
-    console.error("No image processor for ranking thumbnails", describeError(error));
-    return { getThumbnails: async () => new Map() };
-  }
+  return {
+    async getThumbnails(items) {
+      let resize;
+      try {
+        const processor = getServerImageProcessor();
+        resize = processor.resize.bind(processor);
+      } catch (error) {
+        console.error("No image processor for ranking thumbnails", describeError(error));
+        return new Map();
+      }
+      return new ResizingThumbnailSource(new SupabaseImageStore(client), resize).getThumbnails(items);
+    },
+  };
 }
 
 /**

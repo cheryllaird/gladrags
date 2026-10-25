@@ -147,6 +147,29 @@ describe("POST /api/outfits (real pipeline, mock mode off)", () => {
     };
     const error = await expectError(await outfits.POST(json("/api/outfits", "POST", { style: { kind: "preset", presetId: "work" } })), "server_misconfigured");
     expect(error.message).not.toMatch(/GEMINI/);
+    expect(fake.usage.events).toEqual([]); // not counted, no model call recorded
+  });
+
+  it("still answers an incomplete wardrobe without the Gemini key (no AI needed)", async () => {
+    fake.ranking = () => {
+      throw new ConfigError("Gemini is not configured.");
+    };
+    fake.db.tables.items = fake.db.tables.items!.filter((r) => r.category !== "shoes");
+    const res = await outfits.POST(json("/api/outfits", "POST", { style: { kind: "preset", presetId: "work" } }));
+    expect(OutfitGenerationResponseSchema.parse(await res.json())).toMatchObject({
+      status: "incomplete_wardrobe",
+      reason: "missing_category",
+      missingCategories: ["shoes"],
+    });
+  });
+
+  it("lists outfits without touching the image processor or Gemini", async () => {
+    fake.ranking = () => {
+      throw new Error("must not be created");
+    };
+    const res = await outfits.GET(json("/api/outfits", "GET"));
+    expect(res.status).toBe(200);
+    expect(console.error).not.toHaveBeenCalled();
   });
 
   it("returns 404 for another user's item as the anchor", async () => {

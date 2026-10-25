@@ -28,7 +28,8 @@ import type { RankedOutfit, WardrobeEntry } from "./types";
 import { describeProblems, validateOutfits, type OutfitRules } from "./validate";
 
 export interface PipelineDeps {
-  ranking: RankingProvider;
+  /** Makes the ranking provider; called only once the model is needed. */
+  ranking: () => RankingProvider;
   thumbnails: ThumbnailSource;
   /** Record one model call's cost (every attempt, including failed ones). */
   recordAiCost: (kind: Extract<AiCostKind, "ranking_shortlist" | "ranking_final">, call: ModelCall) => Promise<void>;
@@ -139,6 +140,10 @@ export async function runOutfitPipeline(input: PipelineInput, deps: PipelineDeps
     excludeOutfits,
   });
 
+  // Created only now, so an incomplete wardrobe never needs the model, and
+  // a missing API key (ConfigError) surfaces before the request is counted
+  // rather than looking like a failed model call.
+  const ranking = deps.ranking();
   await deps.onRankingStart();
 
   // Step 3a: shortlist on tags. With only a few candidates there's nothing
@@ -152,7 +157,7 @@ export async function runOutfitPipeline(input: PipelineInput, deps: PipelineDeps
     const result = await callWithValidation(
       RankingShortlistOutputSchema,
       () =>
-        deps.ranking.shortlist({
+        ranking.shortlist({
           ...context,
           items: items.map(({ id, tags }) => ({ id, tags })),
           candidates,
@@ -165,7 +170,7 @@ export async function runOutfitPipeline(input: PipelineInput, deps: PipelineDeps
           return describeProblems(check);
         },
         onCall: (call) => deps.recordAiCost("ranking_shortlist", call),
-        provider: deps.ranking.name,
+        provider: ranking.name,
       },
     );
     // Step 4 for pass 1: with one retry used up, drop the bad outfits and keep the rest.
@@ -183,7 +188,7 @@ export async function runOutfitPipeline(input: PipelineInput, deps: PipelineDeps
   const result = await callWithValidation(
     RankingFinalOutputSchema,
     () =>
-      deps.ranking.pickFinal({
+      ranking.pickFinal({
         ...context,
         shortlist: shortlist.map((itemIds) => ({
           itemIds,
@@ -201,7 +206,7 @@ export async function runOutfitPipeline(input: PipelineInput, deps: PipelineDeps
         return describeProblems(check);
       },
       onCall: (call) => deps.recordAiCost("ranking_final", call),
-      provider: deps.ranking.name,
+      provider: ranking.name,
     },
   );
   // Step 4 for pass 2: same rule. Never more than asked for.

@@ -183,7 +183,7 @@ export class OutfitService {
     const result = await runOutfitPipeline(
       { ...input, rejectedOutfits },
       {
-        ranking: this.deps.ranking(),
+        ranking: this.deps.ranking,
         thumbnails,
         random: this.random,
         now: this.now,
