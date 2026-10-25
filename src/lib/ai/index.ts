@@ -1,3 +1,4 @@
+import { createGeminiTaggingProvider } from "./gemini-tagging";
 import type { RankingProvider, TaggingProvider } from "./types";
 
 export * from "./types";
@@ -11,7 +12,7 @@ export { FakeRankingProvider, FakeTaggingProvider } from "./fakes";
  * they throw, so nothing silently pretends to work.
  */
 export function getTaggingProvider(): TaggingProvider {
-  throw new Error("No tagging provider yet: the ingestion agent adds the Gemini implementation.");
+  return createGeminiTaggingProvider();
 }
 
 export function getRankingProvider(): RankingProvider {

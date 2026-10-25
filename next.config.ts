@@ -13,6 +13,16 @@ const nextConfig: NextConfig = {
           { key: "Content-Type", value: "application/javascript; charset=utf-8" },
         ],
       },
+      // The background-removal model and runtime (src/lib/images). Their URLs
+      // carry a ?v= version, so browsers can keep them for good.
+      {
+        source: "/models/:file*",
+        headers: [{ key: "Cache-Control", value: "public, max-age=31536000, immutable" }],
+      },
+      {
+        source: "/ort/:file*",
+        headers: [{ key: "Cache-Control", value: "public, max-age=31536000, immutable" }],
+      },
     ];
   },
 };

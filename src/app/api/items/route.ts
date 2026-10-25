@@ -1,28 +1,34 @@
-// STUB (owner: wardrobe backend, via ingestion). Validates input against the
-// contracts and serves mock data in mock mode. See docs/CONTRACTS.md.
+// Wardrobe items: list and save (owner: ingestion). See docs/CONTRACTS.md
+// section 5 and src/lib/ingestion/wardrobe.ts. In mock mode these serve the
+// in-memory mock wardrobe instead.
 import { CreateItemRequestSchema, ItemListQuerySchema, ItemListResponseSchema, ItemResponseSchema, imageKeyBelongsTo } from "@/contracts";
 import { ApiException } from "@/lib/api/errors";
 import { jsonResponse, parseJsonBody, parseSearchParams, withApiHandler } from "@/lib/api/http";
-import { assertMockModeForStub } from "@/lib/api/stub";
 import { requireUser } from "@/lib/auth/session";
+import { isMockMode } from "@/lib/env";
+import { getWardrobeDeps } from "@/lib/ingestion/deps";
+import { createWardrobeItem, listWardrobe } from "@/lib/ingestion/wardrobe";
 import * as mock from "@/lib/mocks/store";
 
-/** List the wardrobe, optionally filtered. */
+/** List the wardrobe, newest first, optionally filtered. */
 export const GET = withApiHandler(async (request) => {
-  await requireUser();
+  const user = await requireUser();
   const query = parseSearchParams(request, ItemListQuerySchema);
-  assertMockModeForStub("GET /api/items");
-  return jsonResponse(ItemListResponseSchema, { items: mock.listItems(query) });
+  const items = isMockMode() ? mock.listItems(query) : await listWardrobe(await getWardrobeDeps(), user.id, query);
+  return jsonResponse(ItemListResponseSchema, { items });
 });
 
 /** Save a reviewed draft as a wardrobe item. */
 export const POST = withApiHandler(async (request) => {
   const user = await requireUser();
   const body = await parseJsonBody(request, CreateItemRequestSchema);
-  const keys = [body.originalImageKey, body.cutoutImageKey].filter((k): k is string => k !== null);
-  if (!keys.every((key) => imageKeyBelongsTo(key, user.id))) {
-    throw new ApiException("bad_request", "Those images don't belong to you");
+  if (isMockMode()) {
+    const keys = [body.originalImageKey, body.cutoutImageKey].filter((k): k is string => k !== null);
+    if (!keys.every((key) => imageKeyBelongsTo(key, user.id))) {
+      throw new ApiException("bad_request", "Those images don't belong to you");
+    }
+    return jsonResponse(ItemResponseSchema, { item: mock.createItem(body) }, { status: 201 });
   }
-  assertMockModeForStub("POST /api/items");
-  return jsonResponse(ItemResponseSchema, { item: mock.createItem(body) }, { status: 201 });
+  const item = await createWardrobeItem(await getWardrobeDeps(), user.id, body);
+  return jsonResponse(ItemResponseSchema, { item }, { status: 201 });
 });

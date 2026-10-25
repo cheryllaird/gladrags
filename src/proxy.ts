@@ -42,7 +42,8 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // Everything except static files, images, the PWA files and mock assets.
-    "/((?!_next/static|_next/image|favicon.ico|icons/|mock/|sw.js|manifest.webmanifest|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
+    // Everything except static files, images, the PWA files, mock assets and
+    // the background-removal model and runtime (public files, src/lib/images).
+    "/((?!_next/static|_next/image|favicon.ico|icons/|mock/|models/|ort/|sw.js|manifest.webmanifest|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
   ],
 };

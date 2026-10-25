@@ -18,7 +18,12 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key))))
+      // Only old shell caches: the background-removal model has its own
+      // cache ("gladrags-models-…", src/lib/images/model-cache.ts) that must
+      // survive service worker updates.
+      .then((keys) =>
+        Promise.all(keys.filter((key) => key.startsWith("gladrags-shell-") && key !== CACHE).map((key) => caches.delete(key))),
+      )
       .then(() => self.clients.claim()),
   );
 });

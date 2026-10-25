@@ -132,7 +132,15 @@ describe("matcher", () => {
     expect(pattern.test(path)).toBe(true);
   });
 
-  it.each(["/_next/static/chunk.js", "/icons/icon-192.png", "/mock/items/blue-jeans.svg", "/sw.js", "/manifest.webmanifest"])(
+  it.each([
+    "/_next/static/chunk.js",
+    "/icons/icon-192.png",
+    "/mock/items/blue-jeans.svg",
+    "/sw.js",
+    "/manifest.webmanifest",
+    "/models/u2netp.onnx",
+    "/ort/ort-wasm-simd-threaded.wasm",
+  ])(
     "skips static asset %s",
     (path) => {
       expect(pattern.test(path)).toBe(false);
