@@ -25,6 +25,7 @@ import {
   DEFAULT_GEMINI_MODEL,
   GEMINI_TIMEOUT_MS,
   GeminiRankingProvider,
+  SUPPORTED_SCHEMA_KEYWORDS,
   ItemRefs,
   buildFinalPickPrompt,
   buildShortlistPrompt,
@@ -213,12 +214,42 @@ describe("pass 2 prompt", () => {
     expect(schema.properties.outfits.items.properties.itemIds.items.enum).not.toContain(loafers);
   });
 
-  it("limits name and reason length in the JSON schema too", () => {
+  it("states the name and reason limits in the schema's descriptions (not maxLength)", () => {
     const schema = params.config!.responseJsonSchema as {
-      properties: { outfits: { items: { properties: { name: { maxLength: number }; reason: { maxLength: number } } } } };
+      properties: { outfits: { items: { properties: { name: Record<string, unknown>; reason: Record<string, unknown> } } } };
     };
-    expect(schema.properties.outfits.items.properties.name.maxLength).toBe(40);
-    expect(schema.properties.outfits.items.properties.reason.maxLength).toBe(160);
+    const { name, reason } = schema.properties.outfits.items.properties;
+    expect(name.description).toContain("40");
+    expect(reason.description).toContain("160");
+    expect(name).not.toHaveProperty("maxLength");
+    expect(reason).not.toHaveProperty("maxLength");
+  });
+
+  it("uses only JSON schema keywords the SDK documents as supported, in both passes", () => {
+    /** Every keyword in a schema; skips the names inside `properties`, which are field names, not keywords. */
+    const keywords = (node: unknown, found = new Set<string>()): Set<string> => {
+      if (Array.isArray(node)) node.forEach((n) => keywords(n, found));
+      else if (node && typeof node === "object") {
+        for (const [key, value] of Object.entries(node)) {
+          found.add(key);
+          if (key === "properties") Object.values(value as object).forEach((v) => keywords(v, found));
+          else if (key !== "enum" && key !== "required") keywords(value, found);
+        }
+      }
+      return found;
+    };
+    const schemas = [
+      params.config!.responseJsonSchema,
+      buildShortlistPrompt(workShortlistInput()).params.config!.responseJsonSchema,
+      buildFinalPickPrompt(swapFinalInput()).params.config!.responseJsonSchema,
+    ];
+    for (const schema of schemas) {
+      const used = keywords(schema);
+      expect(used.size).toBeGreaterThan(0);
+      for (const keyword of used) expect(SUPPORTED_SCHEMA_KEYWORDS, keyword).toContain(keyword);
+    }
+    // Spot-check that the walk really finds nested keywords.
+    expect([...keywords(schemas[0])]).toEqual(expect.arrayContaining(["enum", "minItems", "maxItems", "description"]));
   });
 
   it("only mentions photos when photos are attached", () => {

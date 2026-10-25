@@ -175,20 +175,34 @@ function contextForPrompt(input: RankingContext, refs: ItemRefs) {
   };
 }
 
-/** JSON schema for Gemini's structured output. Validation is still done with Zod afterwards. */
-function outputSchema(refs: string[], maxOutfits: number, named: boolean) {
+/**
+ * Keywords the SDK documents as supported in `responseJsonSchema` (see
+ * GenerateContentConfig.responseJsonSchema in @google/genai). The output
+ * schema sticks to these, because an unsupported keyword could make Gemini
+ * refuse every ranking call with a 400.
+ */
+export const SUPPORTED_SCHEMA_KEYWORDS = new Set([
+  "$id", "$defs", "$ref", "$anchor", "type", "format", "title", "description", "enum", "items", "prefixItems",
+  "minItems", "maxItems", "minimum", "maximum", "anyOf", "oneOf", "properties", "additionalProperties", "required",
+  "propertyOrdering",
+]);
+
+/**
+ * JSON schema for Gemini's structured output. Validation is still done
+ * with Zod afterwards. The name and reason length limits are only in the
+ * descriptions (and the prompt), not `maxLength`: the SDK doesn't list
+ * `maxLength` as supported and it couldn't be checked live. Zod enforces
+ * the limits, and an over-long pick is dropped on its own.
+ */
+export function outputSchema(refs: string[], maxOutfits: number, named: boolean) {
   const outfit: Record<string, unknown> = {
     type: "object",
     properties: {
       itemIds: { type: "array", items: { type: "string", enum: refs }, minItems: 2, maxItems: 4 },
       ...(named
         ? {
-            name: { type: "string", maxLength: OUTFIT_NAME_MAX_LENGTH, description: `At most ${OUTFIT_NAME_MAX_LENGTH} characters` },
-            reason: {
-              type: "string",
-              maxLength: OUTFIT_REASON_MAX_LENGTH,
-              description: `One sentence, at most ${OUTFIT_REASON_MAX_LENGTH} characters`,
-            },
+            name: { type: "string", description: `At most ${OUTFIT_NAME_MAX_LENGTH} characters` },
+            reason: { type: "string", description: `One sentence, at most ${OUTFIT_REASON_MAX_LENGTH} characters` },
           }
         : {}),
     },
