@@ -101,6 +101,41 @@ describe("two-pass ranking", () => {
   });
 });
 
+describe("what pass 1 sees and may pick", () => {
+  // 20 × 20 × 3 × 1 = 1,200 combinations, so only a sample of 60 is offered.
+  const big = wardrobe({ top: 20, bottom: 20, shoes: 3 });
+
+  it("sends only items that appear in a candidate (plus the anchor)", async () => {
+    const anchor = big[0]!;
+    const ranking = fake([{}], [{}]);
+    await runOutfitPipeline(input({ items: big, anchorItemId: anchor.id }), deps(ranking)).catch(() => undefined);
+    const pass1 = ranking.shortlistCalls[0]!;
+    const inCandidates = new Set([...pass1.candidates.flat(), anchor.id]);
+    expect(pass1.items.length).toBeLessThan(big.length);
+    for (const item of pass1.items) expect(inCandidates.has(item.id)).toBe(true);
+  });
+
+  it("rejects a wearable pick that wasn't one of the candidates", async () => {
+    const ranking = new FakeRankingProvider({ shortlist: [{}], final: [{}] });
+    let offered: string[][] = [];
+    ranking.shortlist = async (i) => {
+      offered = i.candidates;
+      const keys = new Set(i.candidates.map((c) => [...c].sort().join()));
+      const tops = i.items.filter((x) => x.tags.category === "top");
+      const bottoms = i.items.filter((x) => x.tags.category === "bottom");
+      const shoes = i.items.filter((x) => x.tags.category === "shoes");
+      // Find a wearable combination of offered items that isn't a candidate.
+      for (const t of tops) for (const b of bottoms) for (const s of shoes) {
+        const ids = [t.id, b.id, s.id];
+        if (!keys.has([...ids].sort().join())) return { raw: { outfits: [{ itemIds: ids }] }, provider: "f", model: "f" };
+      }
+      throw new Error("test setup: every combination is a candidate");
+    };
+    await expect(runOutfitPipeline(input({ items: big }), deps(ranking))).rejects.toMatchObject({ code: "ai_failed" });
+    expect(offered.length).toBeGreaterThan(0);
+  });
+});
+
 describe("validation and the single retry", () => {
   it("retries pass 1 when the model invents an item ID", async () => {
     const ranking = fake([shortlistReplies.inventedItemId, shortlistReplies.valid], [finalReplies.valid]);

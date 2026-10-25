@@ -32,9 +32,12 @@ The Gemini provider for both passes is `src/lib/ai/gemini-ranking.ts`.
    - The anchor and items kept in a swap always stay.
    - **Relaxing:** if the strict filter gives fewer candidates than the request's `count`, try again without the season, then also with any item one point outside the band. Use the strictest level that gives enough, otherwise the one that gives the most.
 3. **Candidates** (`candidates.ts`): a top and a bottom, or a dress or jumpsuit; exactly one pair of shoes; no outerwear or one piece. Required items fix their slot. Two style heuristics (not validity rules): the most and least formal item in a candidate differ by at most 2 (`MAX_FORMALITY_SPREAD`), and candidates containing an "avoid" pair go to the back. Exact combinations the user rejected, or the outfit being refined, are left out. If none are left: `incomplete_wardrobe / nothing_fits`.
-4. **Pass 1, tags only** (skipped when there are 8 candidates or fewer, since there's nothing to shortlist): the filtered wardrobe's tags, the candidates, the request, guidance, avoid hints and any refinement. The model shortlists about 8 by item ID.
-5. **Pass 2, thumbnails:** ~256 px pictures of the shortlisted items' cut-outs (the original if there's no cut-out). The model picks the best N, each with a name and a one-line reason.
-6. **Validate** after each pass, inside `callWithValidation`'s `check`, so a schema failure and a bad pick share **one** retry. If the second reply still has bad outfits, drop them and keep the good ones. If none are good, `502 ai_failed`.
+   Around required items (an anchor, items kept in a swap), each slot is first narrowed to items within `MAX_FORMALITY_SPREAD` of every required item. So the few coherent outfits around, say, formal shoes in a big casual wardrobe are listed rather than missed by sampling.
+4. **Pass 1, tags only** (skipped when there are 8 candidates or fewer, since there's nothing to shortlist): the tags of the items that appear in a candidate (plus required items), the candidates, the request, guidance, avoid hints and any refinement. The model shortlists about 8.
+5. **Pass 2, thumbnails:** ~256 px pictures of the shortlisted items' cut-outs (the original if there's no cut-out). The model picks the best N, each with a name and a one-line reason. During a refinement, the whole previous outfit has refs too (the swapped-out item can't be chosen).
+6. **Validate** after each pass, inside `callWithValidation`'s `check`, so a schema failure and a bad pick share **one** retry. Each outfit in a reply is judged **on its own**: the reply's envelope is parsed loosely, then each outfit against the contract's per-outfit schema, then the rules in `validate.ts`. Picks must be **exactly one of the outfits offered** (pass 1: the candidates; pass 2: the shortlist), so the formality-spread and avoid-hint guarantees always hold; candidates aren't just advice. A name or reason showing an item ref ("I3") is a bad pick.
+   - A reply with **enough** valid outfits isn't retried: pass 2 needs `count`; pass 1 needs `count + 2` (at most 8), so pass 2 still has a choice. Bad outfits next to them are dropped.
+   - Otherwise one retry. Afterwards the attempt with the most valid outfits is used; none at all is `502 ai_failed`.
 7. **Save** the outfits (status `suggested`, `parent_outfit_id` for refinements).
 
 ## Bounds (config.ts)
@@ -50,7 +53,9 @@ The Gemini provider for both passes is `src/lib/ai/gemini-ranking.ts`.
 | `MAX_REJECTED_OUTFITS_FOR_HINTS` / `MAX_AVOID_PAIRS` | 30 / 60 | Avoid hints per prompt |
 | `THUMBNAIL_CONCURRENCY` | 6 | Downloads at a time for pass 2 |
 
-Pass 1 sends every filtered item's tags (about 60 tokens each), so a 200-item wardrobe makes a prompt of roughly 12,000 tokens. Pass 2 sends at most 8 outfits × 4 items = 32 thumbnails, usually far fewer because items repeat.
+Pass 1 sends the tags (about 60 tokens each) of items that appear in the 60 candidates, at most 240 items' worth and usually far fewer.
+
+**Time budget.** Each Gemini call times out after 12 s, and the SDK's own retries are off (`retryOptions: { attempts: 1 }`), so the engine's single retry is the only one and every attempt is costed. Worst case: 2 passes × 2 attempts × 12 s + headroom, which a test keeps under the routes' `maxDuration` of 60 s. Pass 2 sends at most 8 outfits × 4 items = 32 thumbnails, usually far fewer because items repeat.
 
 ## Refinement
 

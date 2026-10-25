@@ -21,7 +21,7 @@
  * outfits oddly.
  */
 import "server-only";
-import { GoogleGenAI, ThinkingLevel, type GenerateContentParameters, type Part } from "@google/genai";
+import { GoogleGenAI, ThinkingLevel, type GenerateContentParameters, type GoogleGenAIOptions, type Part } from "@google/genai";
 import { z } from "zod";
 import {
   OUTFIT_NAME_MAX_LENGTH,
@@ -119,10 +119,10 @@ const DATA_RULE = [
 
 const OUTFIT_RULES = [
   "Rules:",
-  '- Refer to items only by their ref, such as "I3". Never invent refs.',
+  '- Refer to items only by their ref, such as "I3", and only in "itemIds". Never invent refs, and never write a ref in a name or reason: describe the item instead ("the navy blazer").',
   "- An outfit is either one top and one bottom, or one dress_jumpsuit; plus exactly one pair of shoes; plus at most one outerwear. Nothing else counts.",
   '- If "anchor" is set, every outfit must include that item.',
-  '- If "refinement" is set, the person is refining "previousOutfit". For kind "swap", keep the items in "keep" and replace the item that was swapped out. For kind "guidance", follow the new guidance.',
+  '- If "refinement" is set, the person is refining "previousOutfit". For kind "swap", keep the items in "keep" and replace "swappedOut", which can\'t be chosen any more. For kind "guidance", follow the new guidance.',
   '- "avoidPairs" are pairs of items the person rejected together before. Don\'t put both items of a pair in one outfit unless nothing else works.',
   '- Follow "guidance" where you can ("no heels" means no heels).',
   "- Choose outfits that suit the style or occasion: formality, colours that work together, a balance of patterns, sensible warmth for the season.",
@@ -140,13 +140,24 @@ export function styleForPrompt(style: StyleChoice) {
   };
 }
 
+/**
+ * Refs for the items the model may choose from, followed by refs for the
+ * rest of the previous outfit during a refinement (so the model sees the
+ * whole previous outfit, including a swapped-out item it can't choose).
+ */
+function refsFor(choosableIds: readonly string[], refinement: RankingContext["refinement"]) {
+  const refs = new ItemRefs([...choosableIds, ...(refinement?.previousItemIds ?? [])]);
+  const choosable = [...new Set(refs.refsOf(choosableIds))];
+  return { refs, choosable };
+}
+
 function refinementForPrompt(refinement: RankingContext["refinement"], refs: ItemRefs) {
   if (!refinement) return null;
   const previousOutfit = refs.refsOf(refinement.previousItemIds);
   const feedback: RefineRequest = refinement.feedback;
   if (feedback.kind === "swap") {
     const keep = refs.refsOf(refinement.previousItemIds.filter((id) => id !== feedback.itemId));
-    return { kind: "swap", previousOutfit, keep, swappedOut: "the item missing from keep; it isn't offered any more" };
+    return { kind: "swap", previousOutfit, keep, swappedOut: refs.refsOf([feedback.itemId])[0] ?? null };
   }
   return { kind: "guidance", previousOutfit, guidance: feedback.text };
 }
@@ -172,8 +183,12 @@ function outputSchema(refs: string[], maxOutfits: number, named: boolean) {
       itemIds: { type: "array", items: { type: "string", enum: refs }, minItems: 2, maxItems: 4 },
       ...(named
         ? {
-            name: { type: "string", description: `At most ${OUTFIT_NAME_MAX_LENGTH} characters` },
-            reason: { type: "string", description: `One sentence, at most ${OUTFIT_REASON_MAX_LENGTH} characters` },
+            name: { type: "string", maxLength: OUTFIT_NAME_MAX_LENGTH, description: `At most ${OUTFIT_NAME_MAX_LENGTH} characters` },
+            reason: {
+              type: "string",
+              maxLength: OUTFIT_REASON_MAX_LENGTH,
+              description: `One sentence, at most ${OUTFIT_REASON_MAX_LENGTH} characters`,
+            },
           }
         : {}),
     },
@@ -192,12 +207,15 @@ export interface BuiltPrompt {
 }
 
 export function buildShortlistPrompt(input: ShortlistInput): BuiltPrompt {
-  const refs = new ItemRefs(input.items.map((i) => i.id));
+  const { refs, choosable } = refsFor(
+    input.items.map((i) => i.id),
+    input.refinement,
+  );
   const systemInstruction = [
     "You are the GladRags outfit stylist. You choose outfits from one person's own wardrobe.",
     DATA_RULE,
     OUTFIT_RULES,
-    '- Choose from "candidates": each one is already known to be wearable.',
+    '- Choose only outfits listed in "candidates", exactly as listed: each one is already known to be wearable. Anything else is thrown away.',
     "- Make the shortlist varied, not near-copies of one outfit.",
     `Task: return the ${input.shortlistSize} best different outfits, best first, as {"outfits":[{"itemIds":["I1","I4","I9"]}]}.`,
   ].join("\n\n");
@@ -215,7 +233,7 @@ export function buildShortlistPrompt(input: ShortlistInput): BuiltPrompt {
       config: {
         systemInstruction,
         responseMimeType: "application/json",
-        responseJsonSchema: outputSchema(refs.all, input.shortlistSize, false),
+        responseJsonSchema: outputSchema(choosable, input.shortlistSize, false),
         thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
       },
     },
@@ -223,20 +241,10 @@ export function buildShortlistPrompt(input: ShortlistInput): BuiltPrompt {
 }
 
 export function buildFinalPickPrompt(input: FinalPickInput): BuiltPrompt {
-  const refs = new ItemRefs(input.shortlist.flatMap((o) => o.itemIds));
-  const systemInstruction = [
-    "You are the GladRags outfit stylist. You choose outfits from one person's own wardrobe.",
-    DATA_RULE,
-    OUTFIT_RULES,
-    '- Choose from "shortlist". After the JSON there is a small photo of each item, labelled with its ref. Use the photos to judge real shades, textures and proportions.',
-    `- For each outfit write a "name" of two to four words (at most ${OUTFIT_NAME_MAX_LENGTH} characters) and a "reason": one plain sentence in British English saying why it works (at most ${OUTFIT_REASON_MAX_LENGTH} characters), such as "Navy and tan keep this smart without being stiff".`,
-    `Task: return the ${input.count} best different outfits, best first, as {"outfits":[{"itemIds":["I1","I4","I9"],"name":"…","reason":"…"}]}.`,
-  ].join("\n\n");
-
-  const data = {
-    ...contextForPrompt(input, refs),
-    shortlist: input.shortlist.map((o) => refs.refsOf(o.itemIds)),
-  };
+  const { refs, choosable } = refsFor(
+    input.shortlist.flatMap((o) => o.itemIds),
+    input.refinement,
+  );
 
   // One photo per item, even when it's in several shortlisted outfits.
   const photoParts: Part[] = [];
@@ -251,6 +259,26 @@ export function buildFinalPickPrompt(input: FinalPickInput): BuiltPrompt {
       );
     }
   }
+  const allPictured = choosable.every((ref) => pictured.has(refs.idFor(ref)));
+  const photoRule =
+    photoParts.length === 0
+      ? null
+      : `- After the JSON there is a small photo of ${allPictured ? "each item" : "some of the items"}, labelled with its ref. Use the photos to judge real shades, textures and proportions.`;
+
+  const systemInstruction = [
+    "You are the GladRags outfit stylist. You choose outfits from one person's own wardrobe.",
+    DATA_RULE,
+    OUTFIT_RULES,
+    '- Choose only outfits listed in "shortlist", exactly as listed. Anything else is thrown away.',
+    ...(photoRule ? [photoRule] : []),
+    `- For each outfit write a "name" of two to four words (at most ${OUTFIT_NAME_MAX_LENGTH} characters) and a "reason": one plain sentence in British English saying why it works (at most ${OUTFIT_REASON_MAX_LENGTH} characters), such as "Navy and tan keep this smart without being stiff".`,
+    `Task: return the ${input.count} best different outfits, best first, as {"outfits":[{"itemIds":["I1","I4","I9"],"name":"…","reason":"…"}]}.`,
+  ].join("\n\n");
+
+  const data = {
+    ...contextForPrompt(input, refs),
+    shortlist: input.shortlist.map((o) => refs.refsOf(o.itemIds)),
+  };
 
   return {
     refs,
@@ -259,7 +287,7 @@ export function buildFinalPickPrompt(input: FinalPickInput): BuiltPrompt {
       config: {
         systemInstruction,
         responseMimeType: "application/json",
-        responseJsonSchema: outputSchema(refs.all, input.count, true),
+        responseJsonSchema: outputSchema(choosable, input.count, true),
         thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
       },
     },
@@ -298,23 +326,26 @@ const GeminiEnvSchema = z.object({ GEMINI_API_KEY: z.string().min(1) });
 
 /**
  * Network settings. A Gemini request gives up after GEMINI_TIMEOUT_MS. The
- * SDK retries once, a second later, on errors like 503 "high demand"
- * (seen while recording fixtures), on top of the engine's one retry for bad
- * output. That keeps a whole outfit request (two passes) inside the
- * routes' 60-second limit unless Gemini hangs again and again.
+ * SDK's own retries are OFF (attempts: 1), as in the tagging provider: if
+ * they were on, it would quietly retry timeouts, 408, 429 and 5xx, making
+ * HTTP calls nobody costs and blowing the time budget. The engine's single
+ * retry (callWithValidation) is the only one, and every attempt is costed.
+ * Worst case per outfit request: 2 passes × 2 attempts × the timeout, which
+ * a test keeps inside the routes' maxDuration.
  */
 export const GEMINI_TIMEOUT_MS = 12_000;
-export const GEMINI_HTTP_ATTEMPTS = 2;
+
+/** The GoogleGenAI client options (exported so tests can pin them). */
+export function geminiClientOptions(apiKey: string): GoogleGenAIOptions {
+  return {
+    apiKey,
+    httpOptions: { timeout: GEMINI_TIMEOUT_MS, retryOptions: { attempts: 1 } },
+  };
+}
 
 /** The real provider, configured from GEMINI_API_KEY and GEMINI_MODEL. Throws ConfigError if the key is missing. */
 export function createGeminiRankingProvider(): GeminiRankingProvider {
   const { GEMINI_API_KEY } = parseEnv(GeminiEnvSchema, { GEMINI_API_KEY: process.env.GEMINI_API_KEY }, "Gemini");
-  const client = new GoogleGenAI({
-    apiKey: GEMINI_API_KEY,
-    httpOptions: {
-      timeout: GEMINI_TIMEOUT_MS,
-      retryOptions: { attempts: GEMINI_HTTP_ATTEMPTS, initialDelay: 1, maxDelay: 2 },
-    },
-  });
+  const client = new GoogleGenAI(geminiClientOptions(GEMINI_API_KEY));
   return new GeminiRankingProvider(client.models, geminiModelFromEnv());
 }

@@ -23,11 +23,13 @@ import {
 } from "@/test/fixtures/ranking-inputs";
 import {
   DEFAULT_GEMINI_MODEL,
+  GEMINI_TIMEOUT_MS,
   GeminiRankingProvider,
   ItemRefs,
   buildFinalPickPrompt,
   buildShortlistPrompt,
   createGeminiRankingProvider,
+  geminiClientOptions,
   geminiModelFromEnv,
   mapRefsToIds,
   type GeminiContentGenerator,
@@ -196,13 +198,65 @@ describe("pass 2 prompt", () => {
     expect(schema.properties.outfits.items.required).toEqual(["itemIds", "name", "reason"]);
   });
 
-  it("describes a swap: what to keep, without offering the swapped item", () => {
+  it("describes a swap: the whole previous outfit, what to keep, and the swapped item, which can't be chosen", () => {
     const swap = buildFinalPickPrompt(swapFinalInput());
     const data = JSON.parse(userText(swap.params));
+    const loafers = swap.refs.ref(IDS.loafers);
     expect(data.refinement.kind).toBe("swap");
     expect(data.refinement.keep).toEqual([swap.refs.ref(IDS.shirt), swap.refs.ref(IDS.chinos)]);
-    expect(data.refinement.previousOutfit).toEqual(data.refinement.keep); // the loafers have no ref
+    expect(data.refinement.previousOutfit).toEqual([swap.refs.ref(IDS.shirt), swap.refs.ref(IDS.chinos), loafers]);
+    expect(data.refinement.swappedOut).toBe(loafers);
     expect(data.anchor).toBe(swap.refs.ref(IDS.chinos));
+    const schema = swap.params.config!.responseJsonSchema as {
+      properties: { outfits: { items: { properties: { itemIds: { items: { enum: string[] } } } } } };
+    };
+    expect(schema.properties.outfits.items.properties.itemIds.items.enum).not.toContain(loafers);
+  });
+
+  it("limits name and reason length in the JSON schema too", () => {
+    const schema = params.config!.responseJsonSchema as {
+      properties: { outfits: { items: { properties: { name: { maxLength: number }; reason: { maxLength: number } } } } };
+    };
+    expect(schema.properties.outfits.items.properties.name.maxLength).toBe(40);
+    expect(schema.properties.outfits.items.properties.reason.maxLength).toBe(160);
+  });
+
+  it("only mentions photos when photos are attached", () => {
+    expect(String(params.config!.systemInstruction)).toContain("a small photo of each item");
+    const noPhotos = workFinalInput();
+    noPhotos.shortlist = noPhotos.shortlist.map((o) => ({ ...o, thumbnails: [] }));
+    const built = buildFinalPickPrompt(noPhotos);
+    expect(String(built.params.config!.systemInstruction)).not.toMatch(/photo/i);
+    expect((built.params.contents as { parts: unknown[] }[])[0]!.parts).toHaveLength(1);
+    const somePhotos = workFinalInput();
+    somePhotos.shortlist = somePhotos.shortlist.map((o, i) => (i === 0 ? o : { ...o, thumbnails: [] }));
+    expect(String(buildFinalPickPrompt(somePhotos).params.config!.systemInstruction)).toContain("some of the items");
+  });
+
+  it("tells the model to use refs only in itemIds, and to choose only what's offered", () => {
+    const system = String(params.config!.systemInstruction);
+    expect(system).toContain("never write a ref in a name or reason");
+    expect(system).toContain('Choose only outfits listed in "shortlist"');
+    expect(String(buildShortlistPrompt(workShortlistInput()).params.config!.systemInstruction)).toContain(
+      'Choose only outfits listed in "candidates"',
+    );
+  });
+});
+
+describe("client settings and time budget", () => {
+  it("turns the SDK's own retries off and sets a timeout", () => {
+    const options = geminiClientOptions("key");
+    expect(options.httpOptions?.retryOptions).toEqual({ attempts: 1 });
+    expect(options.httpOptions?.timeout).toBe(GEMINI_TIMEOUT_MS);
+  });
+
+  it("keeps the worst case (2 passes × 2 attempts × timeout, plus headroom) inside the routes' maxDuration", async () => {
+    const outfitsRoute = await import("@/app/api/outfits/route");
+    const refineRoute = await import("@/app/api/outfits/[id]/refine/route");
+    const HEADROOM_MS = 8_000; // database, thumbnails, signing
+    const worstCase = 2 * 2 * GEMINI_TIMEOUT_MS + HEADROOM_MS;
+    expect(worstCase).toBeLessThan(outfitsRoute.maxDuration * 1000);
+    expect(worstCase).toBeLessThan(refineRoute.maxDuration * 1000);
   });
 });
 

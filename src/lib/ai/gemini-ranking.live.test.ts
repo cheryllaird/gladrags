@@ -18,16 +18,14 @@ import {
   workFinalInput,
   workShortlistInput,
 } from "@/test/fixtures/ranking-inputs";
-import { GeminiRankingProvider, geminiModelFromEnv, type GeminiContentGenerator } from "./gemini-ranking";
+import { GeminiRankingProvider, geminiClientOptions, geminiModelFromEnv, type GeminiContentGenerator } from "./gemini-ranking";
 
 const FIXTURE_DIR = fileURLToPath(new URL("../../test/fixtures/gemini-ranking/", import.meta.url));
 
 describe.skipIf(process.env.GEMINI_RECORD !== "1")("record Gemini ranking replies (live)", () => {
   const model = geminiModelFromEnv();
-  const client = new GoogleGenAI({
-    apiKey: process.env.GEMINI_API_KEY!,
-    httpOptions: { retryOptions: { attempts: 3, initialDelay: 2, maxDelay: 8 } },
-  });
+  // The same client settings as the app (no hidden SDK retries).
+  const client = new GoogleGenAI(geminiClientOptions(process.env.GEMINI_API_KEY!));
 
   function recorder(name: string): GeminiContentGenerator {
     return {
