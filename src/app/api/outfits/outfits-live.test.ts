@@ -195,6 +195,17 @@ describe("list, get, status and refine (mock mode off)", () => {
     expect(hints).toContain([W.top1, W.bottom1].sort().join());
   });
 
+  it("undoing a reject (PATCH suggested) removes the avoid hint; the feedback row stays", async () => {
+    await outfitById.PATCH(json(`/api/outfits/${first.id}`, "PATCH", { status: "rejected" }), ctx(first.id));
+    const undo = await outfitById.PATCH(json(`/api/outfits/${first.id}`, "PATCH", { status: "suggested" }), ctx(first.id));
+    expect(OutfitResponseSchema.parse(await undo.json()).outfit.status).toBe("suggested");
+
+    ranking = new FakeRankingProvider({ shortlist: [shortlistReplies.valid], final: [finalReplies.valid] });
+    await outfits.POST(json("/api/outfits", "POST", { style: { kind: "preset", presetId: "work" }, count: 3 }));
+    expect(ranking.shortlistCalls[0]!.avoidPairs).toEqual([]);
+    expect(fake.db.tables.outfit_feedback).toEqual([expect.objectContaining({ outfit_id: first.id, kind: "reject", detail: null })]);
+  });
+
   it("refines by swap: stores parent_outfit_id and swap feedback", async () => {
     ranking = new FakeRankingProvider({
       shortlist: [{}],

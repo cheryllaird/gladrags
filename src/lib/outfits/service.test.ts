@@ -253,6 +253,16 @@ describe("status and avoid hints", () => {
     expect(pairKeys).toContain([rejected!.itemIds[0]!, rejected!.itemIds[1]!].sort().join());
   });
 
+  it("reject then undo (back to suggested) leaves no avoid hint, but the feedback row stays as history", async () => {
+    const [outfit] = ok(await service.generate(USER, { style: { kind: "preset", presetId: "work" }, count: 3 }));
+    await service.updateStatus(USER, outfit!.id, { status: "rejected", reason: "not me" });
+    await service.updateStatus(USER, outfit!.id, { status: "suggested" });
+    await service.generate(USER, { style: { kind: "preset", presetId: "work" }, count: 3 });
+    expect(ranking.finals.at(-1)!.avoidPairs).toEqual([]);
+    expect(ranking.shortlists.at(-1)?.avoidPairs ?? []).toEqual([]);
+    expect(mock.listOutfitFeedback()).toEqual([expect.objectContaining({ outfitId: outfit!.id, kind: "reject", detail: "not me" })]);
+  });
+
   it("a rejected outfit that's later saved stops being an avoid hint", async () => {
     const [outfit] = ok(await service.generate(USER, { style: { kind: "preset", presetId: "work" }, count: 3 }));
     await service.updateStatus(USER, outfit!.id, { status: "rejected" });
