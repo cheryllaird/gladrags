@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { BookmarkIcon, HeartIcon, ThumbsDownIcon } from "lucide-react";
 import { REJECT_REASON_MAX_LENGTH, type OutfitStatus, type UpdateOutfitStatusRequest } from "@/contracts";
 import { Button } from "@/components/ui/button";
@@ -32,6 +32,7 @@ interface FeedbackBarProps {
  */
 export function FeedbackBar({ outfitName, status, busy, allowReject = true, onChange }: FeedbackBarProps) {
   const [rejectOpen, setRejectOpen] = useState(false);
+  const rejectButtonRef = useRef<HTMLButtonElement>(null);
 
   const toggle = (target: "saved" | "liked") => onChange({ status: status === target ? "suggested" : target });
 
@@ -55,6 +56,7 @@ export function FeedbackBar({ outfitName, status, busy, allowReject = true, onCh
       />
       {allowReject && (
         <FeedbackButton
+          ref={rejectButtonRef}
           label="Reject"
           pressedLabel="Rejected"
           pressed={status === "rejected"}
@@ -67,6 +69,7 @@ export function FeedbackBar({ outfitName, status, busy, allowReject = true, onCh
         open={rejectOpen}
         outfitName={outfitName}
         onOpenChange={setRejectOpen}
+        returnFocusTo={rejectButtonRef}
         onReject={(reason) => {
           setRejectOpen(false);
           onChange(reason ? { status: "rejected", reason } : { status: "rejected" });
@@ -76,7 +79,11 @@ export function FeedbackBar({ outfitName, status, busy, allowReject = true, onCh
   );
 }
 
-function FeedbackButton(props: {
+function FeedbackButton({
+  ref,
+  ...props
+}: {
+  ref?: React.Ref<HTMLButtonElement>;
   label: string;
   pressedLabel: string;
   pressed: boolean;
@@ -86,6 +93,7 @@ function FeedbackButton(props: {
 }) {
   return (
     <Button
+      ref={ref}
       type="button"
       variant={props.pressed ? "default" : "outline"}
       aria-pressed={props.pressed}
@@ -103,6 +111,8 @@ function RejectDialog(props: {
   open: boolean;
   outfitName: string;
   onOpenChange: (open: boolean) => void;
+  /** The dialog opens from state, not a DialogTrigger, so say where focus goes back to. */
+  returnFocusTo: React.RefObject<HTMLButtonElement | null>;
   onReject: (reason: string | null) => void;
 }) {
   const [reason, setReason] = useState("");
@@ -118,7 +128,17 @@ function RejectDialog(props: {
 
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent showCloseButton={false}>
+      <DialogContent
+        showCloseButton={false}
+        onCloseAutoFocus={(event) => {
+          // After rejecting, the card collapses and the button is gone; then
+          // let Radix choose.
+          if (props.returnFocusTo.current?.isConnected) {
+            event.preventDefault();
+            props.returnFocusTo.current.focus();
+          }
+        }}
+      >
         <form onSubmit={submit} className="grid gap-4">
           <DialogHeader>
             <DialogTitle>Not for you?</DialogTitle>

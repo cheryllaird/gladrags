@@ -1,10 +1,9 @@
 "use client";
 
 import { useId, useState } from "react";
-import { RefreshCwIcon, SlidersHorizontalIcon, Undo2Icon } from "lucide-react";
+import { RefreshCwIcon, ShirtIcon, SlidersHorizontalIcon, Undo2Icon } from "lucide-react";
 import {
   GUIDANCE_MAX_LENGTH,
-  displayImageUrl,
   type Outfit,
   type OutfitStatus,
   type UpdateOutfitStatusRequest,
@@ -14,9 +13,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import type { ApiFailure } from "./api";
 import { QUICK_REFINEMENTS, styleLabel, subcategoryLabel } from "./copy";
 import { FeedbackBar } from "./feedback-bar";
 import { OutfitCollage } from "./outfit-collage";
+import { ApiErrorNotice } from "./result-notices";
 
 interface OutfitCardProps {
   outfit: Outfit;
@@ -24,6 +25,12 @@ interface OutfitCardProps {
   /** A status change for this outfit is in flight. */
   statusBusy: boolean;
   onStatusChange: (update: UpdateOutfitStatusRequest) => void;
+  /** The last save/like/reject on this card failed: shown on the card itself. */
+  statusError?: ApiFailure | null;
+  /** Fetch this outfit again for fresh image URLs ("Reload pictures"). */
+  onReloadPictures?: () => Promise<void>;
+  /** Draw the collage only near the screen (long lists). */
+  lazyCollage?: boolean;
   /**
    * "results": swap, tweak and reject are offered.
    * "saved": just the collage, items and save/like.
@@ -55,6 +62,11 @@ export function OutfitCard(props: OutfitCardProps) {
             Undo
           </Button>
         </CardContent>
+        {props.statusError && (
+          <CardContent className="px-4 pt-3">
+            <ApiErrorNotice error={props.statusError} />
+          </CardContent>
+        )}
       </Card>
     );
   }
@@ -65,7 +77,7 @@ export function OutfitCard(props: OutfitCardProps) {
     <Card data-testid="outfit-card" data-outfit-id={outfit.id} data-status={status} className="gap-4 py-4">
       <CardHeader className="gap-1 px-4">
         <CardTitle>
-          <h3 className="text-lg">{outfit.name}</h3>
+          <h2 className="text-lg break-words">{outfit.name}</h2>
         </CardTitle>
         <CardDescription>{outfit.reason}</CardDescription>
         {mode === "saved" && (
@@ -73,7 +85,12 @@ export function OutfitCard(props: OutfitCardProps) {
         )}
       </CardHeader>
       <CardContent className="space-y-4 px-4">
-        <OutfitCollage name={outfit.name} items={outfit.items} />
+        <OutfitCollage
+          name={outfit.name}
+          items={outfit.items}
+          lazy={props.lazyCollage}
+          onReloadPictures={props.onReloadPictures}
+        />
 
         <FeedbackBar
           outfitName={outfit.name}
@@ -82,6 +99,7 @@ export function OutfitCard(props: OutfitCardProps) {
           allowReject={mode === "results"}
           onChange={props.onStatusChange}
         />
+        {props.statusError && <ApiErrorNotice error={props.statusError} />}
 
         <ItemList
           items={outfit.items}
@@ -110,14 +128,8 @@ function ItemList(props: {
         const isAnchor = item.id === props.anchorId;
         return (
           <li key={item.id} className="flex items-center gap-3 px-3 py-1.5">
-            {/* Signed storage URLs change hourly, so next/image's optimiser can't cache them. */}
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={displayImageUrl(item)}
-              alt=""
-              crossOrigin="anonymous"
-              className="bg-muted size-11 shrink-0 rounded-md object-contain p-0.5"
-            />
+            {/* Keyed by URL so fresh URLs (after "Reload pictures") get a fresh try. */}
+            <ItemThumbnail key={`${item.cutoutUrl}|${item.originalUrl}`} item={item} />
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium">{item.tags.description}</p>
               <p className="text-muted-foreground text-xs">{subcategoryLabel(item.tags.subcategory)}</p>
@@ -142,6 +154,36 @@ function ItemList(props: {
         );
       })}
     </ul>
+  );
+}
+
+/**
+ * A small picture of the item: the cut-out, then the original if that fails,
+ * then a plain icon (e.g. once the signed URLs have expired).
+ */
+export function ItemThumbnail({ item, className }: { item: WardrobeItem; className?: string }) {
+  const sources = [item.cutoutUrl, item.originalUrl].filter((url): url is string => Boolean(url));
+  const [failed, setFailed] = useState(0);
+  const src = sources[failed];
+  const box = className ?? "size-11";
+  if (!src) {
+    return (
+      <span className={`bg-muted text-muted-foreground flex shrink-0 items-center justify-center rounded-md ${box}`} aria-hidden>
+        <ShirtIcon className="size-5" />
+      </span>
+    );
+  }
+  return (
+    // Signed storage URLs change hourly, so next/image's optimiser can't cache them.
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      key={src}
+      src={src}
+      alt=""
+      crossOrigin="anonymous"
+      onError={() => setFailed((n) => n + 1)}
+      className={`bg-muted shrink-0 rounded-md object-contain p-0.5 ${box}`}
+    />
   );
 }
 
@@ -170,39 +212,37 @@ function TweakForm(props: { outfitName: string; disabled: boolean; onRefine: (gu
         <SlidersHorizontalIcon aria-hidden />
         Tweak this outfit
       </Button>
-      {open && (
-        <div id={panelId} className="space-y-3">
-          <div className="flex flex-wrap gap-2" role="group" aria-label="Quick tweaks">
-            {QUICK_REFINEMENTS.map((label) => (
-              <Button
-                key={label}
-                type="button"
-                variant="secondary"
-                disabled={props.disabled}
-                onClick={() => props.onRefine(label.toLowerCase())}
-              >
-                {label}
-              </Button>
-            ))}
-          </div>
-          <form onSubmit={submit} className="flex gap-2">
-            <label htmlFor={inputId} className="sr-only">
-              What would you change about {props.outfitName}?
-            </label>
-            <Input
-              id={inputId}
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              maxLength={GUIDANCE_MAX_LENGTH}
-              placeholder="Or say what to change"
-              enterKeyHint="send"
-            />
-            <Button type="submit" disabled={props.disabled || !text.trim()}>
-              Update
+      <div id={panelId} hidden={!open} className="space-y-3">
+        <div className="flex flex-wrap gap-2" role="group" aria-label="Quick tweaks">
+          {QUICK_REFINEMENTS.map((label) => (
+            <Button
+              key={label}
+              type="button"
+              variant="secondary"
+              disabled={props.disabled}
+              onClick={() => props.onRefine(label.toLowerCase())}
+            >
+              {label}
             </Button>
-          </form>
+          ))}
         </div>
-      )}
+        <form onSubmit={submit} className="flex gap-2">
+          <label htmlFor={inputId} className="sr-only">
+            What would you change about {props.outfitName}?
+          </label>
+          <Input
+            id={inputId}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            maxLength={GUIDANCE_MAX_LENGTH}
+            placeholder="Or say what to change"
+            enterKeyHint="send"
+          />
+          <Button type="submit" disabled={props.disabled || !text.trim()}>
+            Update
+          </Button>
+        </form>
+      </div>
     </div>
   );
 }

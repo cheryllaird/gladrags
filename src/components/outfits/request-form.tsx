@@ -7,7 +7,6 @@ import {
   GUIDANCE_MAX_LENGTH,
   OUTFIT_COUNT,
   PRESET_STYLES,
-  displayImageUrl,
   type WardrobeItem,
 } from "@/contracts";
 import { Button } from "@/components/ui/button";
@@ -16,22 +15,29 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import type { ApiFailure } from "./api";
 import { subcategoryLabel } from "./copy";
-import type { RequestDraft } from "./request-draft";
 import { STICKY_ACTION_STYLE } from "./layout";
+import { ItemThumbnail } from "./outfit-card";
+import type { DraftField, RequestDraft } from "./request-draft";
+import { ApiErrorNotice } from "./result-notices";
 
 export type AnchorState =
   | { status: "none" }
   | { status: "loading"; id: string }
   | { status: "ready"; item: WardrobeItem }
-  | { status: "missing" };
+  /** The item was deleted (404): outfits use the whole wardrobe. */
+  | { status: "missing" }
+  /** Couldn't load it for another reason (offline, server error): retry or go without. */
+  | { status: "error"; id: string; error: ApiFailure };
 
 interface RequestFormProps {
   draft: RequestDraft;
   onDraftChange: (draft: RequestDraft) => void;
   anchor: AnchorState;
   onRemoveAnchor: () => void;
-  error: { field: string; message: string } | null;
+  onRetryAnchor: () => void;
+  error: { field: DraftField; message: string } | null;
   submitting: boolean;
   onSubmit: () => void;
 }
@@ -41,11 +47,18 @@ const COUNTS = Array.from({ length: OUTFIT_COUNT.max - OUTFIT_COUNT.min + 1 }, (
 /** The style chips, custom style, guidance and count. */
 export function RequestForm(props: RequestFormProps) {
   const { draft, onDraftChange } = props;
-  const guidanceId = useId();
-  const customId = useId();
-  const styleErrorId = useId();
+  const ids = {
+    guidance: useId(),
+    custom: useId(),
+    styleError: useId(),
+    customError: useId(),
+    guidanceError: useId(),
+    guidanceCount: useId(),
+    countError: useId(),
+  };
   const update = (patch: Partial<RequestDraft>) => onDraftChange({ ...draft, ...patch });
-  const fieldError = (field: string) => (props.error?.field === field ? props.error.message : null);
+  const fieldError = (field: DraftField) => (props.error?.field === field ? props.error.message : null);
+  const anchorBlocks = props.anchor.status === "loading" || props.anchor.status === "error";
 
   return (
     <form
@@ -56,9 +69,9 @@ export function RequestForm(props: RequestFormProps) {
         props.onSubmit();
       }}
     >
-      <AnchorCard anchor={props.anchor} onRemove={props.onRemoveAnchor} />
+      <AnchorCard anchor={props.anchor} onRemove={props.onRemoveAnchor} onRetry={props.onRetryAnchor} />
 
-      <fieldset className="space-y-3" aria-describedby={fieldError("style") ? styleErrorId : undefined}>
+      <fieldset className="space-y-3" aria-describedby={fieldError("style") ? ids.styleError : undefined}>
         <legend className="mb-3 text-base font-semibold">What are you dressing for?</legend>
         <div className="grid grid-cols-2 gap-2">
           {PRESET_STYLES.map((style) => (
@@ -78,24 +91,25 @@ export function RequestForm(props: RequestFormProps) {
           />
         </div>
         {fieldError("style") && (
-          <p id={styleErrorId} className="text-destructive text-sm" role="alert">
+          <p id={ids.styleError} className="text-destructive text-sm" role="alert">
             {fieldError("style")}
           </p>
         )}
         {draft.style === "custom" && (
           <div className="space-y-2">
-            <Label htmlFor={customId}>Describe the occasion</Label>
+            <Label htmlFor={ids.custom}>Describe the occasion</Label>
             <Input
-              id={customId}
+              id={ids.custom}
               value={draft.customText}
               onChange={(e) => update({ customText: e.target.value })}
               maxLength={CUSTOM_STYLE_MAX_LENGTH}
               placeholder="e.g. first day at a new job"
               aria-invalid={fieldError("customText") ? true : undefined}
+              aria-describedby={fieldError("customText") ? ids.customError : undefined}
               autoFocus
             />
             {fieldError("customText") && (
-              <p className="text-destructive text-sm" role="alert">
+              <p id={ids.customError} className="text-destructive text-sm" role="alert">
                 {fieldError("customText")}
               </p>
             )}
@@ -104,29 +118,30 @@ export function RequestForm(props: RequestFormProps) {
       </fieldset>
 
       <div className="space-y-2">
-        <Label htmlFor={guidanceId}>
+        <Label htmlFor={ids.guidance}>
           Anything else? <span className="text-muted-foreground font-normal">(optional)</span>
         </Label>
         <Textarea
-          id={guidanceId}
+          id={ids.guidance}
           value={draft.guidance}
           onChange={(e) => update({ guidance: e.target.value })}
           maxLength={GUIDANCE_MAX_LENGTH}
           rows={2}
           placeholder="e.g. no heels, or use my green dress"
           aria-invalid={fieldError("guidance") ? true : undefined}
+          aria-describedby={fieldError("guidance") ? ids.guidanceError : undefined}
         />
-        <p className="text-muted-foreground text-right text-xs" aria-hidden>
+        <p id={ids.guidanceCount} className="text-muted-foreground text-right text-xs" aria-hidden>
           {draft.guidance.length}/{GUIDANCE_MAX_LENGTH}
         </p>
         {fieldError("guidance") && (
-          <p className="text-destructive text-sm" role="alert">
+          <p id={ids.guidanceError} className="text-destructive text-sm" role="alert">
             {fieldError("guidance")}
           </p>
         )}
       </div>
 
-      <fieldset className="space-y-2">
+      <fieldset className="space-y-2" aria-describedby={fieldError("count") ? ids.countError : undefined}>
         <legend className="mb-2 text-sm font-medium">How many ideas?</legend>
         <div className="flex gap-2">
           {COUNTS.map((n) => (
@@ -150,11 +165,16 @@ export function RequestForm(props: RequestFormProps) {
             </label>
           ))}
         </div>
+        {fieldError("count") && (
+          <p id={ids.countError} className="text-destructive text-sm" role="alert">
+            {fieldError("count")}
+          </p>
+        )}
       </fieldset>
 
       {/* Thumb-reachable: the main action sticks to the bottom of the screen. */}
       <div className="bg-background/95 sticky -mx-4 border-t px-4 pt-3 pb-3 backdrop-blur" style={STICKY_ACTION_STYLE}>
-        <Button type="submit" size="lg" className="w-full" disabled={props.submitting || props.anchor.status === "loading"}>
+        <Button type="submit" size="lg" className="w-full" disabled={props.submitting || anchorBlocks}>
           <SparklesIcon aria-hidden />
           {props.submitting ? "Finding outfits…" : "Get outfits"}
         </Button>
@@ -163,7 +183,14 @@ export function RequestForm(props: RequestFormProps) {
   );
 }
 
+/**
+ * A preset (or "Something else") as a radio chip. The name is just the
+ * label; the "covers" hint is its description, so screen readers read both
+ * without the hint becoming part of the name.
+ */
 function StyleChip(props: { label: string; hint: string; checked: boolean; onSelect: () => void }) {
+  const labelId = useId();
+  const hintId = useId();
   return (
     <label
       className={cn(
@@ -177,23 +204,29 @@ function StyleChip(props: { label: string; hint: string; checked: boolean; onSel
         className="sr-only"
         checked={props.checked}
         onChange={props.onSelect}
-        aria-label={props.label}
+        aria-labelledby={labelId}
+        aria-describedby={hintId}
       />
-      <span className="text-sm font-medium">{props.label}</span>
-      <span className={cn("text-xs leading-snug", props.checked ? "text-primary-foreground/80" : "text-muted-foreground")}>
+      <span id={labelId} className="text-sm font-medium">
+        {props.label}
+      </span>
+      <span
+        id={hintId}
+        className={cn("text-xs leading-snug", props.checked ? "text-primary-foreground/80" : "text-muted-foreground")}
+      >
         {props.hint}
       </span>
     </label>
   );
 }
 
-function AnchorCard(props: { anchor: AnchorState; onRemove: () => void }) {
+function AnchorCard(props: { anchor: AnchorState; onRemove: () => void; onRetry: () => void }) {
   const { anchor } = props;
   if (anchor.status === "none") return null;
 
   if (anchor.status === "loading") {
     return (
-      <div className="flex items-center gap-3 rounded-lg border p-3" aria-busy="true">
+      <div className="flex items-center gap-3 rounded-lg border p-3" aria-busy="true" aria-label="Loading your item">
         <Skeleton className="size-16" />
         <Skeleton className="h-4 flex-1" />
       </div>
@@ -208,11 +241,22 @@ function AnchorCard(props: { anchor: AnchorState; onRemove: () => void }) {
     );
   }
 
+  if (anchor.status === "error") {
+    return (
+      <section aria-label="Building around" data-testid="anchor-error" className="space-y-2">
+        <ApiErrorNotice error={anchor.error} onRetry={props.onRetry} />
+        <p className="text-muted-foreground text-sm">Couldn&apos;t load the item you picked to build around.</p>
+        <Button type="button" variant="outline" className="w-full" onClick={props.onRemove}>
+          Continue without it
+        </Button>
+      </section>
+    );
+  }
+
   const { item } = anchor;
   return (
     <section aria-label="Building around" data-testid="anchor-item" className="flex items-center gap-3 rounded-lg border p-3">
-      {/* eslint-disable-next-line @next/next/no-img-element -- signed URLs; see outfit-card.tsx */}
-      <img src={displayImageUrl(item)} alt="" className="bg-muted size-16 shrink-0 rounded-md object-contain p-1" />
+      <ItemThumbnail item={item} className="size-16" />
       <div className="min-w-0 flex-1">
         <p className="text-muted-foreground text-xs">Building outfits around</p>
         <p className="truncate font-medium">{item.tags.description}</p>

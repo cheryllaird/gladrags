@@ -80,6 +80,15 @@ export function IncompleteWardrobeNotice(props: { result: IncompleteWardrobe; on
   );
 }
 
+/**
+ * Sign-in, coming back to this screen afterwards. Errors only appear after a
+ * request made in the browser, so `window` is always there when this runs.
+ */
+function signInHref(): string {
+  const here = typeof window === "undefined" ? "/outfits" : `${window.location.pathname}${window.location.search}`;
+  return `/sign-in?next=${encodeURIComponent(here)}`;
+}
+
 /** A friendly message for an API error, with "Try again" when that's worth doing. */
 export function ApiErrorNotice(props: { error: ApiFailure; onRetry?: () => void }) {
   const copy = describeApiError(props.error);
@@ -93,6 +102,11 @@ export function ApiErrorNotice(props: { error: ApiFailure; onRetry?: () => void 
           <Button type="button" variant="outline" className="mt-2" onClick={props.onRetry}>
             Try again
           </Button>
+        )}
+        {props.error.code === "unauthorized" && (
+          <Link href={signInHref()} className="mt-1 inline-flex min-h-11 items-center text-sm underline underline-offset-4">
+            Sign in again
+          </Link>
         )}
         {props.error.code === "ai_paused" || props.error.code === "daily_cap_reached" ? (
           <Link href="/outfits/saved" className="mt-1 inline-flex min-h-11 items-center text-sm underline underline-offset-4">

@@ -154,6 +154,35 @@ test("incomplete wardrobe states", async ({ page }) => {
   await shot(page, "17-nothing-fits");
 });
 
+test("fewer outfits than asked for", async ({ page }) => {
+  // Two outfits made from the mock wardrobe, answering a request for four.
+  const items = ((await (await page.request.get("/api/items")).json()) as { items: { id: string; tags: { description: string } }[] }).items;
+  const pick = (text: string) => items.find((i) => i.tags.description.includes(text))!;
+  const make = (n: number, chosen: typeof items) => ({
+    id: `5f000000-0000-4000-8000-00000000000${n}`,
+    request: { style: { kind: "preset", presetId: "comfy" }, guidance: null, anchorItemId: null },
+    name: n === 1 ? "Sofa day" : "Easy errands",
+    reason: "Soft layers that are easy to move in",
+    itemIds: chosen.map((i) => i.id),
+    items: chosen,
+    status: "suggested",
+    parentOutfitId: null,
+    createdAt: "2026-10-25T10:00:00.000Z",
+  });
+  await fakeOutfitsResponse(page, {
+    status: "ok",
+    outfits: [
+      make(1, [pick("Grey merino"), pick("jeans"), pick("trainers")]),
+      make(2, [pick("White crew-neck"), pick("jeans"), pick("trainers")]),
+    ],
+  });
+  await page.goto("/outfits");
+  await tapRadio(page, "Comfy");
+  await page.getByRole("button", { name: "Get outfits" }).click();
+  await expect(page.getByTestId("fewer-outfits")).toBeVisible();
+  await shot(page, "21-fewer-outfits");
+});
+
 test("error states", async ({ page }) => {
   await page.goto("/outfits");
   await tapRadio(page, "Work");

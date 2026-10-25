@@ -327,10 +327,9 @@ test.describe("collage", () => {
     await expectNoSidewaysScroll(page, "results with extreme images");
   });
 
-  // FINDING (low): a fully transparent cut-out is reported "ready" and its
-  // slot is left empty: no placeholder, no "Some pictures couldn't load".
+  // QA finding, fixed: a fully transparent cut-out used to be reported
+  // "ready" with its slot left empty.
   test("a fully transparent image gets a placeholder or a message, not an empty slot", async ({ page }) => {
-    test.fail();
     await serveImages(page);
     await fakeRequest(page, {
       status: "ok",
@@ -370,12 +369,13 @@ test.describe("collage", () => {
       await expect(canvas).toHaveAttribute("data-state", "partial");
       await expect(card.getByText("Some pictures couldn't load.")).toBeVisible();
       // crossOrigin="anonymous" means a non-CORS image fails to load rather
-      // than tainting the canvas, so saving still works.
+      // than tainting the canvas, so the canvas can still be exported...
       expect(await exportCollage(canvas)).toBeGreaterThan(1000);
+      // ...but "Save image" waits for a complete collage (review decision),
+      // and "Reload pictures" is offered instead.
+      await expect(card.getByRole("button", { name: /^Save image of / })).toBeDisabled();
+      await expect(card.getByRole("button", { name: "Reload pictures" })).toBeVisible();
     }
-    const download = page.waitForEvent("download");
-    await cards(page).first().getByRole("button", { name: "Save image of No CORS" }).click();
-    await download;
   });
 });
 
@@ -407,11 +407,9 @@ test.describe("request form", () => {
     await expect(page.getByText("Say what you're dressing for.")).toHaveCount(0);
   });
 
-  // FINDING (low, a11y): the custom-style and guidance error messages aren't
-  // tied to their fields (no aria-describedby), so a screen reader moving to
-  // the field hears "invalid" without the reason.
+  // QA finding, fixed: the custom-style and guidance error messages are now
+  // tied to their fields with aria-describedby.
   test("the custom-style error is linked to its field", async ({ page }) => {
-    test.fail();
     await page.goto("/outfits");
     await tapRadio(page, "Something else");
     await page.getByRole("button", { name: "Get outfits" }).click();
@@ -596,11 +594,9 @@ test.describe("results", () => {
     ]);
   });
 
-  // FINDING (low, a11y): closing the reject dialog (Escape or Cancel) drops
-  // focus to the page body instead of returning it to the Reject button,
-  // because the dialog is opened by state with no DialogTrigger.
+  // QA finding, fixed: closing the reject dialog (Escape or Cancel) now
+  // returns focus to the Reject button.
   test("closing the reject dialog returns focus to Reject", async ({ page }) => {
-    test.fail();
     await serveImages(page);
     await fakeRequest(page, { status: "ok", outfits: [basicOutfit("Focus")] });
     await page.goto("/outfits");
@@ -859,7 +855,7 @@ test.describe("saved screen", () => {
     ];
     await fakeSaved(page, outfits);
     await page.goto("/outfits/saved");
-    const names = () => cards(page).getByRole("heading", { level: 3 }).allInnerTexts();
+    const names = () => cards(page).getByRole("heading", { level: 2 }).allInnerTexts();
     await expect(cards(page)).toHaveCount(3);
     expect(await names()).toEqual(["New liked", "Mid saved", "Old saved"]);
     await expect(page.getByRole("radio", { name: "All" })).toHaveAttribute("aria-checked", "true");
@@ -883,11 +879,8 @@ test.describe("saved screen", () => {
     await expect(page.getByText("No liked outfits yet.")).toBeVisible();
   });
 
-  // FINDING (low): the filter uses the status the outfit loaded with, not the
-  // one the user just set. Like -> Save on this screen, then "Saved": the
-  // outfit isn't there (it's still under "Liked", showing "Saved").
+  // QA finding, fixed: the filter now uses the status set on this screen.
   test("an outfit changed from liked to saved here shows under the Saved filter", async ({ page }) => {
-    test.fail();
     await serveImages(page);
     const outfits = [outfit([wardrobeItem("top"), wardrobeItem("bottom"), wardrobeItem("shoes")], { name: "Was liked", status: "liked" })];
     await fakeSaved(page, outfits);

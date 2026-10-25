@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ALL_SUBCATEGORIES, API_ERROR_CODES, CATEGORIES } from "@/contracts";
 import { collageFileName } from "./collage-draw";
-import { CATEGORY_LABELS, describeApiError, formatResetTime, styleLabel, subcategoryLabel } from "./copy";
+import { CATEGORY_LABELS, describeApiError, fewerOutfitsMessage, formatResetTime, styleLabel, subcategoryLabel } from "./copy";
 
 describe("styleLabel", () => {
   it("uses the preset's label", () => {
@@ -65,6 +65,13 @@ describe("describeApiError", () => {
       expect(copy.title.length).toBeGreaterThan(0);
       expect(copy.message.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("fewerOutfitsMessage", () => {
+  it("says how many were found, and how to get more", () => {
+    expect(fewerOutfitsMessage(2)).toBe("Only found 2 that fit. Add more items to your wardrobe for more ideas.");
+    expect(fewerOutfitsMessage(1)).toBe("Only found 1 outfit that fits. Add more items to your wardrobe for more ideas.");
   });
 });
 

@@ -289,12 +289,10 @@ describe("drawCollage", () => {
     expect(labels).toEqual(["Blue jeans", "shoes"]);
   });
 
-  // FINDING (low): a fully transparent cut-out (background removal that
-  // "succeeded" but kept nothing) is drawn as an invisible image, so its slot
-  // looks empty with no placeholder and no "couldn't load" message. It
-  // should be treated like a failed load (placeholder) or fall back to the
-  // original. Pinned with it.fails until that's decided.
-  it.fails("a fully transparent cut-out is not drawn as an invisible image", () => {
+  // QA finding, fixed: a fully transparent cut-out (background removal that
+  // "succeeded" but kept nothing) used to be drawn as an invisible image.
+  // It now gets a labelled placeholder, like a failed load.
+  it("a fully transparent cut-out is not drawn as an invisible image", () => {
     stubScanCanvas(() => 0);
     const { ctx, calls } = fakeContext();
     const single = layoutCollage([item("top", "Grey jumper")]);

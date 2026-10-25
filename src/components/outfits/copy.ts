@@ -26,6 +26,15 @@ export function styleLabel(style: StyleChoice): string {
   return style.kind === "preset" ? PRESET_STYLES_BY_ID[style.presetId].label : `“${style.text}”`;
 }
 
+/**
+ * When the engine finds fewer outfits than were asked for (the contract
+ * allows 1 to count): say so, and how to get more.
+ */
+export function fewerOutfitsMessage(found: number): string {
+  const what = found === 1 ? "1 outfit that fits" : `${found} that fit`;
+  return `Only found ${what}. Add more items to your wardrobe for more ideas.`;
+}
+
 /** One-tap refinements shown on each outfit. The text is sent as guidance. */
 export const QUICK_REFINEMENTS = ["Warmer", "Cooler", "Less formal", "Smarter"] as const;
 

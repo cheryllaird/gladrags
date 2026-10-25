@@ -115,6 +115,12 @@ describe("outfits API client", () => {
     expect(fetchImpl.mock.calls[0]?.[0]).toBe("/api/outfits?status=liked");
   });
 
+  it("getOutfit fetches one outfit again (fresh image URLs)", async () => {
+    const { api, fetchImpl } = apiWith(jsonResponse(200, { outfit: OUTFIT }));
+    expect(await api.getOutfit(OUTFIT.id)).toEqual({ ok: true, data: { outfit: OUTFIT } });
+    expect(fetchImpl.mock.calls[0]?.[0]).toBe(`/api/outfits/${OUTFIT.id}`);
+  });
+
   it("getItem fetches one wardrobe item", async () => {
     const { api, fetchImpl } = apiWith(jsonResponse(200, { item: trainers }));
     expect(await api.getItem(trainers.id)).toEqual({ ok: true, data: { item: trainers } });

@@ -7,29 +7,34 @@ import type { Outfit, OutfitStatus, UpdateOutfitStatusRequest } from "@/contract
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { outfitsApi, type ApiFailure } from "./api";
+import { isStale } from "./freshness";
 import { PAGE_BOTTOM_PADDING_STYLE } from "./layout";
+import { outfitsForFilter, type SavedFilter as Filter } from "./saved-filter";
 import { OutfitCard } from "./outfit-card";
 import { ApiErrorNotice } from "./result-notices";
 
-type Filter = "all" | "saved" | "liked";
 const FILTERS: { id: Filter; label: string }[] = [
   { id: "all", label: "All" },
   { id: "saved", label: "Saved" },
   { id: "liked", label: "Liked" },
 ];
 
-type LoadState = { status: "loading" } | { status: "error"; error: ApiFailure } | { status: "ready"; outfits: Outfit[] };
+type LoadState =
+  | { status: "loading" }
+  | { status: "error"; error: ApiFailure }
+  /** `fetchedAt`: when, so expired image URLs can be fetched again. */
+  | { status: "ready"; outfits: Outfit[]; fetchedAt: number };
 
 /** Saved and liked outfits together, newest first. */
-async function loadKeptOutfits(): Promise<{ ok: true; outfits: Outfit[] } | { ok: false; error: ApiFailure }> {
+async function loadKeptOutfits(): Promise<LoadState> {
   const [saved, liked] = await Promise.all([
     outfitsApi.listOutfits({ status: "saved" }),
     outfitsApi.listOutfits({ status: "liked" }),
   ]);
-  if (!saved.ok) return saved;
-  if (!liked.ok) return liked;
+  if (!saved.ok) return { status: "error", error: saved.error };
+  if (!liked.ok) return { status: "error", error: liked.error };
   const outfits = [...saved.data.outfits, ...liked.data.outfits].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  return { ok: true, outfits };
+  return { status: "ready", outfits, fetchedAt: Date.now() };
 }
 
 /** /outfits/saved */
@@ -38,40 +43,51 @@ export function SavedOutfitsScreen() {
   const [filter, setFilter] = useState<Filter>("all");
   const [statuses, setStatuses] = useState<Record<string, OutfitStatus>>({});
   const [busy, setBusy] = useState<Record<string, boolean>>({});
-  const [actionError, setActionError] = useState<ApiFailure | null>(null);
+  const [errors, setErrors] = useState<Record<string, ApiFailure | null>>({});
 
   const load = useCallback(async () => {
-    const result = await loadKeptOutfits();
-    setState(result.ok ? { status: "ready", outfits: result.outfits } : { status: "error", error: result.error });
+    setState(await loadKeptOutfits());
   }, []);
 
   useEffect(() => {
     let cancelled = false;
     void loadKeptOutfits().then((result) => {
-      if (cancelled) return;
-      setState(result.ok ? { status: "ready", outfits: result.outfits } : { status: "error", error: result.error });
+      if (!cancelled) setState(result);
     });
     return () => {
       cancelled = true;
     };
   }, []);
 
+  function chooseFilter(next: Filter) {
+    setFilter(next);
+    // Switching filter remounts cards; fetch again if their image URLs may have expired.
+    if (state.status === "ready" && isStale(state.fetchedAt)) void load();
+  }
+
   async function changeStatus(outfit: Outfit, update: UpdateOutfitStatusRequest) {
     setBusy((b) => ({ ...b, [outfit.id]: true }));
-    setActionError(null);
+    setErrors((e) => ({ ...e, [outfit.id]: null }));
     const result = await outfitsApi.setOutfitStatus(outfit.id, update);
     setBusy((b) => ({ ...b, [outfit.id]: false }));
     if (result.ok) setStatuses((s) => ({ ...s, [outfit.id]: result.data.outfit.status }));
-    else setActionError(result.error);
+    else setErrors((e) => ({ ...e, [outfit.id]: result.error }));
   }
 
-  // Un-saving keeps the outfit on screen (so the button doesn't jump away
-  // under your thumb) until you next open this screen.
-  const statusOf = (o: Outfit) => statuses[o.id] ?? o.status;
-  const visible =
-    state.status === "ready"
-      ? state.outfits.filter((o) => filter === "all" || o.status === filter)
-      : [];
+  /** "Reload pictures": fetch one outfit again for fresh image URLs. */
+  async function reloadPictures(outfit: Outfit) {
+    const result = await outfitsApi.getOutfit(outfit.id);
+    if (!result.ok) {
+      setErrors((e) => ({ ...e, [outfit.id]: result.error }));
+      return;
+    }
+    const fresh = result.data.outfit;
+    setState((s) =>
+      s.status === "ready" ? { ...s, outfits: s.outfits.map((o) => (o.id === fresh.id ? { ...fresh, status: o.status } : o)) } : s,
+    );
+  }
+
+  const visible = state.status === "ready" ? outfitsForFilter(state.outfits, filter, statuses) : [];
 
   return (
     <main className="mx-auto w-full max-w-md px-4 pt-4" style={PAGE_BOTTOM_PADDING_STYLE}>
@@ -117,14 +133,12 @@ export function SavedOutfitsScreen() {
                 aria-checked={filter === f.id}
                 variant={filter === f.id ? "default" : "outline"}
                 className="flex-1"
-                onClick={() => setFilter(f.id)}
+                onClick={() => chooseFilter(f.id)}
               >
                 {f.label}
               </Button>
             ))}
           </div>
-
-          {actionError && <ApiErrorNotice error={actionError} />}
 
           {visible.length === 0 ? (
             <p className="text-muted-foreground py-6 text-center text-sm">No {filter} outfits yet.</p>
@@ -135,9 +149,13 @@ export function SavedOutfitsScreen() {
                   <OutfitCard
                     outfit={outfit}
                     mode="saved"
-                    status={statusOf(outfit)}
+                    status={statuses[outfit.id] ?? outfit.status}
                     statusBusy={busy[outfit.id] ?? false}
+                    statusError={errors[outfit.id] ?? null}
                     onStatusChange={(update) => void changeStatus(outfit, update)}
+                    onReloadPictures={() => reloadPictures(outfit)}
+                    // A long saved list would otherwise hold a full-size canvas per outfit.
+                    lazyCollage
                   />
                 </li>
               ))}

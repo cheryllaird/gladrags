@@ -125,6 +125,11 @@ export function createOutfitsApi(fetchImpl: FetchLike = (input, init) => fetch(i
       return call(OutfitListResponseSchema, `/api/outfits${qs ? `?${qs}` : ""}`);
     },
 
+    /** GET /api/outfits/:id: the outfit again, with freshly signed image URLs. */
+    getOutfit(outfitId: string): Promise<ApiResult<OutfitResponse>> {
+      return call(OutfitResponseSchema, `/api/outfits/${encodeURIComponent(outfitId)}`);
+    },
+
     /** GET /api/items/:id, for the anchor item. */
     getItem(itemId: string): Promise<ApiResult<ItemResponse>> {
       return call(ItemResponseSchema, `/api/items/${encodeURIComponent(itemId)}`);

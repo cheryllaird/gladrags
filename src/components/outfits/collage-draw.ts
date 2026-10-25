@@ -30,15 +30,22 @@ export function loadImage(url: string): Promise<HTMLImageElement> {
   });
 }
 
+export interface DrawResult {
+  /** Items drawn as a labelled placeholder: their image didn't load, or was fully transparent. */
+  placeholders: string[];
+}
+
 /**
- * Paint the collage. `images` maps item ID to its loaded image; an item
- * with no image (it failed to load) gets a labelled placeholder instead.
+ * Paint the collage. `images` maps item ID to its loaded image. An item
+ * with no image (it failed to load), or whose image has nothing visible in
+ * it (a cut-out that kept nothing), gets a labelled placeholder instead.
  */
 export function drawCollage(
   ctx: CanvasRenderingContext2D,
   layout: CollageLayout,
   images: ReadonlyMap<string, HTMLImageElement>,
-): void {
+): DrawResult {
+  const placeholders: string[] = [];
   ctx.save();
   ctx.clearRect(0, 0, layout.width, layout.height);
   ctx.fillStyle = COLLAGE_STYLE.background;
@@ -46,17 +53,19 @@ export function drawCollage(
 
   for (const placed of layout.placed) {
     const img = images.get(placed.id);
-    if (img) {
-      drawImage(ctx, img, placed.box);
+    const source = img ? visibleRect(img) : null;
+    if (img && source) {
+      drawImage(ctx, img, source, placed.box);
     } else {
       drawPlaceholder(ctx, placed.box, placed.label);
+      placeholders.push(placed.id);
     }
   }
   ctx.restore();
+  return { placeholders };
 }
 
-function drawImage(ctx: CanvasRenderingContext2D, img: HTMLImageElement, box: Box) {
-  const source = visibleRect(img);
+function drawImage(ctx: CanvasRenderingContext2D, img: HTMLImageElement, source: Box, box: Box) {
   const fitted = fitContain(box, source.width, source.height);
   ctx.save();
   // A soft shadow lifts cut-outs off the background, as in a photographed flat-lay.
@@ -73,23 +82,24 @@ const TRIM_SCAN_SIZE = 256;
 /**
  * The image's non-transparent area, in its own pixels, so a cut-out's empty
  * margin doesn't shrink the item. The whole image if it has no transparency,
- * or if its pixels can't be read.
+ * or if its pixels can't be read. Null if it's entirely transparent.
  */
-function visibleRect(img: HTMLImageElement): Box {
+function visibleRect(img: HTMLImageElement): Box | null {
   const full: Box = { x: 0, y: 0, width: img.naturalWidth, height: img.naturalHeight };
   if (!full.width || !full.height) return full;
+  let scan: HTMLCanvasElement | null = null;
   try {
     const scale = Math.min(1, TRIM_SCAN_SIZE / Math.max(full.width, full.height));
     const w = Math.max(1, Math.round(full.width * scale));
     const h = Math.max(1, Math.round(full.height * scale));
-    const scan = document.createElement("canvas");
+    scan = document.createElement("canvas");
     scan.width = w;
     scan.height = h;
     const sctx = scan.getContext("2d", { willReadFrequently: true });
     if (!sctx) return full;
     sctx.drawImage(img, 0, 0, w, h);
     const bounds = opaqueBounds(sctx.getImageData(0, 0, w, h).data, w, h);
-    if (!bounds) return full;
+    if (!bounds) return null;
     // Back to the image's own pixels, with a pixel of slack for rounding.
     const x = Math.max(0, Math.floor((bounds.x - 1) / scale));
     const y = Math.max(0, Math.floor((bounds.y - 1) / scale));
@@ -101,6 +111,13 @@ function visibleRect(img: HTMLImageElement): Box {
     };
   } catch {
     return full;
+  } finally {
+    // Free the scan canvas's memory now rather than at garbage collection
+    // (mobile Safari caps total canvas memory).
+    if (scan) {
+      scan.width = 0;
+      scan.height = 0;
+    }
   }
 }
 
@@ -131,28 +148,40 @@ export function collageFileName(outfitName: string): string {
 
 export type SaveResult = "shared" | "downloaded" | "cancelled";
 
-/**
- * Save the collage as a PNG. On phones that can share files (iPhone,
- * Android) this opens the share sheet, which has "Save image"; elsewhere
- * it downloads the file. Throws if the canvas can't be exported.
- */
-export async function saveCanvasAsImage(canvas: HTMLCanvasElement, outfitName: string): Promise<SaveResult> {
+/** The canvas as a PNG. Throws if it can't be exported (e.g. a tainted canvas). */
+export async function canvasToPng(canvas: HTMLCanvasElement): Promise<Blob> {
   const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
   if (!blob) throw new Error("Couldn't make an image from the collage");
+  return blob;
+}
 
+/**
+ * Save a collage PNG. On phones that can share files (iPhone, Android) this
+ * opens the share sheet, which has "Save image"; elsewhere it downloads.
+ *
+ * Call it straight from the click handler with a blob made beforehand:
+ * browsers only allow navigator.share during the tap's "user activation",
+ * so nothing may be awaited before it. This function awaits nothing before
+ * calling share.
+ */
+export function saveImageBlob(blob: Blob, outfitName: string): Promise<SaveResult> {
   const fileName = collageFileName(outfitName);
   const file = new File([blob], fileName, { type: "image/png" });
   if (typeof navigator.canShare === "function" && navigator.canShare({ files: [file] })) {
-    try {
-      await navigator.share({ files: [file], title: outfitName });
-      return "shared";
-    } catch (error) {
-      // The user closed the share sheet: that's not a failure.
-      if (error instanceof DOMException && error.name === "AbortError") return "cancelled";
-      // Anything else (e.g. share not allowed here): fall back to a download.
-    }
+    return navigator.share({ files: [file], title: outfitName }).then(
+      (): SaveResult => "shared",
+      (error: unknown): SaveResult => {
+        // The user closed the share sheet: that's not a failure.
+        if (error instanceof DOMException && error.name === "AbortError") return "cancelled";
+        // Anything else (e.g. share not allowed here): fall back to a download.
+        return download(blob, fileName);
+      },
+    );
   }
+  return Promise.resolve(download(blob, fileName));
+}
 
+function download(blob: Blob, fileName: string): SaveResult {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -163,4 +192,9 @@ export async function saveCanvasAsImage(canvas: HTMLCanvasElement, outfitName: s
   // Give the browser a moment to start the download before freeing the blob.
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
   return "downloaded";
+}
+
+/** Export and save in one go, for callers without a ready-made blob. Throws if the canvas can't be exported. */
+export async function saveCanvasAsImage(canvas: HTMLCanvasElement, outfitName: string): Promise<SaveResult> {
+  return saveImageBlob(await canvasToPng(canvas), outfitName);
 }

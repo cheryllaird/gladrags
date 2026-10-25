@@ -28,7 +28,9 @@ export const EMPTY_DRAFT: RequestDraft = {
 
 export type DraftResult =
   | { ok: true; request: OutfitRequestInput }
-  | { ok: false; field: "style" | "customText" | "guidance"; message: string };
+  | { ok: false; field: DraftField; message: string };
+
+export type DraftField = "style" | "customText" | "guidance" | "count";
 
 /** Collapse runs of whitespace (including pasted newlines) to single spaces. */
 const oneLine = (text: string) => text.replace(/\s+/g, " ").trim();
@@ -64,7 +66,17 @@ export function draftToRequest(draft: RequestDraft, anchorItemId: string | null)
   // Belt and braces: the contract is the final word on what's valid.
   const checked = OutfitRequestSchema.safeParse(request);
   if (!checked.success) {
-    return { ok: false, field: "style", message: checked.error.issues[0]?.message ?? "Check your request." };
+    const issue = checked.error.issues[0];
+    return { ok: false, field: fieldFor(issue?.path[0], draft), message: issue?.message ?? "Check your request." };
   }
   return { ok: true, request };
+}
+
+/** Which form field a contract failure belongs to, so the message shows beside it. */
+function fieldFor(path: PropertyKey | undefined, draft: RequestDraft): DraftField {
+  if (path === "count") return "count";
+  if (path === "guidance") return "guidance";
+  if (path === "style" && draft.style === "custom") return "customText";
+  // The style itself, or an anchor ID that isn't valid (not something the user typed).
+  return "style";
 }

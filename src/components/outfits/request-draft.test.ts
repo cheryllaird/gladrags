@@ -46,6 +46,10 @@ describe("draftToRequest", () => {
     });
   });
 
+  it("a count outside 3-5 is reported against the count field", () => {
+    expect(draftToRequest({ ...EMPTY_DRAFT, style: "work", count: 7 }, null)).toMatchObject({ ok: false, field: "count" });
+  });
+
   it("adds the anchor item and the chosen count", () => {
     const result = draftToRequest({ ...EMPTY_DRAFT, style: "evening_out", count: 5 }, ANCHOR);
     expect(result).toMatchObject({ ok: true, request: { anchorItemId: ANCHOR, count: 5 } });

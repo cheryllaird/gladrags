@@ -58,11 +58,9 @@ describe("draftToRequest: limits and odd input", () => {
     expect(draftToRequest({ ...EMPTY_DRAFT, style: "comfy", count }, null).ok).toBe(false);
   });
 
-  // FINDING (low): a contract failure that isn't about style (here: the
-  // count) is reported against the "style" field, so the message would
-  // appear under the style chips. Not reachable from the UI today (the
-  // count is a 3-5 radio), but misleading if the form changes.
-  it.fails("an out-of-range count is reported against the count, not the style", () => {
+  // QA finding, fixed: a contract failure that isn't about style (here: the
+  // count) used to be reported against the "style" field.
+  it("an out-of-range count is reported against the count, not the style", () => {
     expect(draftToRequest({ ...EMPTY_DRAFT, style: "comfy", count: 9 }, null)).toMatchObject({ field: "count" });
   });
 

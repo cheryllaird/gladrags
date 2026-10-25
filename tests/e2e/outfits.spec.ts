@@ -62,6 +62,8 @@ async function expectCollagesDrawn(cards: Locator) {
   const count = await cards.count();
   for (let i = 0; i < count; i++) {
     const canvas = cards.nth(i).getByTestId("outfit-collage");
+    // Collages on long lists only draw near the screen.
+    await canvas.scrollIntoViewIfNeeded();
     await expect(canvas).toHaveAttribute("data-state", "ready");
     const exported = await canvas.evaluate((el: HTMLCanvasElement) => el.toDataURL("image/png").length);
     expect(exported).toBeGreaterThan(5_000);
@@ -130,13 +132,13 @@ test.describe("journey 2: outfits for an occasion", () => {
     const cards = outfitCards(page);
     await expect(cards).toHaveCount(4);
     for (let i = 0; i < 4; i++) {
-      await expect(cards.nth(i).getByRole("heading", { level: 3 })).not.toBeEmpty();
+      await expect(cards.nth(i).getByRole("heading", { level: 2 })).not.toBeEmpty();
       await expect(cards.nth(i).getByText(/^Mock suggestion: /)).toBeVisible();
     }
     await expectCollagesDrawn(cards);
     await expectNoSidewaysScroll(page);
 
-    const name = await cards.first().getByRole("heading", { level: 3 }).innerText();
+    const name = await cards.first().getByRole("heading", { level: 2 }).innerText();
     const download = page.waitForEvent("download");
     await cards.first().getByRole("button", { name: `Save image of ${name}` }).click();
     expect((await download).suggestedFilename()).toMatch(/^gladrags-[a-z0-9-]+\.png$/);
