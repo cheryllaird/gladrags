@@ -76,6 +76,18 @@
   --ring: oklch(0.556 0 0);
 }
 
+/*
+ * App chrome (src/components/app-shell): the bottom navigation's height,
+ * NOT including the iPhone home-indicator area, which the nav adds below
+ * itself. Shared with outfit-ui. Pages pad their own bottom, and sticky
+ * action bars sit on the nav, with
+ *   calc(var(--bottom-nav-height, 0px) + env(safe-area-inset-bottom, 0px))
+ * Signed-out pages have no nav, so the variable is unset there (0px).
+ */
+.app-chrome {
+  --bottom-nav-height: 4rem;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

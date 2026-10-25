@@ -1,3 +1,4 @@
+import { ShirtIcon } from "lucide-react";
 import type { Metadata } from "next";
 import { isMockMode } from "@/lib/env";
 import { safeReturnPath } from "@/lib/auth/redirect";
@@ -5,8 +6,6 @@ import { SignInForm } from "./sign-in-form";
 
 export const metadata: Metadata = { title: "Sign in" };
 
-// Minimal working sign-in so auth can be checked end to end. wardrobe-ui
-// owns the final design and may restyle it freely (keep the API calls).
 export default async function SignInPage({
   searchParams,
 }: {
@@ -14,22 +13,33 @@ export default async function SignInPage({
 }) {
   const { next, error } = await searchParams;
   return (
-    <main className="mx-auto flex min-h-dvh max-w-md flex-col justify-center gap-6 px-6 py-10">
-      <div className="space-y-2">
-        <h1 className="text-3xl font-semibold tracking-tight">Sign in to GladRags</h1>
-        <p className="text-muted-foreground">We&apos;ll email you a link and a code. No password needed.</p>
+    <main className="mx-auto flex min-h-dvh max-w-md flex-col px-6 pt-[max(env(safe-area-inset-top),3rem)] pb-[max(env(safe-area-inset-bottom),2rem)]">
+      <div className="flex flex-1 flex-col justify-center gap-8">
+        <div className="space-y-4">
+          <div className="bg-primary text-primary-foreground flex size-14 items-center justify-center rounded-2xl" aria-hidden="true">
+            <ShirtIcon className="size-7" />
+          </div>
+          <div className="space-y-2">
+            <h1 className="text-3xl font-semibold tracking-tight">Sign in to GladRags</h1>
+            <p className="text-muted-foreground">
+              Your wardrobe, tagged, with outfit ideas for wherever you&apos;re going. We&apos;ll email you a link and a
+              code. No password needed.
+            </p>
+          </div>
+        </div>
+        {error === "link" && (
+          <p role="alert" className="bg-muted rounded-md p-3 text-sm">
+            That sign-in link didn&apos;t work or has expired. Ask for a new one below.
+          </p>
+        )}
+        <SignInForm next={safeReturnPath(next)} />
       </div>
-      {error === "link" && (
-        <p role="alert" className="rounded-md bg-muted p-3 text-sm">
-          That sign-in link didn&apos;t work or has expired. Ask for a new one below.
-        </p>
-      )}
       {isMockMode() && (
-        <p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+        <p className="text-muted-foreground mt-8 rounded-md border border-dashed p-3 text-sm">
           Mock mode: no email is sent and any 6-digit code works.
         </p>
       )}
-      <SignInForm next={safeReturnPath(next)} />
+      <p className="text-muted-foreground mt-6 text-center text-xs">GladRags is invite-only while we test it.</p>
     </main>
   );
 }

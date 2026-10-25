@@ -3,24 +3,18 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ApiErrorSchema, MagicLinkResponseSchema, VerifyCodeResponseSchema } from "@/contracts";
+import { Label } from "@/components/ui/label";
+import { MagicLinkResponseSchema, VerifyCodeResponseSchema } from "@/contracts";
+import { ApiClientError, apiRequest } from "@/lib/client/api";
 
 type Step = { kind: "email" } | { kind: "code"; email: string };
 
-async function postJson(url: string, body: unknown): Promise<{ ok: true; data: unknown } | { ok: false; message: string }> {
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const data: unknown = await res.json();
-    if (res.ok) return { ok: true, data };
-    const error = ApiErrorSchema.safeParse(data);
-    return { ok: false, message: error.success ? error.data.error.message : "Something went wrong. Try again." };
-  } catch {
-    return { ok: false, message: "Couldn't reach GladRags. Check your connection." };
-  }
+function postJson(body: unknown): RequestInit {
+  return { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) };
+}
+
+function messageFor(error: unknown): string {
+  return error instanceof ApiClientError ? error.message : "Something went wrong. Try again.";
 }
 
 export function SignInForm({ next }: { next: string }) {
@@ -32,12 +26,13 @@ export function SignInForm({ next }: { next: string }) {
     setBusy(true);
     setMessage(null);
     const email = String(formData.get("email") ?? "");
-    const result = await postJson("/api/auth/magic-link", { email, next });
-    setBusy(false);
-    if (result.ok && MagicLinkResponseSchema.safeParse(result.data).success) {
+    try {
+      await apiRequest(MagicLinkResponseSchema, "/api/auth/magic-link", postJson({ email, next }));
       setStep({ kind: "code", email });
-    } else if (!result.ok) {
-      setMessage(result.message);
+    } catch (error) {
+      setMessage(messageFor(error));
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -45,17 +40,16 @@ export function SignInForm({ next }: { next: string }) {
     if (step.kind !== "code") return;
     setBusy(true);
     setMessage(null);
-    const result = await postJson("/api/auth/verify-code", {
-      email: step.email,
-      code: String(formData.get("code") ?? ""),
-      next,
-    });
-    setBusy(false);
-    const parsed = result.ok ? VerifyCodeResponseSchema.safeParse(result.data) : null;
-    if (parsed?.success) {
-      window.location.assign(parsed.data.next);
-    } else {
-      setMessage(result.ok ? "Something went wrong. Try again." : result.message);
+    try {
+      const result = await apiRequest(
+        VerifyCodeResponseSchema,
+        "/api/auth/verify-code",
+        postJson({ email: step.email, code: String(formData.get("code") ?? ""), next }),
+      );
+      window.location.assign(result.next);
+    } catch (error) {
+      setMessage(messageFor(error));
+      setBusy(false);
     }
   }
 
@@ -63,34 +57,55 @@ export function SignInForm({ next }: { next: string }) {
     <div className="space-y-4">
       {step.kind === "email" ? (
         <form action={requestLink} className="space-y-3">
-          <label htmlFor="email" className="text-sm font-medium">
-            Email
-          </label>
-          <Input id="email" name="email" type="email" autoComplete="email" inputMode="email" required />
-          <Button type="submit" className="w-full" disabled={busy}>
+          <Label htmlFor="email">Email</Label>
+          <Input
+            id="email"
+            name="email"
+            type="email"
+            autoComplete="email"
+            inputMode="email"
+            autoCapitalize="none"
+            placeholder="you@example.com"
+            required
+          />
+          <Button type="submit" size="lg" className="w-full" disabled={busy}>
             {busy ? "Sending…" : "Email me a sign-in link"}
           </Button>
         </form>
       ) : (
         <form action={verifyCode} className="space-y-3">
           <p className="text-sm">
-            Check <strong>{step.email}</strong>. Tap the link in the email, or type the code here
-            (best if you&apos;re using GladRags from your home screen).
+            Check <strong>{step.email}</strong>. Tap the link in the email, or type the code here (best if
+            you&apos;re using GladRags from your home screen).
           </p>
-          <label htmlFor="code" className="text-sm font-medium">
-            Code from the email
-          </label>
-          <Input id="code" name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6,10}" required />
-          <Button type="submit" className="w-full" disabled={busy}>
+          <Label htmlFor="code">Code from the email</Label>
+          <Input
+            id="code"
+            name="code"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            pattern="[0-9]{6,10}"
+            className="text-center font-mono text-lg tracking-[0.3em]"
+            required
+          />
+          <Button type="submit" size="lg" className="w-full" disabled={busy}>
             {busy ? "Checking…" : "Sign in"}
           </Button>
-          <Button type="button" variant="link" className="w-full" onClick={() => setStep({ kind: "email" })}>
+          <Button
+            type="button"
+            variant="link"
+            className="w-full"
+            onClick={() => {
+              setMessage(null);
+              setStep({ kind: "email" });
+            }}
+          >
             Use a different email
           </Button>
         </form>
       )}
       {message && (
-        <p role="alert" className="text-sm text-destructive">
+        <p role="alert" className="text-destructive text-sm">
           {message}
         </p>
       )}

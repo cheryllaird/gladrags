@@ -33,8 +33,9 @@ test.describe("sign-in (mock mode)", () => {
     await expect(page.getByText("cheryl@example.com")).toBeVisible();
     await page.getByLabel("Code from the email").fill("123456");
     await page.getByRole("button", { name: "Sign in" }).click();
-    await expect(page).toHaveURL(/\/$/);
-    await expect(page.getByRole("heading", { name: "GladRags" })).toBeVisible();
+    // "/" is the wardrobe now (wardrobe-ui).
+    await expect(page).toHaveURL(/\/wardrobe$/);
+    await expect(page.getByRole("heading", { name: "Wardrobe" })).toBeVisible();
   });
 
   test("an off-site next is ignored: you end up on this site", async ({ page, baseURL }) => {
@@ -43,7 +44,7 @@ test.describe("sign-in (mock mode)", () => {
     await page.getByRole("button", { name: "Email me a sign-in link" }).click();
     await page.getByLabel("Code from the email").fill("123456");
     await page.getByRole("button", { name: "Sign in" }).click();
-    await page.waitForURL((url) => url.pathname === "/");
+    await page.waitForURL((url) => url.pathname === "/wardrobe");
     expect(new URL(page.url()).origin).toBe(new URL(baseURL!).origin);
   });
 

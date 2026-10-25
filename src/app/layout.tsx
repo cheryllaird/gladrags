@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { AppShell } from "@/components/app-shell/app-shell";
 import { ServiceWorkerRegistrar } from "@/components/service-worker-registrar";
 import "./globals.css";
 
@@ -29,7 +30,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="en-GB">
       <body className="min-h-dvh">
-        {children}
+        <AppShell>{children}</AppShell>
         <ServiceWorkerRegistrar />
       </body>
     </html>
