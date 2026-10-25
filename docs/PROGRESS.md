@@ -2,7 +2,7 @@
 
 Maintained by the orchestrator (main Claude Code session). Source of truth for scope: `docs/SPEC.md`.
 
-**Current status:** Milestone 3 (parallel build) in progress: ingestion, outfit-engine, wardrobe-ui and outfit-ui running; link-import waits for ingestion's tagging step.
+**Current status:** Milestone 3 (parallel build) in progress. outfit-ui merged. ingestion, outfit-engine and wardrobe-ui are fixing review/QA findings; link-import waits for ingestion to merge.
 
 Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 
@@ -40,11 +40,11 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 
 | Task | Agent | Branch | Status | Depends on |
 | --- | --- | --- | --- | --- |
-| Photo upload, EXIF strip, in-browser background removal, Gemini tagging, item cap | ingestion | `feat/ingestion` | ◐ | Foundations |
-| Filter, candidates, two-pass ranking, validation, refinement, feedback hints, outfit cap | outfit-engine | `feat/outfit-engine` | ◐ | Foundations |
+| Photo upload, EXIF strip, in-browser background removal, Gemini tagging, item cap | ingestion | `feat/ingestion` | ◐ fixing review/QA (time budget, corrupt images, cost headroom) | Foundations |
+| Filter, candidates, two-pass ranking, validation, refinement, feedback hints, outfit cap | outfit-engine | `feat/outfit-engine` | ◐ fixing review/QA (SDK retry, keep good outfits) | Foundations |
 | URL fetch, OG / JSON-LD parsing, screenshot fallback | link-import | `feat/link-import` | ☐ | Ingestion tagging merged |
-| Sign-in, add-item flow, tag review, wardrobe grid + filters, item detail | wardrobe-ui | `feat/wardrobe-ui` | ◐ | Foundations (mocked APIs) |
-| Style request + chips, results, canvas collages, swap/refine, saved outfits | outfit-ui | `feat/outfit-ui` | ◐ | Foundations (mocked APIs) |
+| Sign-in, add-item flow, tag review, wardrobe grid + filters, item detail | wardrobe-ui | `feat/wardrobe-ui` | ◐ fixing review/QA (expiring URLs, expired session, account sheet) | Foundations (mocked APIs) |
+| Style request + chips, results, canvas collages, swap/refine, saved outfits | outfit-ui | `feat/outfit-ui` | ☑ merged | Foundations (mocked APIs). Review: changes needed (anchor errors, expiring image URLs) → fixed, approved at 2f7f6d2. QA: 6 low findings, all fixed. 83/83 e2e at 390 px on the merged tree. |
 | Preview build of screens for Cheryl | orchestrator | | ☐ | UI branches |
 
 ## Milestone 4 — Integration
@@ -71,6 +71,8 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 - 2026-10-21: This session can only push to `claude/build-setup-68by4m`, so that branch acts as the integration branch ("main" in CLAUDE.md's merge rules) until Cheryl opens a PR into `main`. Feature branches are merged into it locally.
 - 2026-10-25: Cheryl approved the contracts and all decisions in CONTRACTS.md section 10.
 - 2026-10-25: UI routes agreed between the UI agents: wardrobe-ui owns the app shell, bottom nav, `/sign-in`, `/wardrobe`, `/wardrobe/[id]`, `/add`, `/add/link`; outfit-ui owns `/outfits`, `/outfits/saved`. "Build an outfit around this" links to `/outfits?anchor=<itemId>`.
+- 2026-10-25: Ingestion cut-out rules (orchestrator): a cut-out larger than its original is rejected; an image counts as a cut-out only if at least 1% of pixels have alpha < 250.
+- 2026-10-25: Avoid hints come from outfits whose status is currently `rejected`, so undoing a reject removes its hint.
 - 2026-10-21: Cheryl chose in-browser background removal instead of Replicate. No background-removal key is needed; the spend cap covers Gemini only; `cutout_image_key` is nullable (the original is used if removal fails); add-by-link becomes two steps (the server stores the product image, then the client uploads the cut-out). SPEC.md, CLAUDE.md and the ingestion agent are updated, and the foundations agent has been told.
 
 ## Follow-ups from foundations review
@@ -85,6 +87,18 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 | Allowlist update trigger: only fire when the email actually changes | foundations / orchestrator | Before tester build |
 | Apply migrations to Cheryl's Supabase project and test auth end to end | orchestrator | Once keys exist |
 | Supabase email template (`{{ .Token }}`) and redirect URLs | Cheryl | Before sign-in can be tested live |
+
+## Follow-ups from milestone 3 reviews
+
+| Item | Owner | When |
+| --- | --- | --- |
+| Unique indexes on `items.original_image_key` / `cutout_image_key` (two simultaneous saves of one draft) | orchestrator (migration) | With the atomic cap fix, before tester build |
+| Schedule the orphaned-image cleanup (`src/lib/ingestion/cleanup.ts`), daily | orchestrator | Milestone 4 |
+| Swap wardrobe-ui's FakeBackgroundRemover for `getBackgroundRemover()` + `preloadBackgroundRemover()`; pick one resize/re-encode path | orchestrator | When ingestion and wardrobe-ui are both merged |
+| Mock markers for ai_failed, missing_category, nothing_fits | orchestrator | Milestone 4 (nice to have) |
+| Record real Gemini fixtures for tagging and ranking | orchestrator | Once Gemini quota allows (paid tier) |
+| Saved-screen lazy collages: check freshness before first draw | outfit-ui | Minor, milestone 4 |
+| CONTRACTS.md: routes now built, `GEMINI_MODEL`, new image-processor methods | orchestrator | As each backend merges |
 
 ## Blockers
 
