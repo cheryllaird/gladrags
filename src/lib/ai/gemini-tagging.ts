@@ -103,18 +103,6 @@ export const TAGGING_RESPONSE_SCHEMA = {
     "fabric",
     "description",
   ],
-  propertyOrdering: [
-    "category",
-    "subcategory",
-    "colours",
-    "pattern",
-    "formality",
-    "seasons",
-    "warmth",
-    "occasions",
-    "fabric",
-    "description",
-  ],
 } as const;
 
 const subcategoryLines = Object.entries(SUBCATEGORIES)
@@ -203,7 +191,7 @@ export function buildTaggingRequest(model: string, input: TaggingInput): Generat
       systemInstruction: TAGGING_SYSTEM_INSTRUCTION,
       responseMimeType: "application/json",
       responseJsonSchema: TAGGING_RESPONSE_SCHEMA,
-      temperature: 0.2,
+      // Temperature stays at the default: Google advises against lowering it for Gemini 3 models.
       // Tagging is a quick look, not a puzzle: little thinking keeps it fast and cheap.
       thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
       httpOptions: {
