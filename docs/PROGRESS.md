@@ -2,7 +2,7 @@
 
 Maintained by the orchestrator (main Claude Code session). Source of truth for scope: `docs/SPEC.md`.
 
-**Current status:** Milestone 2 merged. Waiting at **Checkpoint 2** for Cheryl to approve the contracts (`docs/CONTRACTS.md`, section 10 lists her decisions).
+**Current status:** Milestone 3 (parallel build) in progress: ingestion, outfit-engine, wardrobe-ui and outfit-ui running; link-import waits for ingestion's tagging step.
 
 Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 
@@ -11,8 +11,8 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 | # | Milestone | Status | Checkpoint |
 | --- | --- | --- | --- |
 | 1 | Spec sign-off | ☑ | Done |
-| 2 | Foundations | ◐ merged, awaiting Cheryl | Stop for Cheryl to approve contracts |
-| 3 | Parallel build | ☐ | Preview build of screens part-way |
+| 2 | Foundations | ☑ | Stop for Cheryl to approve contracts |
+| 3 | Parallel build | ◐ | Preview build of screens part-way |
 | 4 | Integration | ☐ | Journey tests green, Vercel preview, stop for Cheryl |
 | 5 | Cheryl's test | ☐ | Her sign-off |
 | 6 | Tester build | ☐ | Testers invited by Cheryl |
@@ -34,17 +34,17 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 | Review (`reviewer`) | ☑ | First pass: changes needed (link step 2 bypassed the daily cap, plus 13 minor). All fixed except the atomic cap check (deferred). Re-review: approved at b47b43c. |
 | Tests (`qa`) | ☑ | 528 unit tests pass (1 pinned expected failure: cap race); 17/17 Playwright at 390 px in mock mode; CI runs e2e |
 | Merge | ☑ | Merged into `claude/build-setup-68by4m` |
-| **Checkpoint 2: Cheryl approves contracts** | ☐ | |
+| **Checkpoint 2: Cheryl approves contracts** | ☑ | Approved 2026-10-25, including all section 10 decisions |
 
 ## Milestone 3 — Parallel build
 
 | Task | Agent | Branch | Status | Depends on |
 | --- | --- | --- | --- | --- |
-| Photo upload, EXIF strip, in-browser background removal, Gemini tagging, item cap | ingestion | `feat/ingestion` | ☐ | Foundations |
-| Filter, candidates, two-pass ranking, validation, refinement, feedback hints, outfit cap | outfit-engine | `feat/outfit-engine` | ☐ | Foundations |
+| Photo upload, EXIF strip, in-browser background removal, Gemini tagging, item cap | ingestion | `feat/ingestion` | ◐ | Foundations |
+| Filter, candidates, two-pass ranking, validation, refinement, feedback hints, outfit cap | outfit-engine | `feat/outfit-engine` | ◐ | Foundations |
 | URL fetch, OG / JSON-LD parsing, screenshot fallback | link-import | `feat/link-import` | ☐ | Ingestion tagging merged |
-| Sign-in, add-item flow, tag review, wardrobe grid + filters, item detail | wardrobe-ui | `feat/wardrobe-ui` | ☐ | Foundations (mocked APIs) |
-| Style request + chips, results, canvas collages, swap/refine, saved outfits | outfit-ui | `feat/outfit-ui` | ☐ | Foundations (mocked APIs) |
+| Sign-in, add-item flow, tag review, wardrobe grid + filters, item detail | wardrobe-ui | `feat/wardrobe-ui` | ◐ | Foundations (mocked APIs) |
+| Style request + chips, results, canvas collages, swap/refine, saved outfits | outfit-ui | `feat/outfit-ui` | ◐ | Foundations (mocked APIs) |
 | Preview build of screens for Cheryl | orchestrator | | ☐ | UI branches |
 
 ## Milestone 4 — Integration
@@ -61,14 +61,16 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 
 | Item | Needed by | Status |
 | --- | --- | --- |
-| Supabase project URL, publishable key (sb_publishable_…), secret key (sb_secret_…) | End-to-end check of foundations (auth, migrations) | ☐ Missing |
-| Gemini API key (free tier OK for dev; paid before testers) | Milestone 3 (ingestion, outfit-engine live runs) | ☐ Missing |
+| Supabase project URL, publishable key (sb_publishable_…), secret key (sb_secret_…) | End-to-end check of foundations (auth, migrations) | ☑ Provided. ⛔ The cloud environment's network policy blocks `*.supabase.co`, so migrations and live auth can't be checked from here yet. |
+| Gemini API key (free tier OK for dev; paid before testers) | Milestone 3 (ingestion, outfit-engine live runs) | ☑ Provided and verified (model list call). Default model `gemini-3.8-flash`, overridable with `GEMINI_MODEL`. |
 | Vercel project linked to repo, with the same env vars | Milestone 4 preview deploy | ☐ Missing |
 | Tester email allowlist | Milestone 6 (and her own email for testing earlier) | ☐ Missing |
 
 ## Decisions log
 
 - 2026-10-21: This session can only push to `claude/build-setup-68by4m`, so that branch acts as the integration branch ("main" in CLAUDE.md's merge rules) until Cheryl opens a PR into `main`. Feature branches are merged into it locally.
+- 2026-10-25: Cheryl approved the contracts and all decisions in CONTRACTS.md section 10.
+- 2026-10-25: UI routes agreed between the UI agents: wardrobe-ui owns the app shell, bottom nav, `/sign-in`, `/wardrobe`, `/wardrobe/[id]`, `/add`, `/add/link`; outfit-ui owns `/outfits`, `/outfits/saved`. "Build an outfit around this" links to `/outfits?anchor=<itemId>`.
 - 2026-10-21: Cheryl chose in-browser background removal instead of Replicate. No background-removal key is needed; the spend cap covers Gemini only; `cutout_image_key` is nullable (the original is used if removal fails); add-by-link becomes two steps (the server stores the product image, then the client uploads the cut-out). SPEC.md, CLAUDE.md and the ingestion agent are updated, and the foundations agent has been told.
 
 ## Follow-ups from foundations review
@@ -86,4 +88,4 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 
 ## Blockers
 
-None. Milestone 3 waits on Cheryl's approval at Checkpoint 2.
+- Supabase is unreachable from the cloud environment (network policy). Cheryl to add her project's `<ref>.supabase.co` host to Allowed domains. Not blocking milestone 3, which builds against mocks and fixtures.
