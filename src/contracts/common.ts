@@ -1,5 +1,12 @@
 import { z } from "zod";
 
+// Never compile parsers with `new Function`: Zod otherwise probes for eval
+// support on first use, which the Content Security Policy (next.config.ts)
+// reports, and would block once it's enforced. Our schemas are small, so
+// the interpreted parsers are plenty fast. Set here because every contract
+// module imports this one first.
+z.config({ jitless: true });
+
 /** Database row IDs are UUIDs everywhere. */
 export const IdSchema = z.uuid();
 export type Id = z.infer<typeof IdSchema>;
