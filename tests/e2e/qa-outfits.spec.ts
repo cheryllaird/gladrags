@@ -982,6 +982,10 @@ test.describe("mobile at 390 px", () => {
     expect(box!.x).toBeGreaterThanOrEqual(0);
     expect(box!.x + box!.width).toBeLessThanOrEqual(390);
     await dialog.getByRole("button", { name: "Reject outfit" }).click();
+    // Wait for the card to finish collapsing, or the buttons counted below can
+    // vanish before they're measured.
+    await expect(card.getByRole("button", { name: /Undo/ })).toBeVisible();
+    await expect(dialog).toBeHidden();
     await expectTapTargets(card, "rejected card");
 
     await cards(page).nth(1).getByRole("button", { name: "Swap Test top" }).click();

@@ -114,7 +114,7 @@ test("results, tweak, swap, feedback and saved", async ({ page }) => {
   await expect(page.getByRole("heading", { name: /^Swapped out the / })).toBeVisible();
   await shot(page, "13-revised-after-swap");
 
-  await page.getByRole("link", { name: "Saved" }).click();
+  await page.getByRole("main").getByRole("link", { name: "Saved" }).click();
   await expect(page.getByRole("heading", { name: "Saved outfits" })).toBeVisible();
   await expect(page.getByTestId("outfit-card").first()).toBeVisible();
   await shot(page, "14-saved");

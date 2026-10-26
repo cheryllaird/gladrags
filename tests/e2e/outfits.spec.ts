@@ -313,7 +313,7 @@ test.describe("journey 5: save, like and reject", () => {
     expect((await patch).postDataJSON()).toEqual({ status: "rejected" });
 
     // The saved screen lists the saved and liked ones, with collages, but not the rejected one.
-    await page.getByRole("link", { name: "Saved" }).click();
+    await page.getByRole("main").getByRole("link", { name: "Saved" }).click();
     await expect(page.getByRole("heading", { name: "Saved outfits" })).toBeVisible();
     const saved = page.locator(`[data-outfit-id="${savedId}"]`);
     const liked = page.locator(`[data-outfit-id="${likedId}"]`);

@@ -2,7 +2,7 @@
 
 Maintained by the orchestrator (main Claude Code session). Source of truth for scope: `docs/SPEC.md`.
 
-**Current status:** Milestone 3 (parallel build) in progress. outfit-ui, outfit-engine and ingestion merged. wardrobe-ui fixing review/QA findings; link-import starting.
+**Current status:** Milestone 3 (parallel build) in progress. outfit-ui, outfit-engine, ingestion and wardrobe-ui merged. link-import building. Preview of the screens ready for Cheryl (mock mode).
 
 Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 
@@ -43,7 +43,7 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 | Photo upload, EXIF strip, in-browser background removal, Gemini tagging, item cap | ingestion | `feat/ingestion` | ☑ merged | Review: changes needed (Gemini time budget) → fixed, approved at b7481aa. QA: corrupt images gave 500 and were counted, `*` search wildcard, and others; all fixed. U²-Netp (Apache-2.0, 4.6 MB) runs in the browser, ~2–4 s per photo expected on a mid-range phone. | Foundations |
 | Filter, candidates, two-pass ranking, validation, refinement, feedback hints, outfit cap | outfit-engine | `feat/outfit-engine` | ☑ merged | Review: changes needed (SDK retry made up to 4 uncosted calls) → fixed, approved at c51d0ad. QA: 3 findings fixed. Ranking prompts still unverified against live Gemini (quota). | Foundations |
 | URL fetch, OG / JSON-LD parsing, screenshot fallback | link-import | `feat/link-import` | ◐ | Ingestion tagging merged |
-| Sign-in, add-item flow, tag review, wardrobe grid + filters, item detail | wardrobe-ui | `feat/wardrobe-ui` | ◐ fixing review/QA (expiring URLs, expired session, account sheet) | Foundations (mocked APIs) |
+| Sign-in, add-item flow, tag review, wardrobe grid + filters, item detail | wardrobe-ui | `feat/wardrobe-ui` | ☑ merged | Review: changes needed (expiring image URLs) → fixed, approved at adb6298. QA: expired session didn't reach sign-in; Back lost filters; both fixed. Account sheet with delete-my-account added. Switched to ingestion's real background remover at merge. | Foundations (mocked APIs) |
 | Style request + chips, results, canvas collages, swap/refine, saved outfits | outfit-ui | `feat/outfit-ui` | ☑ merged | Foundations (mocked APIs). Review: changes needed (anchor errors, expiring image URLs) → fixed, approved at 2f7f6d2. QA: 6 low findings, all fixed. 83/83 e2e at 390 px on the merged tree. |
 | Preview build of screens for Cheryl | orchestrator | | ☐ | UI branches |
 
@@ -96,7 +96,10 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 | --- | --- | --- |
 | Unique indexes on `items.original_image_key` / `cutout_image_key` (two simultaneous saves of one draft) | orchestrator (migration) | With the atomic cap fix, before tester build |
 | Schedule the orphaned-image cleanup (`src/lib/ingestion/cleanup.ts`), daily | orchestrator | Milestone 4 |
-| Swap wardrobe-ui's FakeBackgroundRemover for `getBackgroundRemover()` + `preloadBackgroundRemover()`; pick one resize/re-encode path | orchestrator | When ingestion and wardrobe-ui are both merged |
+| ~~Swap wardrobe-ui's FakeBackgroundRemover for the real remover + preload~~ | orchestrator | Done at wardrobe-ui merge (e2e photo tests opt into the fake via `tests/e2e/helpers.ts`) |
+| One resize/re-encode path: wardrobe-ui's `src/lib/client/photo.ts` vs ingestion's `preparePhotoUpload` | orchestrator | Milestone 4 |
+| Restoring a kept draft after sign-in: check the draft's image keys belong to the signed-in user | wardrobe-ui | Before tester build |
+| Draft review image doesn't refresh if its signed URL expires mid-review | wardrobe-ui | Minor |
 | Mock markers for ai_failed, missing_category, nothing_fits | orchestrator | Milestone 4 (nice to have) |
 | Record real Gemini fixtures for tagging and ranking; confirm gemini-3.8-flash prices | orchestrator | Once Gemini quota allows (paid tier) |
 | Shared Gemini client module for tagging and ranking (both use `attempts: 1`) | orchestrator | Milestone 4, minor |

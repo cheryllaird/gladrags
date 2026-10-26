@@ -3,9 +3,10 @@ import { expect, test } from "@playwright/test";
 // Smoke test: the app boots in mock mode on a 390 px phone viewport and is
 // installable. The qa agent adds the five core journeys alongside this.
 
-test("home page loads on a phone-sized screen", async ({ page }) => {
+test("home page opens the wardrobe on a phone-sized screen", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "GladRags" })).toBeVisible();
+  await expect(page).toHaveURL(/\/wardrobe$/);
+  await expect(page.getByRole("heading", { name: "Wardrobe" })).toBeVisible();
   expect(page.viewportSize()?.width).toBe(390);
 
   // Nothing should overflow sideways on a phone.
