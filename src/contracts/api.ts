@@ -252,3 +252,26 @@ export type OutfitListResponse = z.infer<typeof OutfitListResponseSchema>;
 /** GET/PATCH /api/outfits/[id] */
 export const OutfitResponseSchema = z.object({ outfit: OutfitSchema });
 export type OutfitResponse = z.infer<typeof OutfitResponseSchema>;
+
+// ---------------------------------------------------------------------------
+// Scheduled jobs
+// ---------------------------------------------------------------------------
+
+const CountSchema = z.int().min(0);
+
+/**
+ * GET /api/cron/cleanup (daily, from Vercel Cron, with
+ * `Authorization: Bearer ${CRON_SECRET}`). Counts only: no keys, emails
+ * or other user data.
+ */
+export const CronCleanupResponseSchema = z.object({
+  /** Stored images over a day old checked for use. */
+  imagesChecked: CountSchema,
+  /** Of those, images no item or open link import uses, now deleted. */
+  orphanedImagesDeleted: CountSchema,
+  /** link_imports rows over 7 days old, deleted. */
+  linkImportsDeleted: CountSchema,
+  /** sign_in_attempts rows over a day old, deleted. */
+  signInAttemptsDeleted: CountSchema,
+});
+export type CronCleanupResponse = z.infer<typeof CronCleanupResponseSchema>;

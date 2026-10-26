@@ -51,6 +51,10 @@ export function newImageKey(userId: string, mimeType: AcceptedImageType): string
 
 const LIST_PAGE_SIZE = 100;
 
+/** How long a browser may keep a fetched image: 10 minutes, never in a shared cache. */
+export const IMAGE_CACHE_MAX_AGE_SECONDS = 600;
+export const IMAGE_CACHE_CONTROL = `private, max-age=${IMAGE_CACHE_MAX_AGE_SECONDS}`;
+
 /** Backed by Supabase Storage. Needs the admin (secret key) client: users can't upload directly. */
 export class SupabaseImageStorage implements ImageStorage {
   constructor(private readonly admin: SupabaseClient) {}
@@ -59,7 +63,11 @@ export class SupabaseImageStorage implements ImageStorage {
     const { error } = await this.admin.storage.from(bucket).upload(key, image.data, {
       contentType: image.mimeType,
       upsert: false,
-      cacheControl: "3600",
+      // storage-js turns `cacheControl` into "max-age=<value>" for byte
+      // uploads, so the full header is set explicitly: private (no shared
+      // caches or CDNs keep these photos) and short.
+      cacheControl: String(IMAGE_CACHE_MAX_AGE_SECONDS),
+      headers: { "cache-control": IMAGE_CACHE_CONTROL },
     });
     if (error) throw new Error(`Couldn't store the image in ${bucket}: ${error.message}`);
   }

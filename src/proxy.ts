@@ -16,8 +16,16 @@ function isPublic(pathname: string): boolean {
   return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p.endsWith("/") ? p : `${p}/`));
 }
 
+/**
+ * Scheduled jobs: called by Vercel Cron with a bearer secret, never by a
+ * signed-in user, so there's no session to refresh. The route checks the
+ * secret itself.
+ */
+const CRON_PREFIX = "/api/cron/";
+
 export async function proxy(request: NextRequest) {
   if (isMockMode()) return NextResponse.next();
+  if (request.nextUrl.pathname.startsWith(CRON_PREFIX)) return NextResponse.next();
 
   if (!hasSupabaseEnv()) {
     return new NextResponse(
