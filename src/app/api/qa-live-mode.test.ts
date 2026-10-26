@@ -42,6 +42,19 @@ vi.mock("@/lib/supabase/admin", () => ({
   }),
 }));
 
+// The link routes fetch pages from the server. Never let them reach the
+// real network here: their dependencies refuse to be built, so the routes
+// answer 500 before any DNS lookup or connection. (Their behaviour is
+// covered with fakes in items/link-routes.test.ts.)
+vi.mock("@/lib/link-import/deps", () => ({
+  getLinkImportDeps: () => {
+    throw new Error("link-import deps are not available in this test");
+  },
+  getLinkCutoutDeps: () => {
+    throw new Error("link-import deps are not available in this test");
+  },
+}));
+
 import * as account from "./account/route";
 import * as magicLink from "./auth/magic-link/route";
 import * as signOut from "./auth/sign-out/route";
@@ -143,6 +156,9 @@ const BUILT_ROUTES = new Set([
   "PATCH /api/items/[id]",
   "DELETE /api/items/[id]",
   "POST /api/items/photo",
+  // Built by link-import; items/link-routes.test.ts covers them in depth.
+  "POST /api/items/link",
+  "POST /api/items/link/cutout",
   // Built by outfit-engine; outfits/outfits-live.test.ts covers them in depth.
   "GET /api/outfits",
   "POST /api/outfits",
