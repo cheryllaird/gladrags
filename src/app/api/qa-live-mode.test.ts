@@ -34,6 +34,8 @@ vi.mock("@/lib/supabase/server", () => ({
 vi.mock("@/lib/supabase/admin", () => ({
   createAdminClient: () => ({
     rpc: async (name: string, args: unknown) => {
+      // Sign-in rate limit (src/lib/auth/rate-limit.ts): always under it here.
+      if (name === "reserve_sign_in_attempt") return { data: { ok: true, denied: null, retry_at: null }, error: null };
       fake.rpc(name, args);
       if (name !== "is_email_allowed") throw new Error(`unexpected rpc ${name}`);
       if (fake.allowed === "error") return { data: null, error: { message: "db down" } };
@@ -363,8 +365,16 @@ describe("/auth/callback and /auth/confirm only redirect within the site", () =>
     expect(location.origin).toBe(BASE);
   });
 
+  // Signing in from /auth/confirm takes a POST (the GET page's form posts back).
   it.each(tricky)("confirm with next=%j stays on this origin", async (next) => {
-    const res = await authConfirm.GET(new Request(`${BASE}/auth/confirm?token_hash=abc&type=email&next=${encodeURIComponent(next)}`));
+    const form = new URLSearchParams({ token_hash: "abc", type: "email", next });
+    const res = await authConfirm.POST(
+      new Request(`${BASE}/auth/confirm`, {
+        method: "POST",
+        headers: { origin: BASE, "content-type": "application/x-www-form-urlencoded" },
+        body: form,
+      }),
+    );
     expect(new URL(res.headers.get("location")!).origin).toBe(BASE);
   });
 

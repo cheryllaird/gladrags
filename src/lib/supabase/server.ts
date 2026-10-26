@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { getSupabasePublicEnv } from "@/lib/env";
+import { sessionCookieOptions } from "./cookie-options";
 
 /**
  * Supabase client for Server Components and Route Handlers, acting as the
@@ -11,6 +12,7 @@ export async function createClient() {
   const cookieStore = await cookies();
 
   return createServerClient(env.NEXT_PUBLIC_SUPABASE_URL, env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY, {
+    cookieOptions: sessionCookieOptions(),
     cookies: {
       getAll() {
         return cookieStore.getAll();
