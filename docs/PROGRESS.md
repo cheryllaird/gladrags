@@ -2,7 +2,7 @@
 
 Maintained by the orchestrator (main Claude Code session). Source of truth for scope: `docs/SPEC.md`.
 
-**Current status:** Milestone 3 complete: all five builder branches merged. Milestone 4 (integration) next.
+**Current status:** Milestone 3 complete: all five builder branches merged. Milestone 4 (integration) started: QA journey tests and the security check are running.
 
 Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 
@@ -13,7 +13,7 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 | 1 | Spec sign-off | ☑ | Done |
 | 2 | Foundations | ☑ | Stop for Cheryl to approve contracts |
 | 3 | Parallel build | ☑ | Preview build of screens part-way |
-| 4 | Integration | ☐ | Journey tests green, Vercel preview, stop for Cheryl |
+| 4 | Integration | ◐ | Journey tests green, Vercel preview, stop for Cheryl |
 | 5 | Cheryl's test | ☐ | Her sign-off |
 | 6 | Tester build | ☐ | Testers invited by Cheryl |
 
@@ -52,8 +52,8 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 | Task | Agent | Status |
 | --- | --- | --- |
 | Switch UIs from mocks to real APIs | orchestrator | ☐ |
-| Journey tests 1–5 + add-by-link + missing-category | qa | ☐ |
-| Security check (RLS, signed URLs, secrets, uploads, link fetching, deletion) | security | ☐ |
+| Journey tests 1–5 + add-by-link + missing-category | qa | ◐ |
+| Security check (RLS, signed URLs, secrets, uploads, link fetching, deletion) | security | ◐ |
 | Vercel preview deploy | orchestrator | ☐ |
 | Tester privacy note (owner: orchestrator) | orchestrator | ☐ |
 
