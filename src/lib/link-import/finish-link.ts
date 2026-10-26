@@ -1,0 +1,104 @@
+/**
+ * POST /api/items/link/cutout, step 2 of 2, the real version
+ * (CONTRACTS.md section 5).
+ *
+ * The phone has loaded the step-1 product image and tried to cut it out.
+ * Order matters here:
+ * 1. Caps first (AI paused, or today's items used up).
+ * 2. Look the import up WITHOUT using it, and check and clean the cut-out
+ *    against the stored original. A bad cut-out is a 400 and the import
+ *    can still be used (follow-up from the foundations review).
+ * 3. Store the cut-out, then claim the import in one statement. Losing a
+ *    race (or a replay) is a 404, and the stored cut-out is removed.
+ * 4. Count the item, tag the cut-out (or the original) with the product
+ *    data the SERVER stored in step 1 as untrusted hints, return the draft.
+ */
+import "server-only";
+import { STORAGE_BUCKETS, UPLOAD_FIELDS, imageKeyBelongsTo, type ItemDraft } from "@/contracts";
+import type { ImageInput } from "@/lib/ai/types";
+import { ApiException } from "@/lib/api/errors";
+import type { LinkCutoutUpload } from "@/lib/api/upload";
+import { SIGNED_URL_TTL_SECONDS } from "@/lib/images/server";
+import { CUTOUT_RULES, checkUploadedCutout, cleanImage } from "@/lib/ingestion/images";
+import { newImageKey, type ImageStorage } from "@/lib/ingestion/storage";
+import { suggestTags, type TaggingDeps } from "@/lib/ingestion/tagging";
+import type { ImageStore } from "@/lib/outfits/thumbnails";
+import type { LinkImportRepository, OpenLinkImport } from "./repository";
+
+export interface LinkCutoutDeps extends TaggingDeps {
+  storage: ImageStorage;
+  /** Reads the stored step-1 image back (admin client). */
+  imageStore: ImageStore;
+  linkImports: LinkImportRepository;
+}
+
+function importGone(): ApiException {
+  return new ApiException("not_found", "That link has expired or was already added. Paste the link again to start over.");
+}
+
+export async function finishLinkImport(deps: LinkCutoutDeps, userId: string, upload: LinkCutoutUpload): Promise<ItemDraft> {
+  // 1. Caps.
+  await deps.usage.assertCanStart(userId, "item_ingest");
+
+  // 2. The import must be this user's, unused and in time. Read only.
+  const originalKey = upload.meta.originalImageKey;
+  if (!imageKeyBelongsTo(originalKey, userId)) throw importGone();
+  if (!(await deps.linkImports.findOpen(userId, originalKey))) throw importGone();
+  if (!(await deps.storage.exists(STORAGE_BUCKETS.originals, originalKey))) throw importGone();
+
+  const original = await deps.imageStore.download({ bucket: STORAGE_BUCKETS.originals, key: originalKey });
+  const originalInfo = await deps.images.inspect(original.data);
+
+  // Check and clean the cut-out before the import is used up.
+  const checked = upload.cutout ? await checkUploadedCutout(deps.images, upload.cutout, UPLOAD_FIELDS.cutout, originalInfo) : null;
+  const cutout = checked ? await cleanImage(deps.images, checked, CUTOUT_RULES.maxBytes, UPLOAD_FIELDS.cutout, "cut-out") : null;
+
+  // 3. Store the cut-out, then claim.
+  const cutoutKey = cutout ? newImageKey(userId, cutout.mimeType) : null;
+  if (cutout && cutoutKey) await deps.storage.upload(STORAGE_BUCKETS.cutouts, cutoutKey, cutout);
+  const removeCutout = async () => {
+    if (cutoutKey) await deps.storage.remove(STORAGE_BUCKETS.cutouts, [cutoutKey]).catch(() => {});
+  };
+
+  let claimed: OpenLinkImport | null;
+  try {
+    claimed = await deps.linkImports.claim(userId, originalKey);
+  } catch (error) {
+    await removeCutout();
+    throw error;
+  }
+  if (!claimed) {
+    await removeCutout();
+    throw importGone();
+  }
+
+  try {
+    // 4. Count it now: tagging, which costs, happens in this request.
+    await deps.usage.recordAction(userId, "item_ingest");
+    const tagImage: ImageInput = cutout ?? original;
+    const suggestedTags = await suggestTags(deps, userId, tagImage, claimed.product);
+
+    const [originalUrls, cutoutUrls] = await Promise.all([
+      deps.storage.signedUrls(STORAGE_BUCKETS.originals, [originalKey], SIGNED_URL_TTL_SECONDS),
+      cutoutKey ? deps.storage.signedUrls(STORAGE_BUCKETS.cutouts, [cutoutKey], SIGNED_URL_TTL_SECONDS) : Promise.resolve(new Map<string, string>()),
+    ]);
+    const originalUrl = originalUrls.get(originalKey);
+    const cutoutUrl = cutoutKey ? cutoutUrls.get(cutoutKey) : null;
+    if (!originalUrl || cutoutUrl === undefined) throw new Error("Couldn't sign the new images' URLs");
+
+    return {
+      source: "link",
+      sourceUrl: claimed.sourceUrl,
+      originalImageKey: originalKey,
+      cutoutImageKey: cutoutKey,
+      originalUrl,
+      cutoutUrl,
+      suggestedTags,
+    };
+  } catch (error) {
+    // The original stays: it belongs to the import, and the cleanup job
+    // removes it if no item ever uses it.
+    await removeCutout();
+    throw error;
+  }
+}

@@ -143,6 +143,9 @@ const BUILT_ROUTES = new Set([
   "PATCH /api/items/[id]",
   "DELETE /api/items/[id]",
   "POST /api/items/photo",
+  // Built by link-import; items/link-routes.test.ts covers them in depth.
+  "POST /api/items/link",
+  "POST /api/items/link/cutout",
   // Built by outfit-engine; outfits/outfits-live.test.ts covers them in depth.
   "GET /api/outfits",
   "POST /api/outfits",
