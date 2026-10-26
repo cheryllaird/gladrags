@@ -547,9 +547,20 @@ test.describe("PWA share target (/add/link?url=…&text=…)", () => {
     return urls;
   }
 
-  test("a link in `url` starts the import by itself, once", async ({ page }) => {
+  // Opening the page is a plain GET that any site can link to, so it must
+  // not make the server fetch anything: the shared link waits for a tap.
+  async function expectWaitingForTap(page: Page, link: string, urls: string[]) {
+    await expect(page.getByLabel("Product link")).toHaveValue(link);
+    await expect(page.getByRole("button", { name: "Import this link" })).toBeEnabled();
+    await expect(page.getByText("Shared to GladRags.", { exact: false })).toBeVisible();
+    expect(urls).toEqual([]);
+  }
+
+  test("a link in `url` is filled in, and imported once only after a tap", async ({ page }) => {
     const link = "https://shop.example.com/p/shared?colour=navy&size=m";
     const urls = await shareTo(page, `url=${encodeURIComponent(link)}&title=Shirt`);
+    await expectWaitingForTap(page, link, urls);
+    await page.getByRole("button", { name: "Import this link" }).click();
     await expect(page.getByRole("heading", { name: "Check the tags" })).toBeVisible();
     expect(urls).toEqual([link]);
   });
@@ -559,14 +570,27 @@ test.describe("PWA share target (/add/link?url=…&text=…)", () => {
       page,
       `url=${encodeURIComponent("https://shop.example.com/p/from-url")}&text=${encodeURIComponent("See https://other.example.com/p/from-text")}`,
     );
+    await expectWaitingForTap(page, "https://shop.example.com/p/from-url", urls);
+    await page.getByRole("button", { name: "Import this link" }).click();
     await expect(page.getByRole("heading", { name: "Check the tags" })).toBeVisible();
     expect(urls).toEqual(["https://shop.example.com/p/from-url"]);
   });
 
   test("a link inside `text` is used when `url` is missing", async ({ page }) => {
     const urls = await shareTo(page, `text=${encodeURIComponent("Look at this https://shop.example.com/p/from-text nice")}`);
+    await expectWaitingForTap(page, "https://shop.example.com/p/from-text", urls);
+    await page.getByRole("button", { name: "Import this link" }).click();
     await expect(page.getByRole("heading", { name: "Check the tags" })).toBeVisible();
     expect(urls).toEqual(["https://shop.example.com/p/from-text"]);
+  });
+
+  test("a shared link sends nothing while the page sits open or is reloaded", async ({ page }) => {
+    const link = "https://shop.example.com/p/left-open";
+    const urls = await shareTo(page, `url=${encodeURIComponent(link)}`);
+    await expectWaitingForTap(page, link, urls);
+    await page.waitForTimeout(1000);
+    await page.reload();
+    await expectWaitingForTap(page, link, urls);
   });
 
   test("shared text with no link waits for a paste and sends nothing", async ({ page }) => {
@@ -576,8 +600,9 @@ test.describe("PWA share target (/add/link?url=…&text=…)", () => {
     expect(urls).toEqual([]);
   });
 
-  test("a shared blocked page goes straight to the screenshot step", async ({ page }) => {
+  test("a shared blocked page goes to the screenshot step after the tap", async ({ page }) => {
     await shareTo(page, `url=${encodeURIComponent("https://blocked.example.com/p/9")}`);
+    await page.getByRole("button", { name: "Import this link" }).click();
     await expect(page.getByRole("heading", { name: "Add a screenshot" })).toBeVisible();
   });
 
@@ -923,6 +948,15 @@ test.describe("phone layout at 390 px: no sideways scroll, 44 px targets, nav co
     await page.goto("/add/link");
     await expect(page.getByLabel("Product link")).toBeVisible();
     await checkPhoneLayout(page, "add by link");
+    await page.goto(`/add/link?url=${encodeURIComponent("https://shop.example.com/products/a-very-long-product-name-that-could-overflow-the-box")}`);
+    await expect(page.getByRole("button", { name: "Import this link" })).toBeVisible();
+    await checkPhoneLayout(page, "add by link (shared)");
+  });
+
+  test("privacy note", async ({ page }) => {
+    await page.goto("/privacy");
+    await expect(page.getByRole("heading", { name: "GladRags: how your photos and data are handled" })).toBeVisible();
+    await checkPhoneLayout(page, "privacy");
   });
 
   test("item detail with a long description and the no-cut-out note", async ({ page }) => {
