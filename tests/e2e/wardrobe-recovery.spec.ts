@@ -180,6 +180,65 @@ test.describe("an expired session", () => {
     await expect(page.getByRole("button", { name: "Choose from library" })).toBeVisible();
   });
 
+  // Mock mode always signs in as the same user, so these rewrite the kept
+  // draft while the tab is on /sign-in, to stand for one kept by someone else.
+  const OTHER_USER = "0a000000-0000-4000-8000-0000000000ff";
+
+  async function keepDraftThenSignIn(page: Page, rewrite: "owner_and_images" | "images_only") {
+    let refused = false;
+    await page.route(
+      (url) => url.pathname === "/api/items",
+      (route) => {
+        if (route.request().method() !== "POST" || refused) return route.continue();
+        refused = true;
+        return route.fulfill({ status: 401, json: apiError("unauthorized", "Sign in to continue.") });
+      },
+    );
+    await page.goto("/add");
+    await choosePhoto(page, "first-user.jpg");
+    await page.getByLabel("Description").fill("First user's private shirt");
+    await page.getByRole("button", { name: "Save to wardrobe" }).click();
+    await expect(page.getByRole("heading", { name: "Sign in to GladRags" })).toBeVisible();
+
+    const kept = await page.evaluate(
+      ({ other, rewrite }) => {
+        const raw = sessionStorage.getItem("gladrags:pending-add");
+        if (!raw) return null;
+        const value = JSON.parse(raw);
+        const owner = value.userId;
+        const move = (key: string | null) => (key ? key.replace(`${owner}/`, `${other}/`) : key);
+        if (rewrite === "owner_and_images") value.userId = other;
+        value.draft.originalImageKey = move(value.draft.originalImageKey);
+        value.draft.cutoutImageKey = move(value.draft.cutoutImageKey);
+        sessionStorage.setItem("gladrags:pending-add", JSON.stringify(value));
+        return { owner };
+      },
+      { other: OTHER_USER, rewrite },
+    );
+    // The draft was kept with the signed-in user's ID.
+    expect(kept?.owner).toBe("0a000000-0000-4000-8000-000000000001");
+    await signInAgain(page);
+    await expect(page).toHaveURL(/\/add$/);
+  }
+
+  async function expectNothingRestored(page: Page) {
+    await expect(page.getByRole("button", { name: "Choose from library" })).toBeVisible();
+    await expect(page.getByText("We kept the item you were adding.")).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Check the tags" })).toHaveCount(0);
+    await expect(page.getByLabel("Description")).toHaveCount(0);
+    expect(await page.evaluate(() => sessionStorage.getItem("gladrags:pending-add"))).toBeNull();
+  }
+
+  test("a draft kept for one user isn't shown to the next person who signs in on the tab", async ({ page }) => {
+    await keepDraftThenSignIn(page, "owner_and_images");
+    await expectNothingRestored(page);
+  });
+
+  test("a draft with this user's ID but images in someone else's folder isn't restored", async ({ page }) => {
+    await keepDraftThenSignIn(page, "images_only");
+    await expectNothingRestored(page);
+  });
+
   test("a wrong sign-in code stays on sign-in with its message", async ({ page }) => {
     await page.route("**/api/auth/verify-code", (route) =>
       route.fulfill({ status: 401, json: apiError("unauthorized", "That code didn't work. Check it and try again.") }),
@@ -195,6 +254,46 @@ test.describe("an expired session", () => {
 });
 
 test.describe("Account sheet", () => {
+  async function gladragsKeys(page: Page): Promise<string[]> {
+    return page.evaluate(() => Object.keys(sessionStorage).filter((key) => key.startsWith("gladrags:")));
+  }
+
+  async function keepSomething(page: Page) {
+    await page.evaluate(() => {
+      sessionStorage.setItem("gladrags:pending-add", JSON.stringify({ kind: "photo_lost", userId: "0a000000-0000-4000-8000-000000000001" }));
+      sessionStorage.setItem("gladrags:wardrobe-search", "?category=top");
+    });
+    expect(await gladragsKeys(page)).toHaveLength(2);
+  }
+
+  test("signing out clears what this tab kept, so the next person sees none of it", async ({ page }) => {
+    await page.goto("/wardrobe");
+    await keepSomething(page);
+    await page.getByRole("button", { name: "Account" }).click();
+    await page.getByRole("dialog", { name: "Account" }).getByRole("button", { name: "Sign out" }).click();
+    await expect(page).toHaveURL(/\/sign-in$/);
+    expect(await gladragsKeys(page)).toEqual([]);
+  });
+
+  test("deleting the account clears what this tab kept", async ({ page }) => {
+    await page.route("**/api/account", (route) => route.fulfill({ status: 200, json: { deleted: true } }));
+    await page.goto("/wardrobe");
+    await keepSomething(page);
+    await page.getByRole("button", { name: "Account" }).click();
+    await page.getByRole("dialog", { name: "Account" }).getByRole("button", { name: "Delete my account" }).click();
+    await page.getByRole("alertdialog").getByRole("button", { name: "Delete everything" }).click();
+    await expect(page).toHaveURL(/\/sign-in$/);
+    expect(await gladragsKeys(page)).toEqual([]);
+  });
+
+  test("links to the privacy note", async ({ page }) => {
+    await page.goto("/wardrobe");
+    await page.getByRole("button", { name: "Account" }).click();
+    await page.getByRole("dialog", { name: "Account" }).getByRole("link", { name: "How your photos are handled" }).click();
+    await expect(page).toHaveURL(/\/privacy$/);
+    await expect(page.getByRole("heading", { name: "GladRags: how your photos and data are handled" })).toBeVisible();
+  });
+
   test("shows the email and Sign out, and deletes the account after a clear warning", async ({ page }) => {
     let deleted = 0;
     // Answered here: in mock mode the real route resets the store every other test uses.
@@ -302,6 +401,7 @@ test.describe("link flow retries", () => {
 
   test("after saving a shared link, the address no longer carries it, so reload doesn't import it again", async ({ page }) => {
     await page.goto(`/add/link?url=${encodeURIComponent(`https://shop.example.com/products/shared-${Date.now()}`)}`);
+    await page.getByRole("button", { name: "Import this link" }).click();
     await expect(page.getByRole("heading", { name: "Check the tags" })).toBeVisible();
     await page.getByLabel("Description").fill(unique("Shared then saved"));
     await page.getByRole("button", { name: "Save to wardrobe" }).click();

@@ -1,6 +1,7 @@
 "use client";
 
-import { CircleUserIcon, LogOutIcon, Trash2Icon } from "lucide-react";
+import { CircleUserIcon, LogOutIcon, ShieldIcon, Trash2Icon } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 import {
   AlertDialog,
@@ -16,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { ApiErrorNotice } from "@/components/wardrobe/api-error-notice";
 import { deleteAccount } from "@/lib/client/api";
+import { clearGladragsSessionStorage } from "@/lib/client/session-storage";
 
 /** Where to go once the account is gone. Tests replace it. */
 export const accountNavigation = {
@@ -40,6 +42,8 @@ export function AccountSheet({ email }: { email: string | null }) {
     setError(null);
     try {
       await deleteAccount();
+      // Nothing from the deleted account stays in this tab (a kept draft, say).
+      clearGladragsSessionStorage();
       accountNavigation.toSignIn();
     } catch (err) {
       setError(err);
@@ -60,7 +64,8 @@ export function AccountSheet({ email }: { email: string | null }) {
           <SheetDescription>{email ? <>Signed in as {email}</> : "Signed in"}</SheetDescription>
         </SheetHeader>
         <div className="grid gap-2 px-4">
-          <form action="/api/auth/sign-out" method="post">
+          {/* A plain form post. Clear what this tab keeps first, so the next person to sign in here sees none of it. */}
+          <form action="/api/auth/sign-out" method="post" onSubmit={() => clearGladragsSessionStorage()}>
             <Button type="submit" variant="outline" size="lg" className="w-full">
               <LogOutIcon aria-hidden="true" />
               Sign out
@@ -91,6 +96,12 @@ export function AccountSheet({ email }: { email: string | null }) {
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>
+          <Button asChild variant="link" size="lg" className="w-full">
+            <Link href="/privacy">
+              <ShieldIcon aria-hidden="true" />
+              How your photos are handled
+            </Link>
+          </Button>
         </div>
       </SheetContent>
     </Sheet>

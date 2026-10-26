@@ -1,8 +1,13 @@
 import type { Metadata } from "next";
+import { getSessionUser } from "@/lib/auth/session";
 import { AddPhotoFlow } from "./add-photo-flow";
 
 export const metadata: Metadata = { title: "Add an item" };
 
-export default function AddPage() {
-  return <AddPhotoFlow />;
+export default async function AddPage() {
+  // Whose add this is, so a draft kept when a session expired is only
+  // restored for the same user (pending-add.ts). If it can't be read,
+  // nothing is kept or restored.
+  const user = await getSessionUser().catch(() => null);
+  return <AddPhotoFlow userId={user?.id ?? null} />;
 }

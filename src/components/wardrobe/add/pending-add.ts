@@ -11,24 +11,37 @@
  * Kept in sessionStorage: it survives the same-tab trip through /sign-in
  * (including in the installed iPhone app) and goes when the tab closes.
  * Read back with zod, since storage is outside our control.
+ *
+ * Someone else may sign in on the same tab after the session expires, so
+ * whatever is kept records whose it is (the signed-in user's ID, passed down
+ * from the server page). It's only handed back to that same user, and a
+ * draft only if its images are in that user's storage folder (`<userId>/…`).
+ * Anything else is thrown away unread.
  */
 import { z } from "zod";
 import { ItemDraftSchema, ItemTagsSchema, type ItemDraft, type ItemTags } from "@/contracts";
+import { SESSION_STORAGE_PREFIX } from "@/lib/client/session-storage";
 
-const KEY = "gladrags:pending-add";
+const KEY = `${SESSION_STORAGE_PREFIX}pending-add`;
 
-const PendingAddSchema = z.discriminatedUnion("kind", [
+const StoredPendingAddSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("draft"),
+    userId: z.string().min(1),
     draft: ItemDraftSchema,
     cutoutFailed: z.boolean(),
     tags: ItemTagsSchema.nullable(),
   }),
-  z.object({ kind: z.literal("photo_lost") }),
+  z.object({ kind: z.literal("photo_lost"), userId: z.string().min(1) }),
 ]);
-export type PendingAdd = z.infer<typeof PendingAddSchema>;
+type StoredPendingAdd = z.infer<typeof StoredPendingAddSchema>;
 
-function write(value: PendingAdd): void {
+/** What the add screen gets back: the kept work, without the owner check's bookkeeping. */
+export type PendingAdd =
+  | { kind: "draft"; draft: ItemDraft; cutoutFailed: boolean; tags: ItemTags | null }
+  | { kind: "photo_lost" };
+
+function write(value: StoredPendingAdd): void {
   try {
     window.sessionStorage.setItem(KEY, JSON.stringify(value));
   } catch {
@@ -36,22 +49,44 @@ function write(value: PendingAdd): void {
   }
 }
 
-export function keepDraft(draft: ItemDraft, cutoutFailed: boolean, tags: ItemTags | null): void {
-  write({ kind: "draft", draft, cutoutFailed, tags });
+/** Keep a draft for `userId`. Without a known user there's no safe way to hand it back, so nothing is kept. */
+export function keepDraft(userId: string | null, draft: ItemDraft, cutoutFailed: boolean, tags: ItemTags | null): void {
+  if (!userId) return;
+  write({ kind: "draft", userId, draft, cutoutFailed, tags });
 }
 
-export function notePhotoLost(): void {
-  write({ kind: "photo_lost" });
+/** Remember that `userId`'s photo was lost, so /add can ask for it again after sign-in. */
+export function notePhotoLost(userId: string | null): void {
+  if (!userId) return;
+  write({ kind: "photo_lost", userId });
 }
 
-/** Read and forget whatever was kept. Null if nothing was, or it's unreadable. */
-export function takePendingAdd(): PendingAdd | null {
+/** True if every image key on the draft is in `userId`'s storage folder. */
+function draftBelongsTo(draft: ItemDraft, userId: string): boolean {
+  const folder = `${userId}/`;
+  return (
+    draft.originalImageKey.startsWith(folder) && (draft.cutoutImageKey === null || draft.cutoutImageKey.startsWith(folder))
+  );
+}
+
+/**
+ * Read and forget whatever was kept for `userId` (the signed-in user).
+ * Null if nothing was, it's unreadable, or it belongs to someone else; it's
+ * deleted from storage in every case. With no known user, storage is left
+ * alone, so a brief failure to read the session doesn't lose the draft.
+ */
+export function takePendingAdd(userId: string | null): PendingAdd | null {
+  if (!userId) return null;
   try {
     const raw = window.sessionStorage.getItem(KEY);
     if (raw === null) return null;
     window.sessionStorage.removeItem(KEY);
-    const parsed = PendingAddSchema.safeParse(JSON.parse(raw));
-    return parsed.success ? parsed.data : null;
+    const parsed = StoredPendingAddSchema.safeParse(JSON.parse(raw));
+    if (!parsed.success || parsed.data.userId !== userId) return null;
+    const kept = parsed.data;
+    if (kept.kind === "photo_lost") return { kind: "photo_lost" };
+    if (!draftBelongsTo(kept.draft, userId)) return null;
+    return { kind: "draft", draft: kept.draft, cutoutFailed: kept.cutoutFailed, tags: kept.tags };
   } catch {
     return null;
   }

@@ -16,12 +16,15 @@ import { keepDraft } from "./pending-add";
  * pre-filled tags, all editable, then save with POST /api/items.
  */
 export function DraftReview({
+  userId,
   draft,
   cutoutFailed,
   restoredTags = null,
   onSaved,
   onDiscard,
 }: {
+  /** The signed-in user, so a draft kept on sign-out is only restored for them (see pending-add.ts). */
+  userId: string | null;
   draft: ItemDraft;
   cutoutFailed: boolean;
   /** Tags the user had chosen before being signed out (see pending-add.ts). */
@@ -49,7 +52,7 @@ export function DraftReview({
     } catch (err) {
       // Signed out: the API client is taking them to sign-in. Keep the item
       // so /add can reopen this review afterwards.
-      if (err instanceof ApiClientError && err.code === "unauthorized") keepDraft(draft, cutoutFailed, tags);
+      if (err instanceof ApiClientError && err.code === "unauthorized") keepDraft(userId, draft, cutoutFailed, tags);
       setError(err);
       setSaving(false);
     }

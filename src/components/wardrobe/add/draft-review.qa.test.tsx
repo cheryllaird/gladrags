@@ -65,7 +65,7 @@ function renderReview(draft: ItemDraft, cutoutFailed = false) {
   const onSaved = vi.fn();
   const onDiscard = vi.fn();
   const user = userEvent.setup();
-  render(<DraftReview draft={draft} cutoutFailed={cutoutFailed} onSaved={onSaved} onDiscard={onDiscard} />);
+  render(<DraftReview userId={null} draft={draft} cutoutFailed={cutoutFailed} onSaved={onSaved} onDiscard={onDiscard} />);
   return { user, onSaved, onDiscard, save: () => user.click(screen.getByRole("button", { name: "Save to wardrobe" })) };
 }
 
