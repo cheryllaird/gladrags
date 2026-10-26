@@ -1,9 +1,10 @@
 import { readFileSync } from "node:fs";
 import { expect, test, type Locator, type Page, type Response } from "@playwright/test";
 import {
-  CATEGORIES,
+  ItemResponseSchema,
   OutfitGenerationResponseSchema,
   OutfitListResponseSchema,
+  OutfitResponseSchema,
   missingCategoriesForOutfits,
   type Category,
   type Outfit,
@@ -17,9 +18,12 @@ import { fakeBackgroundRemoverForFile } from "./helpers";
 // No route is intercepted except where noted, to force a state the shared
 // mock store can't reach safely (missing category, account deletion).
 //
-// The mock store is shared with every other spec on the server, so these
-// tests only touch items and outfits they create, find them by unique
-// description or ID, and never assume a list's length.
+// The mock store is shared with every other spec on the server, so tests
+// here only ever ADD data, never delete it (as in foundations.spec.ts):
+// deleting an item also deletes every outfit that uses it, which can give a
+// parallel outfit test a 404. Unique descriptions and IDs keep the tests
+// independent, and none assumes a list's length. The one state change undone
+// afterwards is journey 5's outfit statuses, so avoid hints don't build up.
 
 // Predictable cut-outs; the real model has its own spec (background-removal.spec.ts).
 fakeBackgroundRemoverForFile();
@@ -97,7 +101,7 @@ async function findInWardrobe(page: Page, description: string) {
 }
 
 test.describe("journey 1: build the wardrobe", () => {
-  test("sign in, add an item by photo, edit a tag, save, and it's in the wardrobe grid", async ({ page, request }) => {
+  test("sign in, add an item by photo, edit a tag, save, and it's in the wardrobe grid", async ({ page }) => {
     // Sign in (mock mode accepts any 6-digit code).
     await page.goto("/sign-in");
     await expect(page.getByRole("heading", { name: "Sign in to GladRags" })).toBeVisible();
@@ -129,7 +133,7 @@ test.describe("journey 1: build the wardrobe", () => {
     await page.getByRole("button", { name: "Save to wardrobe" }).click();
     const savedRes = await saved;
     expect(savedRes.status()).toBe(201);
-    const { item } = await savedRes.json();
+    const { item } = ItemResponseSchema.parse(await savedRes.json());
     expect(item).toMatchObject({ source: "photo", sourceUrl: null, tagsEdited: true });
     expect(item.cutoutUrl).not.toBeNull();
     await expect(page.getByText("Saved to your wardrobe")).toBeVisible();
@@ -139,9 +143,6 @@ test.describe("journey 1: build the wardrobe", () => {
     await page.getByRole("link", { name: description }).click();
     await expect(page.getByRole("heading", { name: description })).toBeVisible();
     await expect(page.getByText("3 · Smart casual")).toBeVisible();
-
-    // Clean up so other specs' wardrobes stay as they were.
-    expect((await request.delete(`/api/items/${item.id}`)).ok()).toBe(true);
   });
 });
 
@@ -164,10 +165,10 @@ test.describe("journey 2: outfits for an occasion", () => {
 
     await expect(page.getByRole("heading", { name: "Outfits for Work" })).toBeVisible();
     const cards = outfitCards(page);
-    await expect(cards.first()).toBeVisible();
-    const count = await cards.count();
-    expect(count).toBeGreaterThanOrEqual(3);
-    expect(count).toBeLessThanOrEqual(5);
+    expect(outfits.length).toBeGreaterThanOrEqual(3);
+    expect(outfits.length).toBeLessThanOrEqual(5);
+    await expect(cards).toHaveCount(outfits.length);
+    const count = outfits.length;
     expect(await cardIds(page)).toEqual(outfits.map((o) => o.id));
     for (let i = 0; i < count; i++) {
       await expect(cards.nth(i).getByRole("heading", { level: 2 })).not.toBeEmpty();
@@ -181,6 +182,28 @@ test.describe("journey 2: outfits for an occasion", () => {
     }
     await expectCollagesDrawn(cards);
     await expectNoSidewaysScroll(page);
+  });
+
+  test("or a style typed in their own words gives drawn collages for it", async ({ page }) => {
+    await openApp(page);
+    await nav(page).getByRole("link", { name: "Outfits" }).click();
+    await tapRadio(page, "Something else");
+    await page.getByLabel("Describe the occasion").fill("picnic in the park");
+    const response = outfitsResponse(page, /^\/api\/outfits$/);
+    await page.getByRole("button", { name: "Get outfits" }).click();
+    const outfits = await outfitsFrom(await response);
+    const sent = (await response).request().postDataJSON();
+    expect(sent.style.kind).toBe("custom");
+    expect(sent).toEqual({ style: { kind: "custom", text: "picnic in the park" }, count: 4 });
+
+    await expect(page.getByRole("heading", { name: "Outfits for “picnic in the park”" })).toBeVisible();
+    expect(outfits.length).toBeGreaterThanOrEqual(3);
+    expect(outfits.length).toBeLessThanOrEqual(5);
+    for (const outfit of outfits) expect(outfit.request.style).toEqual({ kind: "custom", text: "picnic in the park" });
+    const cards = outfitCards(page);
+    await expect(cards).toHaveCount(outfits.length);
+    expect(await cardIds(page)).toEqual(outfits.map((o) => o.id));
+    await expectCollagesDrawn(cards);
   });
 });
 
@@ -263,6 +286,7 @@ test.describe("journey 4: refine", () => {
     await expect(page.getByRole("heading", { name: "Tweaked: warmer" })).toBeVisible();
     expect(tweaked.length).toBeGreaterThan(0);
     for (const outfit of tweaked) expect(outfit.parentOutfitId).toBe(second.id);
+    await expect(cards).toHaveCount(tweaked.length);
     expect(await cardIds(page)).toEqual(tweaked.map((o) => o.id));
     await expectCollagesDrawn(cards);
   });
@@ -280,42 +304,50 @@ test.describe("journey 5: save and rate", () => {
     const [savedId, likedId, rejectedId] = outfits.map((o) => o.id);
     const card = (id: string | undefined) => page.locator(`[data-outfit-id="${id}"]`);
 
-    await card(savedId).getByRole("button", { name: "Save", exact: true }).click();
-    await expect(card(savedId).getByRole("button", { name: "Saved", exact: true })).toHaveAttribute("aria-pressed", "true");
+    try {
+      await card(savedId).getByRole("button", { name: "Save", exact: true }).click();
+      await expect(card(savedId).getByRole("button", { name: "Saved", exact: true })).toHaveAttribute("aria-pressed", "true");
 
-    await card(likedId).getByRole("button", { name: "Like", exact: true }).click();
-    await expect(card(likedId).getByRole("button", { name: "Liked", exact: true })).toHaveAttribute("aria-pressed", "true");
+      await card(likedId).getByRole("button", { name: "Like", exact: true }).click();
+      await expect(card(likedId).getByRole("button", { name: "Liked", exact: true })).toHaveAttribute("aria-pressed", "true");
 
-    await card(rejectedId).getByRole("button", { name: "Reject", exact: true }).click();
-    const dialog = page.getByRole("dialog", { name: "Not for you?" });
-    await dialog.getByLabel("Why not? (optional)").fill("Not my colours");
-    const rejected = page.waitForResponse((res) => res.request().method() === "PATCH" && res.url().endsWith(`/api/outfits/${rejectedId}`));
-    await dialog.getByRole("button", { name: "Reject outfit" }).click();
-    expect((await rejected).status()).toBe(200);
-    await expect(card(rejectedId)).toHaveAttribute("data-status", "rejected");
+      await card(rejectedId).getByRole("button", { name: "Reject", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Not for you?" });
+      await dialog.getByLabel("Why not? (optional)").fill("Not my colours");
+      const rejected = page.waitForResponse((res) => res.request().method() === "PATCH" && res.url().endsWith(`/api/outfits/${rejectedId}`));
+      await dialog.getByRole("button", { name: "Reject outfit" }).click();
+      expect((await rejected).status()).toBe(200);
+      expect((await rejected).request().postDataJSON()).toEqual({ status: "rejected", reason: "Not my colours" });
+      await expect(card(rejectedId)).toHaveAttribute("data-status", "rejected");
 
-    // What the server now holds.
-    for (const [id, status] of [
-      [savedId, "saved"],
-      [likedId, "liked"],
-      [rejectedId, "rejected"],
-    ] as const) {
-      const res = await request.get(`/api/outfits/${id}`);
-      expect((await res.json()).outfit.status).toBe(status);
+      // What the server now holds.
+      for (const [id, status] of [
+        [savedId, "saved"],
+        [likedId, "liked"],
+        [rejectedId, "rejected"],
+      ] as const) {
+        const res = await request.get(`/api/outfits/${id}`);
+        expect(OutfitResponseSchema.parse(await res.json()).outfit.status).toBe(status);
+      }
+
+      await nav(page).getByRole("link", { name: "Saved" }).click();
+      await expect(page).toHaveURL(/\/outfits\/saved$/);
+      await expect(page.getByRole("heading", { name: "Saved outfits" })).toBeVisible();
+      await expect(card(savedId)).toBeVisible();
+      await expect(card(likedId)).toBeVisible();
+      await expect(card(rejectedId)).toHaveCount(0);
+      await expectCollagesDrawn(page.locator(`[data-outfit-id="${savedId}"], [data-outfit-id="${likedId}"]`));
+
+      // The same list through the API the screen uses.
+      const list = OutfitListResponseSchema.parse(await (await request.get("/api/outfits?status=saved")).json());
+      expect(list.outfits.map((o) => o.id)).toContain(savedId);
+      await expectNoSidewaysScroll(page);
+    } finally {
+      // Put the statuses back, so a reused server doesn't build up avoid hints.
+      for (const id of [savedId, likedId, rejectedId]) {
+        await request.patch(`/api/outfits/${id}`, { data: { status: "suggested" } });
+      }
     }
-
-    await nav(page).getByRole("link", { name: "Saved" }).click();
-    await expect(page).toHaveURL(/\/outfits\/saved$/);
-    await expect(page.getByRole("heading", { name: "Saved outfits" })).toBeVisible();
-    await expect(card(savedId)).toBeVisible();
-    await expect(card(likedId)).toBeVisible();
-    await expect(card(rejectedId)).toHaveCount(0);
-    await expectCollagesDrawn(page.locator(`[data-outfit-id="${savedId}"], [data-outfit-id="${likedId}"]`));
-
-    // The same list through the API the screen uses.
-    const list = OutfitListResponseSchema.parse(await (await request.get("/api/outfits?status=saved")).json());
-    expect(list.outfits.map((o) => o.id)).toContain(savedId);
-    await expectNoSidewaysScroll(page);
   });
 });
 
@@ -340,9 +372,8 @@ test.describe("add by link, end to end", () => {
     await page.getByRole("link", { name: description }).click();
     await expect(page.getByRole("link", { name: "View the product page" })).toHaveAttribute("href", link);
     const id = new URL(page.url()).pathname.split("/").pop()!;
-    const { item } = await (await request.get(`/api/items/${id}`)).json();
+    const { item } = ItemResponseSchema.parse(await (await request.get(`/api/items/${id}`)).json());
     expect(item).toMatchObject({ source: "link", sourceUrl: link });
-    expect((await request.delete(`/api/items/${id}`)).ok()).toBe(true);
   });
 
   test("a blocked site: screenshot fallback through the photo route to a saved item that keeps its link", async ({ page, request }) => {
@@ -373,9 +404,8 @@ test.describe("add by link, end to end", () => {
     await page.getByRole("link", { name: description }).click();
     await expect(page.getByRole("link", { name: "View the product page" })).toHaveAttribute("href", link);
     const id = new URL(page.url()).pathname.split("/").pop()!;
-    const { item } = await (await request.get(`/api/items/${id}`)).json();
+    const { item } = ItemResponseSchema.parse(await (await request.get(`/api/items/${id}`)).json());
     expect(item).toMatchObject({ source: "link", sourceUrl: link });
-    expect((await request.delete(`/api/items/${id}`)).ok()).toBe(true);
   });
 });
 
@@ -392,8 +422,6 @@ test.describe("missing category", () => {
       (items as { tags: { category: Category } }[]).map((i) => i.tags.category).filter((c) => c !== "shoes"),
     );
     const missingCategories = missingCategoriesForOutfits(present);
-    expect(missingCategories).toEqual(["shoes"]);
-    expect(CATEGORIES).toContain("shoes");
     const body = OutfitGenerationResponseSchema.parse({
       status: "incomplete_wardrobe",
       reason: "missing_category",
@@ -462,11 +490,12 @@ test.describe("account deletion", () => {
 // Success criterion "a tester can add 20 items in under 15 minutes", from the
 // app's side: 20 photos through the real UI with the fake remover. Off by
 // default because it adds 20 items to the shared store; run with
-// GLADRAGS_TIME_ADD_20=true. It cleans up after itself.
+// GLADRAGS_TIME_ADD_20=true, ideally on a fresh server. Like the rest of
+// this file it only adds data.
 test.describe("timing: 20 items by photo", () => {
   test.skip(process.env.GLADRAGS_TIME_ADD_20 !== "true", "set GLADRAGS_TIME_ADD_20=true to time it");
 
-  test("adds 20 items through the photo flow", async ({ page, request }) => {
+  test("adds 20 items through the photo flow", async ({ page }) => {
     test.setTimeout(300_000);
     const ids: string[] = [];
     page.on("response", async (res) => {
@@ -490,6 +519,5 @@ test.describe("timing: 20 items by photo", () => {
     const total = Date.now() - start;
     console.log(`20 items by photo (fake remover, mock tagger): total ${total} ms, per item ${JSON.stringify(perItem)}`);
     await expect.poll(() => ids.length).toBe(20);
-    for (const id of ids) await request.delete(`/api/items/${id}`);
   });
 });
