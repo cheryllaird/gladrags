@@ -9,7 +9,7 @@ import { ApiException } from "@/lib/api/errors";
 import { OTHER_USER, TEST_USER, makeTestDeps } from "@/test/ingestion-deps";
 import { tagging } from "@/test/fixtures/model-output";
 import { cutoutPng, phoneJpeg } from "@/test/images";
-import { escapeLikePattern } from "./items-repository";
+import { DuplicateImageKeyError, SupabaseItemRepository, escapeLikePattern } from "./items-repository";
 import { newImageKey } from "./storage";
 import {
   createWardrobeItem,
@@ -105,6 +105,35 @@ describe("createWardrobeItem", () => {
     await createWardrobeItem(deps, TEST_USER, request);
     const error = await apiError(createWardrobeItem(deps, TEST_USER, request));
     expect(error.message).toMatch(/already been saved/);
+  });
+
+  it("two saves of one draft at the same moment: one item, the other is bad_request (unique image keys)", async () => {
+    const deps = makeTestDeps();
+    const keys = await storeDraftImages(deps);
+    const request: CreateItemRequest = { source: "photo", sourceUrl: null, ...keys, tags: CHINOS, tagsEdited: false };
+    // Both pass the keysInUse check before either is saved.
+    const results = await Promise.allSettled([createWardrobeItem(deps, TEST_USER, request), createWardrobeItem(deps, TEST_USER, request)]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    const rejected = results.find((r) => r.status === "rejected") as PromiseRejectedResult;
+    expect(rejected.reason).toBeInstanceOf(ApiException);
+    expect((rejected.reason as ApiException).code).toBe("bad_request");
+    expect((rejected.reason as ApiException).message).toMatch(/already been saved/);
+    expect(await deps.items.list(TEST_USER, {})).toHaveLength(1);
+  });
+
+  it("the Supabase repository reads a unique violation (23505) as DuplicateImageKeyError, other errors as themselves", async () => {
+    const clientFailingWith = (error: { code: string; message: string }) =>
+      ({
+        from: () => ({ insert: () => ({ select: () => ({ single: async () => ({ data: null, error }) }) }) }),
+      }) as unknown as ConstructorParameters<typeof SupabaseItemRepository>[0];
+    const keys = { originalImageKey: newImageKey(TEST_USER, "image/jpeg"), cutoutImageKey: null };
+    const request: CreateItemRequest = { source: "photo", sourceUrl: null, ...keys, tags: CHINOS, tagsEdited: false };
+    const duplicate = clientFailingWith({ code: "23505", message: 'duplicate key value violates unique constraint "items_original_image_key_unique"' });
+    await expect(new SupabaseItemRepository(duplicate).create(TEST_USER, request)).rejects.toBeInstanceOf(DuplicateImageKeyError);
+    const other = clientFailingWith({ code: "23514", message: "check violation" });
+    const error = await new SupabaseItemRepository(other).create(TEST_USER, request).catch((e: unknown) => e);
+    expect(error).not.toBeInstanceOf(DuplicateImageKeyError);
+    expect((error as Error).message).toContain("check violation");
   });
 });
 

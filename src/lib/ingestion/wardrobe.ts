@@ -16,7 +16,7 @@ import {
 import { ApiException, notFound } from "@/lib/api/errors";
 import { itemRowToWardrobeItem } from "@/lib/db/mappers";
 import { SIGNED_URL_TTL_SECONDS } from "@/lib/images/server";
-import type { ItemRepository } from "./items-repository";
+import { DuplicateImageKeyError, type ItemRepository } from "./items-repository";
 import type { ImageStorage } from "./storage";
 
 export interface WardrobeDeps {
@@ -84,7 +84,14 @@ export async function createWardrobeItem(deps: WardrobeDeps, userId: string, req
   if (inUse.size > 0) {
     throw new ApiException("bad_request", "That item has already been saved");
   }
-  const row = await deps.items.create(userId, request);
+  let row;
+  try {
+    row = await deps.items.create(userId, request);
+  } catch (error) {
+    // Two saves of this draft at once: the other one won.
+    if (error instanceof DuplicateImageKeyError) throw new ApiException("bad_request", "That item has already been saved");
+    throw error;
+  }
   return toWardrobeItem(deps.storage, row);
 }
 

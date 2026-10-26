@@ -61,6 +61,22 @@ function parseRow(data: unknown): ItemRow | null {
   return data ? ItemRowSchema.parse(data) : null;
 }
 
+/**
+ * An image key is already used by another item. The database enforces
+ * this with unique indexes (two saves of one draft at the same moment can
+ * both pass the keysInUse check); createWardrobeItem turns it into a
+ * bad_request.
+ */
+export class DuplicateImageKeyError extends Error {
+  constructor() {
+    super("An item already uses that image");
+    this.name = "DuplicateImageKeyError";
+  }
+}
+
+/** Postgres unique_violation. */
+const UNIQUE_VIOLATION = "23505";
+
 export class SupabaseItemRepository implements ItemRepository {
   constructor(private readonly db: SupabaseClient) {}
 
@@ -92,6 +108,7 @@ export class SupabaseItemRepository implements ItemRepository {
       .insert(createItemRequestToRow(userId, request))
       .select(ITEM_COLUMNS)
       .single();
+    if (error?.code === UNIQUE_VIOLATION) throw new DuplicateImageKeyError();
     if (error) throw new Error(`Couldn't save the item: ${error.message}`);
     return ItemRowSchema.parse(data);
   }
@@ -198,6 +215,11 @@ export class InMemoryItemRepository implements ItemRepository, ImageReferences {
   }
 
   async create(userId: string, request: CreateItemRequest): Promise<ItemRow> {
+    // Like the database's unique indexes on the image keys.
+    const keys = [request.originalImageKey, request.cutoutImageKey].filter((key): key is string => key !== null);
+    for (const row of this.rows.values()) {
+      if (keys.some((key) => key === row.original_image_key || key === row.cutout_image_key)) throw new DuplicateImageKeyError();
+    }
     // Keep creation order stable even within one millisecond.
     const createdAt = new Date(this.now().getTime() + this.tick++).toISOString();
     const row = ItemRowSchema.parse({
