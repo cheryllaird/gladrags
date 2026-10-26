@@ -2,7 +2,7 @@
 
 Maintained by the orchestrator (main Claude Code session). Source of truth for scope: `docs/SPEC.md`.
 
-**Current status:** Milestone 4 (integration) in progress. Journey tests written and green (in review). Security check done: no code blocker for a Cheryl-only preview; pre-tester hardening running on two branches (`fix/hardening`, `fix/ui-hardening`). Waiting on Cheryl for Supabase network access, Vercel and the Gemini paid tier.
+**Current status:** Milestone 4 (integration) in progress. Journey tests merged and green (192 e2e on the build). Security check done: no code blocker for a Cheryl-only preview; pre-tester hardening running on two branches (`fix/hardening`, `fix/ui-hardening`). Waiting on Cheryl for Supabase network access, Vercel and the Gemini paid tier.
 
 Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 
@@ -52,12 +52,12 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 | Task | Agent | Status |
 | --- | --- | --- |
 | Switch UIs from mocks to real APIs | orchestrator | ☐ |
-| Journey tests 1–5 + add-by-link + missing-category | qa | ◐ in review | `test/journeys` (tests/e2e/journeys.spec.ts): all pass on the build ×3 and dev, no flakes. Missing-category and account deletion intercept one response each (shared mock store). 20 items in ~0.24 s/item of app time; estimate 8–12 min for 20 with real cut-out and tagging. |
+| Journey tests 1–5 + add-by-link + missing-category | qa | ☑ merged | `test/journeys` (tests/e2e/journeys.spec.ts): all pass on the build ×3 and dev, no flakes. Missing-category and account deletion intercept one response each (shared mock store). 20 items in ~0.24 s/item of app time; estimate 8–12 min for 20 with real cut-out and tagging. |
 | Security check (RLS, signed URLs, secrets, uploads, link fetching, deletion) | security | ☑ | No code blocker for a Cheryl-only preview. Blocker P1: run migrations on the real project and a live two-user RLS check. Before testers: T1 atomic caps, T2 Gemini paid tier, T3 privacy note, T4 scheduled cleanup, T5 kept-draft cross-user leak. Fixes in progress (below). |
 | Vercel preview deploy | orchestrator | ☐ |
 | Tester privacy note (owner: orchestrator) | orchestrator | ☑ draft | `docs/PRIVACY.md`; shown at `/privacy` once `fix/ui-hardening` merges. Needs Cheryl's contact address and the Supabase region. |
 | Pre-tester hardening, backend: atomic caps, unique image keys, link fetch attempts, scheduled cleanup, security headers, httpOnly cookies, CSRF, sign-in rate limit | foundations (`fix/hardening`) | ◐ |
-| Pre-tester hardening, UI: kept-draft user check, tap to start shared-link imports, /privacy page | wardrobe-ui (`fix/ui-hardening`) | ◐ |
+| Pre-tester hardening, UI: kept-draft user check, tap to start shared-link imports, /privacy page | wardrobe-ui (`fix/ui-hardening`) | ◐ approved; QA running |
 | Live checks once Supabase is reachable: migrations, buckets private, two-user RLS, real sign-in | orchestrator | ⛔ network |
 | Record real Gemini fixtures; time real tagging; check guidance like "no heels" is respected (no code backstop: the model decides) | orchestrator | ⛔ Gemini quota |
 
