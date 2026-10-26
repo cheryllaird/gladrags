@@ -185,7 +185,7 @@ describe("concurrency", () => {
 describe("caps reached between step 1 and step 2", () => {
   it("the daily item cap: refused, nothing tagged, and the import stays open", async () => {
     const key = await realStepOne(PAGE);
-    for (let i = 0; i < TEST_LIMITS.dailyCaps.item_ingest; i++) await deps.usage.recordAction(TEST_USER, "item_ingest");
+    for (let i = 0; i < TEST_LIMITS.dailyCaps.item_ingest; i++) await deps.usage.reserveAction(TEST_USER, "item_ingest");
     expect(await outcome(finishLinkImport(deps, TEST_USER, await upload(key)))).toBe("cap:items_per_day");
     expect(deps.fakeTagger.calls).toHaveLength(0);
     expect(cutoutsStored()).toBe(0);

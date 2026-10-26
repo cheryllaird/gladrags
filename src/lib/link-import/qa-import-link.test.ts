@@ -63,7 +63,7 @@ async function expectFallback(url: string, reason: "fetch_blocked" | "no_product
 
 describe("caps and the AI pause come before any network use", () => {
   it("at today's item cap: refused with no DNS lookup and no request", async () => {
-    for (let i = 0; i < TEST_LIMITS.dailyCaps.item_ingest; i++) await deps.usage.recordAction(TEST_USER, "item_ingest");
+    for (let i = 0; i < TEST_LIMITS.dailyCaps.item_ingest; i++) await deps.usage.reserveAction(TEST_USER, "item_ingest");
     const error = await importFromLink(deps, TEST_USER, "http://shop.example/p").catch((e: unknown) => e);
     expect(error).toBeInstanceOf(CapReachedError);
     expect((error as CapReachedError).cap).toBe("items_per_day");
@@ -81,7 +81,7 @@ describe("caps and the AI pause come before any network use", () => {
   });
 
   it("one item short of the cap is still allowed, and step 1 doesn't use it up", async () => {
-    for (let i = 0; i < TEST_LIMITS.dailyCaps.item_ingest - 1; i++) await deps.usage.recordAction(TEST_USER, "item_ingest");
+    for (let i = 0; i < TEST_LIMITS.dailyCaps.item_ingest - 1; i++) await deps.usage.reserveAction(TEST_USER, "item_ingest");
     server.routes.set("shop.example/p", html(productPage(["/i.jpg"])));
     server.routes.set("shop.example/i.jpg", bytes(productJpeg, "image/jpeg"));
     expect((await run("http://shop.example/p")).status).toBe("ok");

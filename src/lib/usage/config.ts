@@ -13,6 +13,9 @@ export const DAILY_CAPS: Readonly<Record<CappedAction, number>> = {
   item_ingest: 40,
   // New requests plus refinements ("swap the shoes", "warmer").
   outfit_request: 25,
+  // Add-by-link step 1 attempts (page fetches), fallbacks included. Twice
+  // the item cap: room for links that are pasted but never saved.
+  link_fetch: 80,
 };
 
 /**

@@ -85,6 +85,7 @@ function deps(ranking: FakeRankingProvider): PipelineDeps {
   return {
     ranking: () => ranking,
     thumbnails: new PlaceholderThumbnailSource(),
+    beforeAiCall: async () => {},
     recordAiCost: async () => {},
     onRankingStart: async () => {},
     random: seededRandom(1),

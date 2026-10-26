@@ -6,12 +6,12 @@
 import sharp from "sharp";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiErrorSchema, LINK_IMAGE_URL_TTL_SECONDS, LinkImportResponseSchema, STORAGE_BUCKETS, type LinkImportResponse } from "@/contracts";
-import { ApiException } from "@/lib/api/errors";
 import { DAILY_CAPS } from "@/lib/usage/config";
 import { CapReachedError } from "@/lib/usage/errors";
 import { OTHER_USER, TEST_LIMITS, TEST_USER } from "@/test/ingestion-deps";
 import { phoneJpeg, phonePng, phoneWebp, readMetadata } from "@/test/images";
-import { LINK_IMPORTS_PER_DAY, LINK_IMPORT_WINDOW_MS, MIN_PRODUCT_IMAGE_PX, importFromLink } from "./import-link";
+import { UsageGuard } from "@/lib/usage/guard";
+import { MIN_PRODUCT_IMAGE_PX, importFromLink } from "./import-link";
 import {
   PUBLIC_V4,
   bytes,
@@ -260,7 +260,7 @@ describe("fallbacks: needs_screenshot", () => {
 
 describe("caps", () => {
   it("refuses at today's item cap before fetching anything", async () => {
-    for (let i = 0; i < TEST_LIMITS.dailyCaps.item_ingest; i++) await deps.usage.recordAction(TEST_USER, "item_ingest");
+    for (let i = 0; i < TEST_LIMITS.dailyCaps.item_ingest; i++) await deps.usage.reserveAction(TEST_USER, "item_ingest");
     await expect(importFromLink(deps, TEST_USER, "http://shop.example/p")).rejects.toMatchObject({ cap: "items_per_day" });
     expect(server.requests).toEqual([]);
   });
@@ -272,53 +272,80 @@ describe("caps", () => {
   });
 });
 
-describe("step 1 rate limit (link imports in the last 24 h)", () => {
+describe("step 1 rate limit (link fetches per UK day)", () => {
   function shop() {
     server.routes.set("shop.example/p", html(`<meta property="og:type" content="product"><meta property="og:image" content="/i.jpg">`));
     server.routes.set("shop.example/i.jpg", bytes(productJpeg, "image/jpeg"));
   }
 
-  it("defaults to twice the daily item cap", () => {
-    expect(LINK_IMPORTS_PER_DAY).toBe(2 * DAILY_CAPS.item_ingest);
-    expect(LINK_IMPORTS_PER_DAY).toBe(80);
+  /** The test deps with a link_fetch limit of `limit`. */
+  function withLinkLimit(limit: number) {
+    const limits = { ...TEST_LIMITS, dailyCaps: { ...TEST_LIMITS.dailyCaps, link_fetch: limit } };
+    return { ...deps, usage: new UsageGuard(deps.usageStore, limits, deps.clock) };
+  }
+
+  const fetchesCounted = () => deps.usageStore.events.filter((e) => e.kind === "link_fetch").length;
+
+  it("defaults to 80 a day, twice the daily item cap", () => {
+    expect(DAILY_CAPS.link_fetch).toBe(80);
+    expect(DAILY_CAPS.link_fetch).toBe(2 * DAILY_CAPS.item_ingest);
   });
 
-  it("refuses above the limit with daily_cap_reached (items_per_day), before fetching anything", async () => {
+  it("counts each attempt before fetching, and refuses above the limit with link_fetches_per_day", async () => {
     shop();
-    const deps2 = { ...deps, linkImportsPerDay: 2 };
-    const first = deps.clock();
-    expectOk(await importFromLink(deps2, TEST_USER, "http://shop.example/p"));
-    deps.advance(60_000);
-    expectOk(await importFromLink(deps2, TEST_USER, "http://shop.example/p"));
+    const limited = withLinkLimit(2);
+    expectOk(await importFromLink(limited, TEST_USER, "http://shop.example/p"));
+    expectOk(await importFromLink(limited, TEST_USER, "http://shop.example/p"));
+    expect(fetchesCounted()).toBe(2);
     const requestsBefore = server.requests.length;
 
-    const error = await importFromLink(deps2, TEST_USER, "http://shop.example/p").catch((e: unknown) => e);
-    expect(error).toBeInstanceOf(ApiException);
-    const api = error as ApiException;
+    const error = await importFromLink(limited, TEST_USER, "http://shop.example/p").catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(CapReachedError);
+    const api = (error as CapReachedError).toApiException();
     expect(api.code).toBe("daily_cap_reached");
-    // The oldest counted import leaves the window first.
-    expect(api.extras.cap).toEqual({ kind: "items_per_day", limit: 2, resetsAt: new Date(first.getTime() + LINK_IMPORT_WINDOW_MS).toISOString() });
+    // Resets at UK midnight (25 Oct 2026 is the day the clocks go back: midnight is 00:00 UTC on the 26th).
+    expect(api.extras.cap).toEqual({ kind: "link_fetches_per_day", limit: 2, resetsAt: "2026-10-26T00:00:00.000Z" });
+    expect(api.message).toContain("2 links");
     expect(server.requests.length).toBe(requestsBefore);
+    expect(fetchesCounted()).toBe(2);
     // The contract's error shape accepts it.
     expect(ApiErrorSchema.safeParse({ error: { code: api.code, message: api.message, ...api.extras } }).success).toBe(true);
   });
 
-  it("is a rolling 24 hours, per user", async () => {
+  it("is per user and resets at UK midnight", async () => {
     shop();
-    const deps2 = { ...deps, linkImportsPerDay: 1 };
-    expectOk(await importFromLink(deps2, TEST_USER, "http://shop.example/p"));
-    await expect(importFromLink(deps2, TEST_USER, "http://shop.example/p")).rejects.toMatchObject({ code: "daily_cap_reached" });
+    const limited = withLinkLimit(1);
+    expectOk(await importFromLink(limited, TEST_USER, "http://shop.example/p"));
+    await expect(importFromLink(limited, TEST_USER, "http://shop.example/p")).rejects.toBeInstanceOf(CapReachedError);
     // Someone else isn't affected.
-    expectOk(await importFromLink(deps2, OTHER_USER, "http://shop.example/p"));
-    // A day later it's free again.
-    deps.advance(LINK_IMPORT_WINDOW_MS + 1);
-    expectOk(await importFromLink(deps2, TEST_USER, "http://shop.example/p"));
+    expectOk(await importFromLink(limited, OTHER_USER, "http://shop.example/p"));
+    // After UK midnight it's free again.
+    deps.setNow("2026-10-26T00:00:01Z");
+    expectOk(await importFromLink(limited, TEST_USER, "http://shop.example/p"));
   });
 
-  it("fallbacks don't create rows, so they don't count", async () => {
+  it("fallbacks count too, so blocked pages can't be fetched without limit", async () => {
     server.routes.set("shop.example/blocked", (_req, res) => res.writeHead(403).end());
-    const deps2 = { ...deps, linkImportsPerDay: 1 };
-    for (let i = 0; i < 3; i++) expect((await importFromLink(deps2, TEST_USER, "http://shop.example/blocked")).status).toBe("needs_screenshot");
+    const limited = withLinkLimit(2);
+    for (let i = 0; i < 2; i++) expect((await importFromLink(limited, TEST_USER, "http://shop.example/blocked")).status).toBe("needs_screenshot");
+    const requestsBefore = server.requests.length;
+    await expect(importFromLink(limited, TEST_USER, "http://shop.example/blocked")).rejects.toBeInstanceOf(CapReachedError);
+    expect(server.requests.length).toBe(requestsBefore);
+  });
+
+  it("parallel attempts can't overshoot the limit", async () => {
+    shop();
+    const limited = withLinkLimit(3);
+    const results = await Promise.allSettled(Array.from({ length: 8 }, () => importFromLink(limited, TEST_USER, "http://shop.example/p")));
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(3);
+    expect(fetchesCounted()).toBe(3);
+  });
+
+  it("a user at the item cap is told about items, without using a link fetch", async () => {
+    for (let i = 0; i < TEST_LIMITS.dailyCaps.item_ingest; i++) await deps.usage.reserveAction(TEST_USER, "item_ingest");
+    const error = await importFromLink(deps, TEST_USER, "http://shop.example/p").catch((e: unknown) => e);
+    expect((error as CapReachedError).cap).toBe("items_per_day");
+    expect(fetchesCounted()).toBe(0);
   });
 });
 

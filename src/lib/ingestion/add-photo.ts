@@ -43,7 +43,8 @@ export async function addItemFromPhoto(deps: PhotoIngestionDeps, userId: string,
   const stored = await storeImages(deps.storage, userId, cleanOriginal, cleanCutout);
   try {
     // Stored and valid: count the item now, because tagging (which costs) happens in this request.
-    await deps.usage.recordAction(userId, "item_ingest");
+    // Atomic: two uploads at once can't both take the last place today.
+    await deps.usage.reserveAction(userId, "item_ingest");
 
     // 6. Tag the cut-out if there is one, otherwise the original.
     const suggestedTags = await suggestTags(deps, userId, cleanCutout ?? cleanOriginal);

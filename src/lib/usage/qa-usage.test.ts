@@ -33,8 +33,8 @@ async function capOf(promise: Promise<unknown>): Promise<CapReachedError | null>
 }
 
 describe("configured caps match CONTRACTS.md section 7", () => {
-  it("is 40 items, 25 outfit requests, £5 a month, UK time", () => {
-    expect(DAILY_CAPS).toEqual({ item_ingest: 40, outfit_request: 25 });
+  it("is 40 items, 25 outfit requests, 80 link fetches, £5 a month, UK time", () => {
+    expect(DAILY_CAPS).toEqual({ item_ingest: 40, outfit_request: 25, link_fetch: 80 });
     expect(MONTHLY_AI_SPEND_CAP_PENCE).toBe(500);
     expect(USAGE_TIME_ZONE).toBe(UK);
     expect(ESTIMATED_COST_PENCE).toEqual({ tagging: 0.2, ranking_shortlist: 0.2, ranking_final: 0.5 });
@@ -47,10 +47,10 @@ describe("daily caps at the boundary (real values)", () => {
     ["outfit_request", DAILY_CAPS.outfit_request, "outfit_requests_per_day"],
   ] as const)("allows exactly %s x%i, then refuses the next with %s", async (action, limit, kind) => {
     const { guard } = setup("2026-10-21T10:00:00Z");
-    for (let i = 0; i < limit - 1; i++) await guard.recordAction(ALICE, action);
+    for (let i = 0; i < limit - 1; i++) await guard.reserveAction(ALICE, action);
     // limit - 1 used: the last allowed one still goes through.
     expect(await capOf(guard.assertCanStart(ALICE, action))).toBeNull();
-    await guard.recordAction(ALICE, action);
+    await guard.reserveAction(ALICE, action);
     const error = await capOf(guard.assertCanStart(ALICE, action));
     expect(error?.cap).toBe(kind);
     expect(error?.limit).toBe(limit);
@@ -66,20 +66,59 @@ describe("daily caps at the boundary (real values)", () => {
     expect(await capOf(guard.assertCanStart(ALICE, "item_ingest"))).toBeNull();
   });
 
-  // BUG (low; reported): assertCanStart and recordAction are separate
-  // calls, so requests that arrive together (a double tap, two tabs) all pass
-  // the check before any is recorded and the cap is overshot. The same race
-  // exists with the Supabase store. Flip to `it` once check-and-record is
-  // atomic (e.g. one SQL function that counts and inserts).
-  it.fails("doesn't let simultaneous requests overshoot the cap", async () => {
+  // Was pinned with it.fails: check and record were separate calls, so
+  // requests that arrived together all passed the check. Fixed by
+  // reserveAction (atomic; reserve_usage in SQL, proven in db:verify).
+  it("doesn't let simultaneous requests overshoot the cap", async () => {
     const { guard } = setup("2026-10-21T10:00:00Z");
-    for (let i = 0; i < DAILY_CAPS.item_ingest - 1; i++) await guard.recordAction(ALICE, "item_ingest");
+    for (let i = 0; i < DAILY_CAPS.item_ingest - 1; i++) await guard.reserveAction(ALICE, "item_ingest");
     const attempt = async () => {
       await guard.assertCanStart(ALICE, "item_ingest");
-      await guard.recordAction(ALICE, "item_ingest");
+      await guard.reserveAction(ALICE, "item_ingest");
     };
-    await Promise.allSettled([attempt(), attempt(), attempt()]);
+    const results = await Promise.allSettled([attempt(), attempt(), attempt()]);
     expect((await guard.summary(ALICE)).itemsToday.used).toBe(DAILY_CAPS.item_ingest);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    for (const r of results) if (r.status === "rejected") expect((r.reason as CapReachedError).cap).toBe("items_per_day");
+  });
+
+  it("doesn't let simultaneous AI calls overshoot the monthly cap", async () => {
+    const { guard, store } = setup("2026-10-21T10:00:00Z");
+    await guard.recordAiCost(BOB, "tagging", MONTHLY_AI_SPEND_CAP_PENCE - 0.5);
+    // 0.2p each: the first three take the month from 499.5p to 500.1p
+    // (reached, not approached); the rest are refused.
+    const results = await Promise.allSettled(Array.from({ length: 10 }, () => guard.reserveAiCost(ALICE, "tagging", "gemini")));
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(3);
+    expect(store.events.filter((e) => e.userId === ALICE)).toHaveLength(3);
+    expect(await guard.isAiPaused()).toBe(true);
+  });
+
+  it("a cancelled reservation gives the place back", async () => {
+    const { guard } = setup("2026-10-21T10:00:00Z");
+    for (let i = 0; i < DAILY_CAPS.item_ingest - 1; i++) await guard.reserveAction(ALICE, "item_ingest");
+    const last = await guard.reserveAction(ALICE, "item_ingest");
+    expect((await capOf(guard.reserveAction(ALICE, "item_ingest")))?.cap).toBe("items_per_day");
+    await last.cancel();
+    expect(await capOf(guard.reserveAction(ALICE, "item_ingest"))).toBeNull();
+  });
+
+  it("reserving an item while AI is paused is refused and records nothing", async () => {
+    const { guard, store } = setup("2026-10-21T10:00:00Z");
+    await guard.recordAiCost(BOB, "tagging", MONTHLY_AI_SPEND_CAP_PENCE);
+    const before = store.events.length;
+    expect((await capOf(guard.reserveAction(ALICE, "item_ingest")))?.cap).toBe("monthly_ai_spend");
+    expect(store.events).toHaveLength(before);
+  });
+
+  it("link fetches have their own cap and aren't stopped by the AI pause", async () => {
+    const { guard } = setup("2026-10-21T10:00:00Z");
+    await guard.recordAiCost(BOB, "tagging", MONTHLY_AI_SPEND_CAP_PENCE);
+    for (let i = 0; i < DAILY_CAPS.link_fetch; i++) await guard.reserveAction(ALICE, "link_fetch");
+    const error = await capOf(guard.reserveAction(ALICE, "link_fetch"));
+    expect(error?.cap).toBe("link_fetches_per_day");
+    expect(error?.toApiException().extras.cap).toEqual({ kind: "link_fetches_per_day", limit: 80, resetsAt: "2026-10-21T23:00:00.000Z" });
+    // Doesn't touch the item counter /api/usage shows.
+    expect((await guard.summary(ALICE)).itemsToday.used).toBe(0);
   });
 
   it("checking alone never uses up the allowance", async () => {
@@ -168,7 +207,7 @@ describe("UK month boundaries through the clock changes", () => {
 describe("daily caps across the UK day rollover in the guard", () => {
   it("in BST, a cap hit at 23:59 local resets at 00:00 local (23:00 UTC)", async () => {
     const { guard, setNow } = setup("2026-07-15T22:59:00Z");
-    for (let i = 0; i < DAILY_CAPS.outfit_request; i++) await guard.recordAction(ALICE, "outfit_request");
+    for (let i = 0; i < DAILY_CAPS.outfit_request; i++) await guard.reserveAction(ALICE, "outfit_request");
     expect((await capOf(guard.assertCanStart(ALICE, "outfit_request")))?.resetsAt.toISOString()).toBe("2026-07-15T23:00:00.000Z");
     setNow("2026-07-15T23:00:00Z");
     expect(await capOf(guard.assertCanStart(ALICE, "outfit_request"))).toBeNull();
@@ -176,14 +215,14 @@ describe("daily caps across the UK day rollover in the guard", () => {
 
   it("in BST, a UTC-midnight reset would be wrong: usage at 23:30 UTC counts for the new UK day", async () => {
     const { guard, setNow } = setup("2026-07-15T23:30:00Z"); // 00:30 BST on the 16th
-    await guard.recordAction(ALICE, "item_ingest");
+    await guard.reserveAction(ALICE, "item_ingest");
     setNow("2026-07-16T10:00:00Z");
     expect((await guard.summary(ALICE)).itemsToday.used).toBe(1);
   });
 
   it("on the 25-hour day the clocks go back, the cap holds for all 25 hours", async () => {
     const { guard, setNow } = setup("2026-10-24T23:10:00Z"); // 00:10 BST on the 25th
-    for (let i = 0; i < DAILY_CAPS.item_ingest; i++) await guard.recordAction(ALICE, "item_ingest");
+    for (let i = 0; i < DAILY_CAPS.item_ingest; i++) await guard.reserveAction(ALICE, "item_ingest");
     setNow("2026-10-25T23:50:00Z"); // 23:50 GMT, still the 25th
     const error = await capOf(guard.assertCanStart(ALICE, "item_ingest"));
     expect(error?.resetsAt.toISOString()).toBe("2026-10-26T00:00:00.000Z");
@@ -193,7 +232,7 @@ describe("daily caps across the UK day rollover in the guard", () => {
 
   it("on the 23-hour day the clocks go forward, the reset is at 23:00 UTC", async () => {
     const { guard, setNow } = setup("2026-03-29T12:00:00Z");
-    for (let i = 0; i < DAILY_CAPS.item_ingest; i++) await guard.recordAction(ALICE, "item_ingest");
+    for (let i = 0; i < DAILY_CAPS.item_ingest; i++) await guard.reserveAction(ALICE, "item_ingest");
     expect((await guard.summary(ALICE)).dailyResetAt).toBe("2026-03-29T23:00:00.000Z");
     setNow("2026-03-29T22:59:59Z");
     expect(await capOf(guard.assertCanStart(ALICE, "item_ingest"))).not.toBeNull();
@@ -248,7 +287,7 @@ describe("£5/month AI spend cap", () => {
 
   it("reports ai_paused ahead of a daily cap when both apply", async () => {
     const { guard } = setup("2026-10-21T10:00:00Z");
-    for (let i = 0; i < DAILY_CAPS.item_ingest; i++) await guard.recordAction(ALICE, "item_ingest");
+    for (let i = 0; i < DAILY_CAPS.item_ingest; i++) await guard.reserveAction(ALICE, "item_ingest");
     await guard.recordAiCost(ALICE, "tagging", 1000);
     expect((await capOf(guard.assertCanStart(ALICE, "item_ingest")))?.cap).toBe("monthly_ai_spend");
   });
@@ -288,8 +327,8 @@ describe("£5/month AI spend cap", () => {
 describe("summary", () => {
   it("only counts the asking user's actions but reports the shared AI pause", async () => {
     const { guard } = setup("2026-10-21T10:00:00Z");
-    await guard.recordAction(BOB, "item_ingest");
-    await guard.recordAction(BOB, "outfit_request");
+    await guard.reserveAction(BOB, "item_ingest");
+    await guard.reserveAction(BOB, "outfit_request");
     await guard.recordAiCost(BOB, "ranking_final", MONTHLY_AI_SPEND_CAP_PENCE);
     expect(await guard.summary(ALICE)).toEqual({
       itemsToday: { used: 0, limit: 40 },

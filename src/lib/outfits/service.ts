@@ -179,6 +179,12 @@ export class OutfitService {
   ): Promise<OutfitGenerationResponse> {
     const { repository, usage, thumbnails } = this.deps;
     const rejectedOutfits = await repository.listRejectedItemIds(userId, MAX_REJECTED_OUTFITS_FOR_HINTS);
+    // Each model call reserves its estimated cost before it's made, then
+    // records the real cost: one meter per pass.
+    const meters = {
+      ranking_shortlist: usage.meterAiCalls(userId, "ranking_shortlist"),
+      ranking_final: usage.meterAiCalls(userId, "ranking_final"),
+    };
 
     const result = await runOutfitPipeline(
       { ...input, rejectedOutfits },
@@ -187,8 +193,13 @@ export class OutfitService {
         thumbnails,
         random: this.random,
         now: this.now,
-        onRankingStart: () => usage.recordAction(userId, "outfit_request"),
-        recordAiCost: (kind, call) => usage.recordAiCost(userId, kind, call.costPence, call.provider),
+        // Counted atomically just before the first model call, so parallel
+        // requests can't overshoot the daily cap.
+        onRankingStart: async () => {
+          await usage.reserveAction(userId, "outfit_request");
+        },
+        beforeAiCall: (kind) => meters[kind].beforeCall(),
+        recordAiCost: (kind, call) => meters[kind].onCall(call),
       },
     );
 

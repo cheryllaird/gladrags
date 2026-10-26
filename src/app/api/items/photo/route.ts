@@ -33,8 +33,7 @@ export const POST = withApiHandler(async (request) => {
 async function mockPhotoDraft(user: SessionUser, upload: PhotoUpload) {
   throwIfCapMarker([upload.original.name], "item_ingest");
   const usage = getUsageGuard();
-  await usage.assertCanStart(user.id, "item_ingest");
-  await usage.recordAction(user.id, "item_ingest");
+  await usage.reserveAction(user.id, "item_ingest");
   const draft = mock.createDraft({
     source: upload.sourceUrl ? "link" : "photo",
     sourceUrl: upload.sourceUrl ?? null,

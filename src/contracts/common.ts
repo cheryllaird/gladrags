@@ -29,8 +29,11 @@ export const API_ERROR_CODES = [
   "bad_request", // input failed validation
   "unauthorized", // not signed in
   "not_invited", // email isn't on the tester allowlist
+  "forbidden", // a cross-site request (its Origin isn't this site)
   "not_found", // row doesn't exist or isn't yours
-  "daily_cap_reached", // per-user daily cap on items or outfit requests
+  "unsupported_media_type", // a JSON route was sent something other than JSON
+  "daily_cap_reached", // per-user daily cap on items, outfit requests or link fetches
+  "rate_limited", // too many sign-in attempts; try again later
   "ai_paused", // the monthly AI spend cap has been reached
   "ai_failed", // model output failed validation twice, or the provider errored
   "server_misconfigured", // missing environment variables
@@ -44,14 +47,22 @@ export const API_ERROR_STATUS: Record<ApiErrorCode, number> = {
   bad_request: 400,
   unauthorized: 401,
   not_invited: 403,
+  forbidden: 403,
   not_found: 404,
+  unsupported_media_type: 415,
   daily_cap_reached: 429,
+  rate_limited: 429,
   ai_paused: 503,
   ai_failed: 502,
   server_misconfigured: 500,
   not_implemented: 501,
   internal: 500,
 };
+
+/** Which cap an error refers to (`cap.kind`). */
+export const CAP_KINDS = ["items_per_day", "outfit_requests_per_day", "link_fetches_per_day", "monthly_ai_spend"] as const;
+export const CapKindSchema = z.enum(CAP_KINDS);
+export type CapKind = z.infer<typeof CapKindSchema>;
 
 export const ApiErrorSchema = z.object({
   error: z.object({
@@ -65,7 +76,7 @@ export const ApiErrorSchema = z.object({
     /** Which cap was hit and when it resets, for `daily_cap_reached` and `ai_paused`. */
     cap: z
       .object({
-        kind: z.enum(["items_per_day", "outfit_requests_per_day", "monthly_ai_spend"]),
+        kind: CapKindSchema,
         limit: z.number(),
         resetsAt: TimestampSchema,
       })

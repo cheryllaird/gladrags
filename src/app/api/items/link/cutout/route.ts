@@ -42,7 +42,7 @@ async function mockLinkCutout(user: SessionUser, { meta, cutout }: LinkCutoutUpl
     throw new ApiException("not_found", "That link has expired or was already added. Paste the link again to start over.");
   }
   throwIfCapMarker([linkImport.sourceUrl], "item_ingest");
-  await usage.recordAction(user.id, "item_ingest");
+  await usage.reserveAction(user.id, "item_ingest");
 
   const draft = mock.createDraft({
     source: "link",

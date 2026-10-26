@@ -6,7 +6,9 @@
  * image safely, clean it (type sniffed from the bytes, fully decoded, EXIF
  * stripped, at most 1600 px), store it as the original, record the import
  * in link_imports and return a 10-minute signed URL so the phone can cut
- * the item out. No AI runs here, so the item cap is only checked.
+ * the item out. No AI runs here, so the item cap is only checked; the
+ * fetch itself is counted against the link_fetch cap before anything is
+ * fetched, so fallbacks count too.
  *
  * Every way of not getting there (blocked, unreachable, not a product
  * page, no usable image) ends in the screenshot fallback, never an error.
@@ -24,7 +26,6 @@ import { ApiException } from "@/lib/api/errors";
 import { InvalidImageError, sniffImageType, type ServerImageProcessor } from "@/lib/images/server";
 import { cleanImage } from "@/lib/ingestion/images";
 import { newImageKey, type ImageStorage } from "@/lib/ingestion/storage";
-import { DAILY_CAPS } from "@/lib/usage/config";
 import type { UsageGuard } from "@/lib/usage/guard";
 import { decodeHtml } from "./html";
 import { parseProductPage } from "./product";
@@ -37,29 +38,6 @@ export interface LinkImportDeps {
   linkImports: LinkImportRepository;
   usage: UsageGuard;
   network?: NetworkDeps;
-  /** Overrides for tests. */
-  linkImportsPerDay?: number;
-  now?: () => Date;
-}
-
-/**
- * Step 1 doesn't count against the item cap (no AI runs), so it has its
- * own limit: successful imports in the last 24 hours, at twice the daily
- * item cap. That leaves room for links that are pasted but never saved.
- */
-export const LINK_IMPORTS_PER_DAY = 2 * DAILY_CAPS.item_ingest;
-export const LINK_IMPORT_WINDOW_MS = 24 * 60 * 60 * 1000;
-
-async function assertUnderLinkLimit(deps: LinkImportDeps, userId: string): Promise<void> {
-  const limit = deps.linkImportsPerDay ?? LINK_IMPORTS_PER_DAY;
-  const now = (deps.now ?? (() => new Date()))();
-  const recent = await deps.linkImports.createdSince(userId, new Date(now.getTime() - LINK_IMPORT_WINDOW_MS), limit);
-  if (recent.length < limit) return;
-  // The oldest counted import leaves the window first.
-  const resetsAt = new Date(recent[recent.length - 1]!.getTime() + LINK_IMPORT_WINDOW_MS);
-  throw new ApiException("daily_cap_reached", `You've added ${limit} links in the last day, the limit while we're testing. Try again later.`, {
-    cap: { kind: "items_per_day", limit, resetsAt: resetsAt.toISOString() },
-  });
 }
 
 /** The product page: HTML only, at most 2 MB. */
@@ -110,8 +88,10 @@ export async function importFromLink(deps: LinkImportDeps, userId: string, sourc
   // No AI here, but a user at today's limit (or with AI paused) shouldn't
   // be sent through step 2 for nothing. Counting happens in step 2.
   await deps.usage.assertCanStart(userId, "item_ingest");
-  // And a limit on how often this user can make the server fetch pages.
-  await assertUnderLinkLimit(deps, userId);
+  // And a limit on how often this user can make the server fetch pages
+  // (DAILY_CAPS.link_fetch, per UK day). Counted atomically before any
+  // fetch, so fallbacks and failures count too.
+  await deps.usage.reserveAction(userId, "link_fetch");
   const network = deps.network ?? systemNetwork;
 
   let html: string;

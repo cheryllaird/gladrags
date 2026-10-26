@@ -7,7 +7,7 @@ const ALICE = "0a000000-0000-4000-8000-000000000001";
 const BOB = "0b000000-0000-4000-8000-000000000002";
 
 const limits: UsageLimits = {
-  dailyCaps: { item_ingest: 2, outfit_request: 1 },
+  dailyCaps: { item_ingest: 2, outfit_request: 1, link_fetch: 2 },
   monthlySpendCapPence: 10,
   timeZone: "Europe/London",
 };
@@ -35,7 +35,7 @@ describe("UsageGuard daily caps", () => {
     const { guard } = setup();
     for (let i = 0; i < 2; i++) {
       await guard.assertCanStart(ALICE, "item_ingest");
-      await guard.recordAction(ALICE, "item_ingest");
+      await guard.reserveAction(ALICE, "item_ingest");
     }
     const error = await capOf(guard.assertCanStart(ALICE, "item_ingest"));
     expect(error?.cap).toBe("items_per_day");
@@ -45,7 +45,7 @@ describe("UsageGuard daily caps", () => {
 
   it("counts each user and each action separately", async () => {
     const { guard } = setup();
-    await guard.recordAction(ALICE, "outfit_request");
+    await guard.reserveAction(ALICE, "outfit_request");
     expect(await capOf(guard.assertCanStart(ALICE, "outfit_request"))).not.toBeNull();
     expect(await capOf(guard.assertCanStart(ALICE, "item_ingest"))).toBeNull();
     expect(await capOf(guard.assertCanStart(BOB, "outfit_request"))).toBeNull();
@@ -53,7 +53,7 @@ describe("UsageGuard daily caps", () => {
 
   it("resets at UK midnight", async () => {
     const { guard, setNow } = setup("2026-10-21T22:30:00Z"); // 23:30 BST
-    await guard.recordAction(ALICE, "outfit_request");
+    await guard.reserveAction(ALICE, "outfit_request");
     expect(await capOf(guard.assertCanStart(ALICE, "outfit_request"))).not.toBeNull();
     setNow("2026-10-21T23:05:00Z"); // 00:05 BST next day
     expect(await capOf(guard.assertCanStart(ALICE, "outfit_request"))).toBeNull();
@@ -61,7 +61,7 @@ describe("UsageGuard daily caps", () => {
 
   it("maps to a 429 daily_cap_reached API error", async () => {
     const { guard } = setup();
-    await guard.recordAction(ALICE, "outfit_request");
+    await guard.reserveAction(ALICE, "outfit_request");
     const error = await capOf(guard.assertCanStart(ALICE, "outfit_request"));
     const api = error!.toApiException();
     expect(api.code).toBe("daily_cap_reached");
@@ -101,7 +101,7 @@ describe("UsageGuard monthly AI spend cap", () => {
 describe("UsageGuard summary", () => {
   it("reports today's counts, limits and pause state", async () => {
     const { guard } = setup();
-    await guard.recordAction(ALICE, "item_ingest");
+    await guard.reserveAction(ALICE, "item_ingest");
     expect(await guard.summary(ALICE)).toEqual({
       itemsToday: { used: 1, limit: 2 },
       outfitRequestsToday: { used: 0, limit: 1 },

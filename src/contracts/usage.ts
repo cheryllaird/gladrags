@@ -7,6 +7,9 @@ import { TimestampSchema } from "./common";
  * Counted per user per day (the daily caps):
  * - item_ingest: a photo upload or link import that went through AI processing
  * - outfit_request: a new outfit request or a refinement
+ * - link_fetch: an add-by-link step 1, counted before the page is fetched,
+ *   so fallbacks count too (no AI runs; it limits how often a user can make
+ *   the server fetch pages)
  *
  * Costed (the £5/month cap on Gemini spend, summed across all users):
  * - tagging, ranking_shortlist, ranking_final
@@ -17,6 +20,7 @@ import { TimestampSchema } from "./common";
 export const USAGE_EVENT_KINDS = [
   "item_ingest",
   "outfit_request",
+  "link_fetch",
   "tagging",
   "ranking_shortlist",
   "ranking_final",
@@ -24,12 +28,16 @@ export const USAGE_EVENT_KINDS = [
 export const UsageEventKindSchema = z.enum(USAGE_EVENT_KINDS);
 export type UsageEventKind = z.infer<typeof UsageEventKindSchema>;
 
-export type CappedAction = "item_ingest" | "outfit_request";
+export type CappedAction = "item_ingest" | "outfit_request" | "link_fetch";
 export type AiCostKind = Exclude<UsageEventKind, CappedAction>;
 
 const CounterSchema = z.object({ used: z.int().min(0), limit: z.int().min(0) });
 
-/** Response of GET /api/usage, so the UI can show "12 of 30 items today". */
+/**
+ * Response of GET /api/usage, so the UI can show "12 of 40 items today".
+ * Link fetches aren't reported: their limit is a backstop against abuse,
+ * and a user who hits it gets a link_fetches_per_day cap error.
+ */
 export const UsageSummarySchema = z.object({
   itemsToday: CounterSchema,
   outfitRequestsToday: CounterSchema,

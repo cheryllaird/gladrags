@@ -13,7 +13,7 @@ export { blockedAddressReason, isPublicAddress, parseIp } from "./address";
 export { LINK_IMPORT_ROW_MAX_AGE_MS, cleanUpOldLinkImports } from "./cleanup";
 export { getLinkCutoutDeps, getLinkImportDeps } from "./deps";
 export { finishLinkImport, type LinkCutoutDeps } from "./finish-link";
-export { IMAGE_FETCH, LINK_IMPORTS_PER_DAY, LINK_IMPORT_WINDOW_MS, PAGE_FETCH, importFromLink, type LinkImportDeps } from "./import-link";
+export { IMAGE_FETCH, PAGE_FETCH, importFromLink, type LinkImportDeps } from "./import-link";
 export { parseProductPage, type ParsedProductPage } from "./product";
 export {
   InMemoryLinkImportRepository,
