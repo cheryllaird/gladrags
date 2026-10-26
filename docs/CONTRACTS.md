@@ -24,7 +24,7 @@ Set `GLADRAGS_MOCK_MODE=true` and the app runs with no accounts at all:
 - The API routes serve an in-memory wardrobe of 12 items covering every category, menswear and womenswear. One of them (the camel coat) has no cut-out, so the UI's fallback path gets exercised.
 - Adding, editing, deleting, outfit requests, swaps and saves all work, and reset when the server restarts.
 
-The UI agents build against mock mode until the backend branches merge. Outside mock mode any route that is still a stub refuses with `not_implemented` (today: the two add-by-link routes), so a deployed build can never hand out the shared mock data.
+The UI agents build against mock mode until the backend branches merge. Every route is now built. Mock data is only served when `GLADRAGS_MOCK_MODE=true`, which is refused on Vercel and in production builds, so a deployed build can never hand out the shared mock data.
 
 Because mock mode turns sign-in off, the app refuses to start in it on Vercel, or in a production build (`pnpm start`), and reports a configuration error. The one exception is end-to-end tests, which set `GLADRAGS_E2E=true` to run mock mode against `pnpm start`.
 
@@ -251,14 +251,20 @@ A **draft** is `{ source, sourceUrl, originalImageKey, cutoutImageKey (or null),
 
 **Why these sizes:** Vercel limits a request to 4.5 MB, and both files travel together. A 1600 px JPEG is usually under 1 MB. If a cut-out PNG comes out over 2.5 MB, the phone shrinks it until it fits. **[Decision]**
 
-### Add by link, two steps (stubs; owner: link-import)
+### Add by link, two steps (built; owner: link-import)
 **Step 1:** `POST /api/items/link` with `{ url }`.
 
-The server first checks the daily item cap, so a user at their limit isn't sent through step 2 for nothing. It doesn't count the item yet; no AI runs in this step. It then fetches the page, reads the product data, downloads the product image, resizes it, strips EXIF and stores it as the original. It records the import (source URL and product data) in `link_imports`, and returns either:
+The server first checks the daily item cap and the AI pause, so a user at their limit isn't sent through step 2 for nothing. It doesn't count the item yet; no AI runs in this step. It also refuses with `daily_cap_reached` (cap kind `items_per_day`, limit 80) once the user has made 80 successful imports in the last 24 hours, because step 1 fetches pages and stores images even though it isn't counted as an item. It then fetches the page, reads the product data, downloads the product image, resizes it, strips EXIF and stores it as the original. It records the import (source URL and product data) in `link_imports`, and returns either:
 - `{ status: "ok", sourceUrl, originalImageKey, originalUrl, product: { title, brand, colour } }`. Here `originalUrl` is a signed URL that lasts 10 minutes. `product` is for display only.
 - `{ status: "needs_screenshot", reason, sourceUrl, message }`. The reason is `fetch_blocked`, `no_product_data` or `no_image`. The phone asks for a screenshot and sends it through add-by-photo with `sourceUrl`, so the item keeps its link.
 
-Scraped product text is cleaned before it's used: line breaks are flattened to spaces, it's trimmed and length-limited (title 200, brand 80, colour 60 characters), and blanks become empty.
+Scraped product text is cleaned before it's used: line breaks are flattened to spaces, control and bidi characters removed, it's trimmed and length-limited (title 200, brand 80, colour 60 characters) without splitting an emoji, and blanks become empty.
+
+**Fetching user-supplied links safely (SSRF).** The page and product images are fetched by `src/lib/link-import/safe-fetch.ts`:
+- http(s) only, on the default ports; no user name or password in the URL; no `localhost`, `.local`/`.internal`-style or single-word host names.
+- The server resolves DNS itself, and every address returned must be public (no loopback, private, link-local, carrier-grade NAT, cloud metadata, IPv4-mapped, NAT64 or other special ranges). The connection is pinned to those checked addresses, so DNS rebinding can't swap them.
+- Every redirect is checked again (at most 3), and an https→http redirect is refused.
+- Time limits (5 s idle, 10 s for the page, 12 s per image) and size limits (2 MB page, 10 MB image, counted after decompression). No cookies or credentials, and an honest `GladRags` User-Agent; shops that block it go to the screenshot fallback.
 
 **Step 2:** the phone loads `originalUrl`, cuts the item out, and calls `POST /api/items/link/cutout`, as a multipart form:
 
@@ -268,14 +274,15 @@ Scraped product text is cleaned before it's used: line breaks are flattened to s
 | `cutout` | no | PNG, as for add-by-photo. Leave it out if removal failed. |
 
 The server:
-1. Checks the daily item cap.
-2. Claims the import: it must be the user's, unused, and less than an hour old. Otherwise the answer is `404 not_found`, meaning "paste the link again". **Each import can be tagged only once**, so replaying step 2 can't run Gemini again.
-3. Counts the item against the daily cap.
-4. Checks and stores the cut-out.
-5. Tags the cut-out (or the original), using the product title, brand and colour **it stored in step 1** as hints. It never uses data the phone sends back.
-6. Returns `{ draft }`, exactly as add-by-photo does.
+1. Checks the daily item cap and the AI pause.
+2. Finds the import: it must be the user's, unused, and less than an hour old. Otherwise the answer is `404 not_found`, meaning "paste the link again".
+3. Checks and stores the cut-out first, so a rejected cut-out (`bad_request` on `cutout`) leaves the import usable for another try.
+4. Claims the import in one database statement. **Each import can be tagged only once**, so replaying step 2 can't run Gemini again; if the claim fails, the stored cut-out is removed.
+5. Counts the item against the daily cap.
+6. Tags the cut-out (or the original), using the product title, brand and colour **it stored in step 1** as hints. It never uses data the phone sends back.
+7. Returns `{ draft }`, exactly as add-by-photo does.
 
-An import that's never finished leaves an unused image in storage. The link-import agent should clear out old unused imports and their images.
+An import that's never finished leaves an unused image in storage. Two cleanup jobs handle this: `cleanUpOrphanedImages` (src/lib/ingestion/cleanup.ts) deletes images over 24 hours old that no item or open import uses, and `cleanUpOldLinkImports` (src/lib/link-import/cleanup.ts) deletes `link_imports` rows over 7 days old. Both still need a daily schedule (milestone 4).
 
 Android can "share" a product page straight to the installed app; it opens `/add/link?url=…` (a wardrobe-ui page). iPhone doesn't support this, so users paste the link.
 

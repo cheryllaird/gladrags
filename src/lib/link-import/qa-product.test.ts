@@ -196,7 +196,7 @@ describe("text cleaning", () => {
   // surrogate. JSON.stringify sends it as "\\ud83d", which Postgres jsonb
   // refuses, so step 1's link_imports insert would fail (500). Flip to it()
   // once fixed.
-  it.fails("an emoji at the length limit isn't cut in half (no lone surrogate reaches storage or the model)", () => {
+  it("an emoji at the length limit isn't cut in half (no lone surrogate reaches storage or the model)", () => {
     // 199 letters then an emoji: a cut at 200 UTF-16 units splits the pair.
     const name = `${"a".repeat(LINK_PRODUCT_LIMITS.title - 1)}\u{1F457} dress`;
     const page = parseProductPage(ld({ ...PRODUCT, name }), PAGE);
