@@ -45,7 +45,7 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 | URL fetch, OG / JSON-LD parsing, screenshot fallback | link-import | `feat/link-import` | ◐ | Ingestion tagging merged |
 | Sign-in, add-item flow, tag review, wardrobe grid + filters, item detail | wardrobe-ui | `feat/wardrobe-ui` | ☑ merged | Review: changes needed (expiring image URLs) → fixed, approved at adb6298. QA: expired session didn't reach sign-in; Back lost filters; both fixed. Account sheet with delete-my-account added. Switched to ingestion's real background remover at merge. | Foundations (mocked APIs) |
 | Style request + chips, results, canvas collages, swap/refine, saved outfits | outfit-ui | `feat/outfit-ui` | ☑ merged | Foundations (mocked APIs). Review: changes needed (anchor errors, expiring image URLs) → fixed, approved at 2f7f6d2. QA: 6 low findings, all fixed. 83/83 e2e at 390 px on the merged tree. |
-| Preview build of screens for Cheryl | orchestrator | | ☐ | UI branches |
+| Preview build of screens for Cheryl | orchestrator | | ☑ | Screenshot preview of all 44 screens (private artifact: https://claude.ai/artifact/M1MsNZZGy8rDyBQHhyFow1) plus `GLADRAGS_MOCK_MODE=true pnpm dev`. A live Vercel preview waits for the Vercel project. |
 
 ## Milestone 4 — Integration
 
