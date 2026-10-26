@@ -26,31 +26,21 @@ export default function PrivacyPage() {
   );
 }
 
-function Lead({ lead, text }: { lead?: string; text: string }) {
-  return (
-    <>
-      {lead && <strong className="font-semibold">{lead}</strong>}
-      {lead && text && " "}
-      {text}
-    </>
-  );
-}
-
 function Block({ block }: { block: PrivacyBlock }) {
-  if (block.kind === "list") {
-    return (
-      <ul className="marker:text-muted-foreground ml-5 list-disc space-y-3">
-        {block.items.map((item, index) => (
-          <li key={index} className="pl-1">
-            <Lead lead={item.lead} text={item.text} />
-          </li>
-        ))}
-      </ul>
-    );
+  switch (block.kind) {
+    case "heading":
+      return <h3 className="pt-2 text-lg font-semibold tracking-tight">{block.text}</h3>;
+    case "paragraph":
+      return <p>{block.text}</p>;
+    case "list":
+      return (
+        <ul className="marker:text-muted-foreground ml-5 list-disc space-y-3">
+          {block.items.map((item, index) => (
+            <li key={index} className="pl-1">
+              <strong className="font-semibold">{item.lead}</strong> {item.text}
+            </li>
+          ))}
+        </ul>
+      );
   }
-  return (
-    <p>
-      <Lead lead={block.lead} text={block.text} />
-    </p>
-  );
 }

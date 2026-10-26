@@ -59,6 +59,8 @@ describe("lookalike and climbing paths still need sign-in", () => {
     "/privacy%2fwardrobe",
     "/privacy;/wardrobe",
     "/privacy/../wardrobe",
+    "/privacy/x",
+    "/privacy/anything",
     "/privacy/./../add/link?url=https%3A%2F%2Fshop.example.com",
     "/privacy/%2e%2e/wardrobe",
     "/Privacy",

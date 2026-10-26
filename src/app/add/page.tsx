@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { SignedInUser } from "@/components/app-shell/signed-in-user";
 import { getSessionUser } from "@/lib/auth/session";
 import { AddPhotoFlow } from "./add-photo-flow";
 
@@ -9,5 +10,11 @@ export default async function AddPage() {
   // restored for the same user (pending-add.ts). If it can't be read,
   // nothing is kept or restored.
   const user = await getSessionUser().catch(() => null);
-  return <AddPhotoFlow userId={user?.id ?? null} />;
+  const userId = user?.id ?? null;
+  return (
+    <>
+      <SignedInUser userId={userId} />
+      <AddPhotoFlow userId={userId} />
+    </>
+  );
 }

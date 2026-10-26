@@ -1,7 +1,8 @@
 /**
  * The tester privacy note (/privacy) is public: signed-out visitors, and
  * the sign-in page's link to it, must reach it without being sent to
- * /sign-in. Lookalike paths still need sign-in. (The rest of the proxy is
+ * /sign-in. It's public by exact path only: lookalikes, and anything under
+ * it (/privacy/x), still need sign-in. (The rest of the proxy is
  * covered by qa-proxy.test.ts.)
  */
 import { NextRequest, NextResponse } from "next/server";
@@ -36,7 +37,7 @@ describe("/privacy for signed-out visitors", () => {
     expect(new RegExp(`^${config.matcher[0]!}$`).test("/privacy")).toBe(true);
   });
 
-  it.each(["/privacyx", "/privacy-policy", "/privacy.html"])("still sends lookalike %s to sign-in", async (path) => {
+  it.each(["/privacyx", "/privacy-policy", "/privacy.html", "/privacy/x", "/privacy/x/y"])("still sends lookalike %s to sign-in", async (path) => {
     const location = (await visit(path)).headers.get("location");
     expect(location && new URL(location).pathname).toBe("/sign-in");
   });

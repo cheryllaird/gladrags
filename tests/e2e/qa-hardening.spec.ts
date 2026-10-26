@@ -382,7 +382,7 @@ test.describe("kept add-item work is only for whoever kept it", () => {
     ).toHaveCount(0);
     await expect(page.getByLabel("Description")).toHaveCount(0);
     await expect(page.getByText("First user's linked jacket")).toHaveCount(0);
-    expect(await pendingEntry(page)).toBeNull();
+    await expect.poll(() => pendingEntry(page)).toBeNull();
   });
 
   test("the lost-photo note isn't shown to the next person who signs in", async ({
@@ -407,7 +407,7 @@ test.describe("kept add-item work is only for whoever kept it", () => {
       page.getByRole("button", { name: "Choose from library" }),
     ).toBeVisible();
     await expect(page.getByText("Choose it again to carry on.")).toHaveCount(0);
-    expect(await pendingEntry(page)).toBeNull();
+    await expect.poll(() => pendingEntry(page)).toBeNull();
   });
 
   test("a tampered entry planted on the tab (invalid JSON, wrong types, climbing keys) shows nothing and is deleted", async ({
@@ -499,7 +499,7 @@ test.describe("kept add-item work is only for whoever kept it", () => {
     await expect(
       second.getByText("We kept the item you were adding."),
     ).toHaveCount(0);
-    expect(await pendingEntry(second)).toBeNull();
+    await expect.poll(() => pendingEntry(second)).toBeNull();
     await second.close();
 
     await signInAgain(page);
@@ -545,8 +545,10 @@ test.describe("deleting the account", () => {
     await expect(
       dialog.getByText("Something went wrong on our side"),
     ).toBeVisible();
+    // gladrags:user records whose the tab's data is (SignedInUser).
     expect(await keys()).toEqual([
       "gladrags:pending-add",
+      "gladrags:user",
       "gladrags:wardrobe-search",
       "other-app",
     ]);
@@ -629,6 +631,9 @@ test.describe("privacy note", () => {
     }
   });
 
+  // Mock mode skips the proxy, so these are 404s here. With real auth a
+  // signed-out visitor is sent to sign-in instead (/privacy is public by
+  // exact path only): see src/proxy.test.ts and src/qa-privacy-proxy.test.ts.
   test("a lookalike path is not the privacy page", async ({ page }) => {
     for (const path of ["/privacyx", "/privacy-policy", "/privacy/anything"]) {
       const res = await page.goto(path);

@@ -22,7 +22,8 @@ import { z } from "zod";
 import { ItemDraftSchema, ItemTagsSchema, type ItemDraft, type ItemTags } from "@/contracts";
 import { SESSION_STORAGE_PREFIX } from "@/lib/client/session-storage";
 
-const KEY = `${SESSION_STORAGE_PREFIX}pending-add`;
+export const PENDING_ADD_KEY = `${SESSION_STORAGE_PREFIX}pending-add`;
+const KEY = PENDING_ADD_KEY;
 
 const StoredPendingAddSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -59,6 +60,21 @@ export function keepDraft(userId: string | null, draft: ItemDraft, cutoutFailed:
 export function notePhotoLost(userId: string | null): void {
   if (!userId) return;
   write({ kind: "photo_lost", userId });
+}
+
+/**
+ * Whose kept add-item work is in storage, without taking it: the stored
+ * user ID, or null if nothing (readable) is kept.
+ */
+export function pendingAddOwner(): string | null {
+  try {
+    const raw = window.sessionStorage.getItem(KEY);
+    if (raw === null) return null;
+    const parsed = StoredPendingAddSchema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data.userId : null;
+  } catch {
+    return null;
+  }
 }
 
 /** True if every image key on the draft is in `userId`'s storage folder. */

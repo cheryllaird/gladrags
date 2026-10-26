@@ -584,6 +584,20 @@ test.describe("PWA share target (/add/link?url=…&text=…)", () => {
     expect(urls).toEqual(["https://shop.example.com/p/from-text"]);
   });
 
+  test("editing the shared link to another one goes back to the ordinary label and hint", async ({ page }) => {
+    const link = "https://shop.example.com/p/shared-then-edited";
+    const urls = await shareTo(page, `url=${encodeURIComponent(link)}`);
+    await expectWaitingForTap(page, link, urls);
+    const box = page.getByLabel("Product link");
+    await box.fill("https://shop.example.com/p/something-else");
+    await expect(page.getByRole("button", { name: "Add from link" })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Import this link" })).toHaveCount(0);
+    await expect(page.getByText("Copy the link from the shop's product page")).toBeVisible();
+    await page.getByRole("button", { name: "Add from link" }).click();
+    await expect(page.getByRole("heading", { name: "Check the tags" })).toBeVisible();
+    expect(urls).toEqual(["https://shop.example.com/p/something-else"]);
+  });
+
   test("a shared link sends nothing while the page sits open or is reloaded", async ({ page }) => {
     const link = "https://shop.example.com/p/left-open";
     const urls = await shareTo(page, `url=${encodeURIComponent(link)}`);

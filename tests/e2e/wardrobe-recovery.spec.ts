@@ -226,7 +226,8 @@ test.describe("an expired session", () => {
     await expect(page.getByText("We kept the item you were adding.")).toHaveCount(0);
     await expect(page.getByRole("heading", { name: "Check the tags" })).toHaveCount(0);
     await expect(page.getByLabel("Description")).toHaveCount(0);
-    expect(await page.evaluate(() => sessionStorage.getItem("gladrags:pending-add"))).toBeNull();
+    // Polled: the page shows before hydration runs the restore check.
+    await expect.poll(() => page.evaluate(() => sessionStorage.getItem("gladrags:pending-add"))).toBeNull();
   }
 
   test("a draft kept for one user isn't shown to the next person who signs in on the tab", async ({ page }) => {
@@ -259,11 +260,14 @@ test.describe("Account sheet", () => {
   }
 
   async function keepSomething(page: Page) {
+    // Wait for the page to record whose tab it is, so that can't clear what's planted below.
+    await expect.poll(() => page.evaluate(() => sessionStorage.getItem("gladrags:user"))).not.toBeNull();
     await page.evaluate(() => {
       sessionStorage.setItem("gladrags:pending-add", JSON.stringify({ kind: "photo_lost", userId: "0a000000-0000-4000-8000-000000000001" }));
       sessionStorage.setItem("gladrags:wardrobe-search", "?category=top");
     });
-    expect(await gladragsKeys(page)).toHaveLength(2);
+    // Plus gladrags:user, which records whose the tab's data is.
+    expect((await gladragsKeys(page)).sort()).toEqual(["gladrags:pending-add", "gladrags:user", "gladrags:wardrobe-search"]);
   }
 
   test("signing out clears what this tab kept, so the next person sees none of it", async ({ page }) => {
@@ -445,5 +449,31 @@ test.describe("item detail recovery", () => {
     await expect(page).toHaveURL(/\/wardrobe\?category=top&q=/);
     await expect(page.getByRole("combobox", { name: "Category" })).toHaveValue("top");
     await expect(page.getByText("Nothing matches those filters.")).toBeVisible();
+  });
+
+  test("after someone else signs in on the tab, deleting doesn't land on the previous user's search", async ({ page, request }) => {
+    const id = await createItem(request, unique("Second user's item"));
+    // User A searches the wardrobe; the tab remembers A's search.
+    await page.goto("/wardrobe?category=top&q=secret-search-of-a");
+    await expect.poll(() => page.evaluate(() => sessionStorage.getItem("gladrags:wardrobe-search"))).toContain("secret-search-of-a");
+    // Mock mode always signs in as the same user, so mark the tab as A's.
+    await page.evaluate(() => sessionStorage.setItem("gladrags:user", "0a000000-0000-4000-8000-0000000000aa"));
+
+    // A's session expires; B signs in on the same tab and opens an item.
+    let refused = false;
+    await page.route(`**/api/items/${id}`, (route) => {
+      if (refused) return route.continue();
+      refused = true;
+      return route.fulfill({ status: 401, json: apiError("unauthorized", "Sign in to continue.") });
+    });
+    await page.goto(`/wardrobe/${id}`);
+    await signInAgain(page);
+    await expect(page).toHaveURL(new RegExp(`/wardrobe/${id}$`));
+    await expect.poll(() => page.evaluate(() => sessionStorage.getItem("gladrags:user"))).toBe("0a000000-0000-4000-8000-000000000001");
+
+    await page.getByRole("button", { name: "Delete" }).click();
+    await page.getByRole("alertdialog").getByRole("button", { name: "Delete item" }).click();
+    await expect(page).toHaveURL(/\/wardrobe$/);
+    await expect(page.getByRole("searchbox", { name: "Search descriptions" })).toHaveValue("");
   });
 });

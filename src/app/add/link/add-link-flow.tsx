@@ -66,8 +66,11 @@ export function AddLinkFlow({
   userId: string | null;
 }) {
   const [url, setUrl] = useState(sharedUrl);
-  // Arrived with a shared link: the button says what it will do with it.
-  const [shared, setShared] = useState(sharedUrl !== "");
+  // Arrived with a shared link: while the box still holds it, the button
+  // says what it will do with it. Editing it, or starting over, goes back
+  // to the ordinary label.
+  const [fromShare, setFromShare] = useState(sharedUrl !== "");
+  const shared = fromShare && url.trim() === sharedUrl;
   const [step, setStep] = useState<Step>({ kind: "enter" });
   const [preview, setPreview] = usePreviewUrl();
   const { usage, refresh: refreshUsage } = useUsage();
@@ -138,7 +141,7 @@ export function AddLinkFlow({
     setPreview(null);
     setRestored(null);
     setUrl("");
-    setShared(false);
+    setFromShare(false);
     go({ kind: "enter" });
   }
 

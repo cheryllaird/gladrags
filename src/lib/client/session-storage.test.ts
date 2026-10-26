@@ -18,6 +18,13 @@ describe("clearGladragsSessionStorage", () => {
     expect(window.sessionStorage.getItem("someone-else")).toBe("keep");
   });
 
+  it("leaves the keys `keep` asks for", () => {
+    window.sessionStorage.setItem("gladrags:pending-add", "{}");
+    window.sessionStorage.setItem("gladrags:wardrobe-search", "?q=x");
+    clearGladragsSessionStorage((key) => key === "gladrags:pending-add");
+    expect(Object.keys(window.sessionStorage)).toEqual(["gladrags:pending-add"]);
+  });
+
   it("doesn't throw when storage is blocked", () => {
     vi.spyOn(Storage.prototype, "key").mockImplementation(() => {
       throw new Error("SecurityError");
