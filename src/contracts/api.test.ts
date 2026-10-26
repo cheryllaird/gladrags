@@ -3,6 +3,8 @@ import {
   API_ERROR_CODES,
   API_ERROR_STATUS,
   CreateItemRequestSchema,
+  LINK_PRODUCT_LIMITS,
+  LinkProductSchema,
   ItemListQuerySchema,
   MagicLinkRequestSchema,
   ReturnPathSchema,
@@ -74,5 +76,20 @@ describe("item routes", () => {
 describe("error codes", () => {
   it("each have an HTTP status", () => {
     for (const code of API_ERROR_CODES) expect(API_ERROR_STATUS[code]).toBeGreaterThanOrEqual(400);
+  });
+});
+
+describe("scraped product text", () => {
+  it("never leaves half an emoji when the length limit falls inside one", () => {
+    const title = "a".repeat(LINK_PRODUCT_LIMITS.title - 1) + "\u{1F457} dress";
+    const parsed = LinkProductSchema.parse({ title, brand: null, colour: null });
+    expect(parsed.title).toBe("a".repeat(LINK_PRODUCT_LIMITS.title - 1));
+    expect(parsed.title?.isWellFormed()).toBe(true);
+  });
+
+  it("keeps a whole emoji that fits, and drops a stray half from the source", () => {
+    const parsed = LinkProductSchema.parse({ title: "Silk dress \u{1F457}", brand: "Brand\uD83D", colour: null });
+    expect(parsed.title).toBe("Silk dress \u{1F457}");
+    expect(parsed.brand).toBe("Brand");
   });
 });

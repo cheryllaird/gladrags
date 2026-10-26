@@ -75,6 +75,8 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 - 2026-10-25: Avoid hints come from outfits whose status is currently `rejected`, so undoing a reject removes its hint.
 - 2026-10-25: Gemini JSON schemas use only SDK-documented keywords (no `maxLength`), because unsupported ones couldn't be checked live and a 400 would break every call. Zod enforces the limits.
 - 2026-10-25: E2E runs in mock mode give each request a fresh usage counter, so parallel test files don't exhaust the shared mock user's daily caps. Cap behaviour is covered by unit tests and markers.
+- 2026-10-26: Contract fix (orchestrator): `scrapedText` drops lone surrogates, so a length limit can't cut an emoji in half (Postgres jsonb rejects lone surrogates). Found by QA on link-import.
+- 2026-10-26: Two outfit-ui e2e tests no longer depend on exact request counts, so they pass on the dev server (React strict mode runs effects twice) as well as on the build.
 - 2026-10-21: Cheryl chose in-browser background removal instead of Replicate. No background-removal key is needed; the spend cap covers Gemini only; `cutout_image_key` is nullable (the original is used if removal fails); add-by-link becomes two steps (the server stores the product image, then the client uploads the cut-out). SPEC.md, CLAUDE.md and the ingestion agent are updated, and the foundations agent has been told.
 
 ## Follow-ups from foundations review

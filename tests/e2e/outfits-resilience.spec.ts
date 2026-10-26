@@ -79,13 +79,14 @@ const moveClockOn = (page: Page, minutes: number) =>
 
 test.describe("anchor item that fails to load", () => {
   test("a server error offers Try again, and holds Get outfits until it works", async ({ page }) => {
-    let calls = 0;
-    await page.route(`**/api/items/${NAVY_BLAZER_ID}`, (route) => {
-      calls++;
-      return calls === 1
+    // Fail until the user taps Try again. (Not "the first call only": in dev,
+    // React strict mode runs the load effect twice.)
+    let failing = true;
+    await page.route(`**/api/items/${NAVY_BLAZER_ID}`, (route) =>
+      failing
         ? route.fulfill({ status: 500, json: { error: { code: "internal", message: "Database unavailable" } } })
-        : route.fallback();
-    });
+        : route.fallback(),
+    );
     await page.goto(`/outfits?anchor=${NAVY_BLAZER_ID}`);
     const anchorError = page.getByTestId("anchor-error");
     await expect(anchorError.getByTestId("api-error")).toContainText("Database unavailable");
@@ -94,6 +95,7 @@ test.describe("anchor item that fails to load", () => {
     await tapRadio(page, "Work");
     await expect(page.getByRole("button", { name: "Get outfits" })).toBeDisabled();
 
+    failing = false;
     await anchorError.getByRole("button", { name: "Try again" }).click();
     await expect(page.getByTestId("anchor-item")).toContainText("Navy single-breasted blazer");
     await expect(page.getByRole("button", { name: "Get outfits" })).toBeEnabled();
@@ -194,12 +196,15 @@ test.describe("expired image URLs", () => {
     });
     await page.goto("/outfits/saved");
     await expect(cards(page)).toHaveCount(1);
-    expect(loads).toBe(2); // saved + liked
+    // Compare with the first load rather than exact counts: in dev, React
+    // strict mode runs the load effect twice.
+    const firstLoad = loads;
+    expect(firstLoad).toBeGreaterThanOrEqual(2); // saved + liked
     await page.getByRole("radio", { name: "Saved" }).click();
-    expect(loads).toBe(2);
+    expect(loads).toBe(firstLoad);
     await moveClockOn(page, 55);
     await page.getByRole("radio", { name: "All" }).click();
-    await expect.poll(() => loads).toBe(4);
+    await expect.poll(() => loads).toBe(firstLoad + 2);
     await expect(cards(page)).toHaveCount(1);
   });
 });

@@ -147,6 +147,14 @@ export const LinkImportRequestSchema = z.object({ url: SourceUrlSchema });
 export type LinkImportRequest = z.infer<typeof LinkImportRequestSchema>;
 
 /**
+ * Removes half of a surrogate pair, e.g. an emoji cut in two by a length
+ * limit. Postgres jsonb rejects lone surrogates, so they must never be stored.
+ */
+function dropLoneSurrogates(text: string): string {
+  return text.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "");
+}
+
+/**
  * Text scraped from a web page, on its way into a model prompt: whitespace
  * (including newlines) collapsed to single spaces, cut to `max` characters,
  * and "" read as null. After that it must be a single line, like every
@@ -155,7 +163,7 @@ export type LinkImportRequest = z.infer<typeof LinkImportRequestSchema>;
 export function scrapedText(max: number) {
   return z.preprocess((value) => {
     if (typeof value !== "string") return emptyToNull(value);
-    const flat = value.replace(/\s+/g, " ").trim().slice(0, max).trim();
+    const flat = dropLoneSurrogates(value.replace(/\s+/g, " ").trim().slice(0, max)).trim();
     return flat === "" ? null : flat;
   }, singleLineText(max).nullable());
 }
