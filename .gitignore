@@ -1,7 +1,6 @@
-# Secrets
-.env
-.env.local
-.env.*.local
+# Secrets: every .env file except the placeholder template
+.env*
+!.env.example
 
 # Dependencies and build output
 node_modules/

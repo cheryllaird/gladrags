@@ -125,9 +125,19 @@ describe("secret key stays on the server", () => {
     }
   });
 
-  it("real env files are gitignored", () => {
+  it("real env files are gitignored, and only the placeholder template isn't", () => {
     const gitignore = readFileSync(join(ROOT, ".gitignore"), "utf8");
     const lines = gitignore.split("\n").map((l) => l.trim());
-    expect(lines).toEqual(expect.arrayContaining([".env", ".env.local", ".env.*.local"]));
+    // Every .env file, whatever its suffix, except .env.example.
+    expect(lines).toEqual(expect.arrayContaining([".env*", "!.env.example"]));
+    expect(lines.indexOf("!.env.example")).toBeGreaterThan(lines.indexOf(".env*"));
+    const ignored = (name: string) =>
+      lines.reduce((state, line) => {
+        if (line === ".env*" && name.startsWith(".env")) return true;
+        if (line === `!${name}`) return false;
+        return state;
+      }, false);
+    for (const name of [".env", ".env.local", ".env.production", ".env.development.local", ".env.vercel"]) expect(ignored(name), name).toBe(true);
+    expect(ignored(".env.example")).toBe(false);
   });
 });
