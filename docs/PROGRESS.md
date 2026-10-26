@@ -55,9 +55,9 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 | Journey tests 1–5 + add-by-link + missing-category | qa | ☑ merged | `test/journeys` (tests/e2e/journeys.spec.ts): all pass on the build ×3 and dev, no flakes. Missing-category and account deletion intercept one response each (shared mock store). 20 items in ~0.24 s/item of app time; estimate 8–12 min for 20 with real cut-out and tagging. |
 | Security check (RLS, signed URLs, secrets, uploads, link fetching, deletion) | security | ☑ | No code blocker for a Cheryl-only preview. Blocker P1: run migrations on the real project and a live two-user RLS check. Before testers: T1 atomic caps, T2 Gemini paid tier, T3 privacy note, T4 scheduled cleanup, T5 kept-draft cross-user leak. Fixes in progress (below). |
 | Vercel preview deploy | orchestrator | ☐ |
-| Tester privacy note (owner: orchestrator) | orchestrator | ☑ draft | `docs/PRIVACY.md`; shown at `/privacy` once `fix/ui-hardening` merges. Needs Cheryl's contact address and the Supabase region. |
+| Tester privacy note (owner: orchestrator) | orchestrator | ☑ draft | `docs/PRIVACY.md`, shown at `/privacy` (`src/app/privacy/content.ts`; a test keeps them in step). Needs Cheryl's contact address and the Supabase region. |
 | Pre-tester hardening, backend: atomic caps, unique image keys, link fetch attempts, scheduled cleanup, security headers, httpOnly cookies, CSRF, sign-in rate limit | foundations (`fix/hardening`) | ◐ |
-| Pre-tester hardening, UI: kept-draft user check, tap to start shared-link imports, /privacy page | wardrobe-ui (`fix/ui-hardening`) | ◐ approved; QA running |
+| Pre-tester hardening, UI: kept-draft user check, tap to start shared-link imports, /privacy page | wardrobe-ui (`fix/ui-hardening`) | ☑ merged | Approved twice, QA passed (93 adversarial tests). Stored session data is cleared when a different user signs in on the tab. At merge: the expired-session redirect drops the query string, and cross-user e2e checks wait for hydration. |
 | Live checks once Supabase is reachable: migrations, buckets private, two-user RLS, real sign-in | orchestrator | ⛔ network |
 | Record real Gemini fixtures; time real tagging; check guidance like "no heels" is respected (no code backstop: the model decides) | orchestrator | ⛔ Gemini quota |
 
@@ -111,7 +111,7 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 | `safe-fetch.ts`: fix the `tls.ca` comment (it replaces the root bundle); optionally refuse `tls`/`dial` in production | link-import | Minor |
 | ~~Swap wardrobe-ui's FakeBackgroundRemover for the real remover + preload~~ | orchestrator | Done at wardrobe-ui merge (e2e photo tests opt into the fake via `tests/e2e/helpers.ts`) |
 | One resize/re-encode path: wardrobe-ui's `src/lib/client/photo.ts` vs ingestion's `preparePhotoUpload` | orchestrator | Milestone 4 |
-| Restoring a kept draft after sign-in: check the draft's image keys belong to the signed-in user | wardrobe-ui | Before tester build |
+| ~~Restoring a kept draft after sign-in: check the draft's image keys belong to the signed-in user~~ | wardrobe-ui | Done in `fix/ui-hardening` |
 | Draft review image doesn't refresh if its signed URL expires mid-review | wardrobe-ui | Minor |
 | Mock markers for ai_failed, missing_category, nothing_fits | orchestrator | Milestone 4 (nice to have) |
 | Record real Gemini fixtures for tagging and ranking; confirm gemini-3.8-flash prices | orchestrator | Once Gemini quota allows (paid tier) |

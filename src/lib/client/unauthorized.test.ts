@@ -43,7 +43,17 @@ describe("an expired session", () => {
     respond401();
     await expect(listItems()).rejects.toMatchObject({ code: "unauthorized" });
     await tick();
-    expect(navigate).toHaveBeenCalledWith("/sign-in?next=%2Fwardrobe%3Fcategory%3Dshoes&reason=expired");
+    expect(navigate).toHaveBeenCalledWith("/sign-in?next=%2Fwardrobe&reason=expired");
+  });
+
+  it("leaves the query out of next, so a search never reaches whoever signs in next on this tab", async () => {
+    window.history.replaceState(null, "", "/wardrobe?q=private%20words&category=shoes");
+    respond401();
+    await expect(listItems()).rejects.toMatchObject({ code: "unauthorized" });
+    await tick();
+    const url = navigate.mock.calls[0]?.[0] as string;
+    expect(url).toBe("/sign-in?next=%2Fwardrobe&reason=expired");
+    expect(url).not.toContain("private");
   });
 
   it("lets the screen's own catch run before leaving (the add flow keeps its draft there)", async () => {

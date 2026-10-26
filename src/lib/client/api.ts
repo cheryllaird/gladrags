@@ -82,7 +82,9 @@ export const unauthorizedRedirect = {
 
 function goToSignIn(): void {
   if (typeof window === "undefined") return;
-  const url = signInPath(`${window.location.pathname}${window.location.search}`);
+  // Path only: the query (a wardrobe search, say) could reach whoever signs
+  // in next on this tab. The same user just comes back unfiltered.
+  const url = signInPath(window.location.pathname);
   window.setTimeout(() => unauthorizedRedirect.navigate(url), 0);
 }
 

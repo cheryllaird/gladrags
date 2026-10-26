@@ -126,7 +126,9 @@ test.describe("expiring signed image URLs", () => {
 });
 
 test.describe("an expired session", () => {
-  test("goes to sign-in and back to the same filtered wardrobe", async ({ page }) => {
+  // The query is left out on purpose: on a shared tab it would carry this
+  // user's search to whoever signs in next (src/lib/client/api.ts, goToSignIn).
+  test("goes to sign-in and back to the same page, without its search or filters", async ({ page }) => {
     let refused = false;
     await page.route(
       (url) => url.pathname === "/api/items",
@@ -137,9 +139,9 @@ test.describe("an expired session", () => {
       },
     );
     await page.goto("/wardrobe?category=shoes");
-    await expect(page).toHaveURL(/\/sign-in\?next=%2Fwardrobe%3Fcategory%3Dshoes&reason=expired/);
+    await expect(page).toHaveURL(/\/sign-in\?next=%2Fwardrobe&reason=expired$/);
     await signInAgain(page);
-    await expect(page).toHaveURL(/\/wardrobe\?category=shoes$/);
+    await expect(page).toHaveURL(/\/wardrobe$/);
     await expect(page.getByRole("link", { name: "White leather trainers" })).toBeVisible();
   });
 
@@ -222,6 +224,9 @@ test.describe("an expired session", () => {
   }
 
   async function expectNothingRestored(page: Page) {
+    // Wait for hydration first: SignedInUser records the user in the same
+    // pass that runs the restore check, so the checks below see the result.
+    await expect.poll(() => page.evaluate(() => sessionStorage.getItem("gladrags:user"))).not.toBeNull();
     await expect(page.getByRole("button", { name: "Choose from library" })).toBeVisible();
     await expect(page.getByText("We kept the item you were adding.")).toHaveCount(0);
     await expect(page.getByRole("heading", { name: "Check the tags" })).toHaveCount(0);

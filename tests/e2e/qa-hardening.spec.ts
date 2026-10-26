@@ -376,6 +376,8 @@ test.describe("kept add-item work is only for whoever kept it", () => {
     await handKeptEntryTo(page, OTHER_USER);
     await signInAgain(page);
     await expect(page).toHaveURL(/\/add\/link/);
+    // Hydrated (and the restore check run) before checking nothing is shown.
+    await expect.poll(() => page.evaluate(() => sessionStorage.getItem("gladrags:user"))).not.toBeNull();
     await expect(page.getByLabel("Product link")).toBeVisible();
     await expect(
       page.getByText("We kept the item you were adding."),
@@ -403,6 +405,8 @@ test.describe("kept add-item work is only for whoever kept it", () => {
     await page.unroute("**/api/items/photo");
     await signInAgain(page);
     await expect(page).toHaveURL(/\/add$/);
+    // Hydrated (and the restore check run) before checking nothing is shown.
+    await expect.poll(() => page.evaluate(() => sessionStorage.getItem("gladrags:user"))).not.toBeNull();
     await expect(
       page.getByRole("button", { name: "Choose from library" }),
     ).toBeVisible();
