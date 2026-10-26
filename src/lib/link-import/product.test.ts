@@ -105,6 +105,16 @@ describe("Open Graph rules", () => {
     expect(result.imageUrls).toEqual(["https://shop.example/s.jpg", "https://shop.example/o.jpg", "https://shop.example/t.jpg"]);
   });
 
+  it("<base href> resolves relative images; a non-http base is ignored; only the first base counts", () => {
+    const og = `<meta property="og:type" content="product"><meta property="og:image" content="img/a.jpg"><meta property="og:image" content="javascript:alert(1)">`;
+    expect(page(`<base href="/assets/">${og}`).imageUrls).toEqual(["https://shop.example/assets/img/a.jpg"]);
+    expect(page(`<base href="javascript:alert(1)//">${og}`).imageUrls).toEqual(["https://shop.example/img/a.jpg"]);
+    expect(page(`<base href="file:///etc/">${og}`).imageUrls).toEqual(["https://shop.example/img/a.jpg"]);
+    expect(page(`<base target="_blank"><base href="https://cdn.example/x/"><base href="https://other.example/">${og}`).imageUrls).toEqual([
+      "https://cdn.example/x/img/a.jpg",
+    ]);
+  });
+
   it("keeps at most five image candidates", () => {
     const tags = Array.from({ length: 12 }, (_, i) => `<meta property="og:image" content="/${i}.jpg">`).join("");
     expect(page(`<meta property="og:type" content="product">${tags}`).imageUrls).toHaveLength(5);

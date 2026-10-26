@@ -247,9 +247,8 @@ describe("image URLs", () => {
     expect(distinct).toHaveLength(MAX_IMAGE_CANDIDATES);
   });
 
-  // QA finding (low): <base href> is ignored, so relative image URLs on
-  // such pages resolve against the page URL instead. Flip to it() once fixed.
-  it.fails("<base href> is honoured for relative image URLs, as a browser would", () => {
+  // QA finding (low), fixed: <base href> used to be ignored.
+  it("<base href> is honoured for relative image URLs, as a browser would", () => {
     const urls = imagesOf(["img/a.jpg"], `<base href="https://static.shop.example/assets/">`);
     expect(urls).toEqual(["https://static.shop.example/assets/img/a.jpg"]);
   });
@@ -275,9 +274,8 @@ describe("parser limits", () => {
     expect(Date.now() - started).toBeLessThan(2_000);
   });
 
-  // QA finding (low): the script type must be exactly application/ld+json.
-  // Flip to it() once fixed.
-  it.fails("type with parameters (application/ld+json; charset=utf-8) is still JSON-LD", () => {
+  // QA finding (low), fixed: the script type had to be exactly application/ld+json.
+  it("type with parameters (application/ld+json; charset=utf-8) is still JSON-LD", () => {
     const page = parseProductPage(`<script type="application/ld+json; charset=utf-8">${JSON.stringify(PRODUCT)}</script>`, PAGE);
     expect(page.product.title).toBe("Wrap Dress");
   });

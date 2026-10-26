@@ -36,6 +36,11 @@ export interface LinkImportRepository {
   claim(userId: string, originalImageKey: string): Promise<OpenLinkImport | null>;
   /** Delete rows older than the cutoff (used or not). Returns how many went. */
   deleteCreatedBefore(cutoff: Date): Promise<number>;
+  /**
+   * When this user's imports since `since` were created, newest first, at
+   * most `limit` of them (for step 1's rate limit).
+   */
+  createdSince(userId: string, since: Date, limit: number): Promise<Date[]>;
 }
 
 const OpenRowSchema = z.object({ source_url: SourceUrlSchema, product: LinkProductSchema });
@@ -102,6 +107,22 @@ export class SupabaseLinkImportRepository implements LinkImportRepository {
     if (error) throw new Error(`Couldn't delete old link imports: ${error.message}`);
     return (data ?? []).length;
   }
+
+  async createdSince(userId: string, since: Date, limit: number): Promise<Date[]> {
+    // Served by link_imports_user_created_idx (user_id, created_at desc).
+    const { data, error } = await this.admin
+      .from("link_imports")
+      .select("created_at")
+      .eq("user_id", userId)
+      .gt("created_at", since.toISOString())
+      .order("created_at", { ascending: false })
+      .limit(limit);
+    if (error) throw new Error(`Couldn't count link imports: ${error.message}`);
+    return z
+      .array(z.object({ created_at: z.string() }))
+      .parse(data ?? [])
+      .map((row) => new Date(row.created_at));
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -153,6 +174,14 @@ export class InMemoryLinkImportRepository implements LinkImportRepository {
       }
     }
     return deleted;
+  }
+
+  async createdSince(userId: string, since: Date, limit: number): Promise<Date[]> {
+    return [...this.rows.values()]
+      .filter((row) => row.userId === userId && row.createdAt > since)
+      .map((row) => row.createdAt)
+      .sort((a, b) => b.getTime() - a.getTime())
+      .slice(0, limit);
   }
 
   /** Keys an unfinished import can still use (for the image cleanup tests). */

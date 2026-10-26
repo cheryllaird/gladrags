@@ -104,11 +104,9 @@ describe("host names that mean this machine", () => {
     expect(problem(url)).toBe("hostname");
   });
 
-  // QA finding (low, defence in depth): bareHostname strips only ONE
-  // trailing dot, so "localhost.." becomes "localhost." and slips past the
-  // name blocklist. The resolved-address check in safe-fetch still refuses a
-  // private answer. Flip to it() once fixed.
-  it.fails.each(["http://localhost../", "http://printer.local../", "http://metadata.google.internal../", "http://foo.localhost.../"])(
+  // QA finding (low, defence in depth), fixed: bareHostname used to strip
+  // only ONE trailing dot, so "localhost.." slipped past the name blocklist.
+  it.each(["http://localhost../", "http://printer.local../", "http://metadata.google.internal../", "http://foo.localhost.../"])(
     "%s (several trailing dots) is refused",
     (url) => {
       expect(problem(url)).toBe("hostname");

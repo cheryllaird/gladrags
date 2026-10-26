@@ -25,11 +25,11 @@ export class UrlPolicyError extends Error {
   }
 }
 
-/** The hostname without IPv6 brackets or a trailing dot, lower-cased. */
+/** The hostname without IPv6 brackets or trailing dots ("localhost.." too), lower-cased. */
 export function bareHostname(url: URL): string {
   const host = url.hostname.toLowerCase();
   const unbracketed = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
-  return unbracketed.endsWith(".") ? unbracketed.slice(0, -1) : unbracketed;
+  return unbracketed.replace(/\.+$/, "");
 }
 
 /**

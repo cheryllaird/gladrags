@@ -18,13 +18,16 @@ export interface PageParts {
   meta: MetaTag[];
   /** Raw text of each <script type="application/ld+json"> block. */
   jsonLd: string[];
+  /** The first <base href>, unresolved and unchecked. */
+  baseHref?: string;
 }
 
 const MAX_META_TAGS = 500;
 const MAX_JSON_LD_BLOCKS = 20;
 const MAX_ATTRIBUTE_LENGTH = 4096;
 
-const NAMED_ENTITIES: Readonly<Record<string, string>> = {
+// A Map, so names like "constructor" or "__proto__" can't hit Object's prototype.
+const NAMED_ENTITIES: ReadonlyMap<string, string> = new Map(Object.entries({
   amp: "&",
   lt: "<",
   gt: ">",
@@ -50,7 +53,7 @@ const NAMED_ENTITIES: Readonly<Record<string, string>> = {
   copy: "©",
   pound: "£",
   euro: "€",
-};
+}));
 
 /** Decode HTML character references. Unknown names are left as they are. */
 export function decodeEntities(text: string): string {
@@ -61,7 +64,7 @@ export function decodeEntities(text: string): string {
       if (!Number.isFinite(code) || code <= 0 || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)) return "�";
       return String.fromCodePoint(code);
     }
-    return NAMED_ENTITIES[ref.toLowerCase()] ?? whole;
+    return NAMED_ENTITIES.get(ref.toLowerCase()) ?? whole;
   });
 }
 
@@ -124,6 +127,12 @@ export function extractPageParts(html: string): PageParts {
     if (end === -1) break;
     const attributeText = html.slice(open + nameMatch[0].length, end);
 
+    // Like a browser: only the first <base> with an href counts.
+    if (name === "base" && parts.baseHref === undefined) {
+      const href = parseAttributes(attributeText).get("href")?.trim();
+      if (href) parts.baseHref = href;
+    }
+
     if (name === "meta" && parts.meta.length < MAX_META_TAGS) {
       const attributes = parseAttributes(attributeText);
       const key = (attributes.get("property") ?? attributes.get("name") ?? attributes.get("itemprop"))?.trim().toLowerCase();
@@ -135,7 +144,8 @@ export function extractPageParts(html: string): PageParts {
       const closeTag = lower.indexOf(`</${name}`, end + 1);
       const contentEnd = closeTag === -1 ? html.length : closeTag;
       if (name === "script" && parts.jsonLd.length < MAX_JSON_LD_BLOCKS) {
-        const type = parseAttributes(attributeText).get("type")?.trim().toLowerCase();
+        // The media type, without parameters such as "; charset=utf-8".
+        const type = parseAttributes(attributeText).get("type")?.split(";")[0]?.trim().toLowerCase();
         if (type === "application/ld+json") parts.jsonLd.push(html.slice(end + 1, contentEnd));
       }
       const afterClose = closeTag === -1 ? -1 : html.indexOf(">", closeTag);

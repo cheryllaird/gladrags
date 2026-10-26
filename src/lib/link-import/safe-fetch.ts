@@ -7,9 +7,17 @@
  *    credentials, a public-looking host name.
  * 2. We resolve the host name ourselves, and EVERY address it resolves to
  *    must be public (address.ts). One private address refuses the lot.
- * 3. The connection is pinned to the address we checked (the `lookup`
- *    option), so a second DNS answer (DNS rebinding) can't swap it for a
- *    private one. TLS still verifies the certificate against the host name.
+ * 3. The connection is pinned to the addresses we checked (the `lookup`
+ *    option), so a second DNS answer (DNS rebinding) can't swap them for a
+ *    private one. All of them are handed over, so Node can fall back from
+ *    IPv6 to IPv4 ("happy eyeballs") where there's no IPv6 route. TLS still
+ *    verifies the certificate against the host name.
+ * 4. A redirect from https to http is refused: no shop needs one, and it
+ *    would let a network attacker rewrite the rest of the chain.
+ *
+ * DNS goes straight to the configured DNS servers (dns.Resolver), not
+ * getaddrinfo: /etc/hosts and search domains don't apply, and a lookup is
+ * cancelled when the deadline passes instead of holding a libuv thread.
  *
  * Also: GET only, at most MAX_REDIRECTS redirects, an idle timeout that
  * covers connecting and stalled responses, a total deadline, a byte cap
@@ -20,7 +28,7 @@
  * can't be pinned to an address.
  */
 import "server-only";
-import { lookup as dnsLookup } from "node:dns/promises";
+import { Resolver } from "node:dns/promises";
 import http, { type IncomingMessage } from "node:http";
 import https from "node:https";
 import { isIP, type LookupFunction } from "node:net";
@@ -41,6 +49,7 @@ export type FetchFailure =
   | "too_many_redirects"
   | "http_status" // not 2xx (403 from a bot wall, 404...)
   | "wrong_type" // e.g. a PDF where a page was expected
+  | "insecure_redirect" // https -> http
   | "network";
 
 export class SafeFetchError extends Error {
@@ -65,16 +74,49 @@ export interface ResolvedAddress {
  * local server so the real address checks still run on the vetted address.
  */
 export interface NetworkDeps {
-  resolve(hostname: string): Promise<ResolvedAddress[]>;
+  /** Every address for a host name. Should stop when `signal` aborts. */
+  resolve(hostname: string, signal?: AbortSignal): Promise<ResolvedAddress[]>;
+  /** Test only. Called once per vetted address; the first answer's port is used. */
   dial?(address: ResolvedAddress, port: number): { address: string; family: 4 | 6; port: number };
+  /** Test only: an extra trusted CA for https (a self-signed test server). */
+  tls?: { ca: string | Buffer };
 }
 
-export const systemNetwork: NetworkDeps = {
-  async resolve(hostname) {
-    const results = await dnsLookup(hostname, { all: true, verbatim: true });
-    return results.map((r) => ({ address: r.address, family: r.family === 6 ? 6 : 4 }));
-  },
-};
+/** Per-attempt DNS timeout; the fetch's own deadline cancels sooner if needed. */
+const DNS_TIMEOUT_MS = 2_000;
+
+/**
+ * The real DNS: AAAA and A records from the system's DNS servers. One
+ * family missing is fine; no addresses at all is an error. `servers` is
+ * for tests.
+ */
+export function createSystemNetwork({ servers }: { servers?: string[] } = {}): NetworkDeps {
+  return {
+    async resolve(hostname, signal) {
+      const resolver = new Resolver({ timeout: DNS_TIMEOUT_MS, tries: 2 });
+      if (servers) resolver.setServers(servers);
+      const cancel = () => resolver.cancel();
+      if (signal?.aborted) cancel();
+      signal?.addEventListener("abort", cancel, { once: true });
+      try {
+        const [v6, v4] = await Promise.allSettled([resolver.resolve6(hostname), resolver.resolve4(hostname)]);
+        const addresses: ResolvedAddress[] = [
+          ...(v6.status === "fulfilled" ? v6.value.map((address) => ({ address, family: 6 as const })) : []),
+          ...(v4.status === "fulfilled" ? v4.value.map((address) => ({ address, family: 4 as const })) : []),
+        ];
+        if (addresses.length === 0) {
+          const reason: unknown = v4.status === "rejected" ? v4.reason : null;
+          throw reason instanceof Error ? reason : new Error(`No addresses for ${hostname}`);
+        }
+        return addresses;
+      } finally {
+        signal?.removeEventListener("abort", cancel);
+      }
+    },
+  };
+}
+
+export const systemNetwork: NetworkDeps = createSystemNetwork();
 
 export interface SafeFetchOptions {
   /** Abort once the (decompressed) body passes this many bytes. */
@@ -97,8 +139,8 @@ export interface SafeFetchResult {
   body: Uint8Array;
 }
 
-/** The checked URL and the vetted address to pin the connection to. */
-async function vet(url: URL, network: NetworkDeps): Promise<ResolvedAddress> {
+/** Every address for the URL's host, all checked: the only ones the connection may use. */
+async function vet(url: URL, network: NetworkDeps, signal: AbortSignal): Promise<ResolvedAddress[]> {
   const host = bareHostname(url);
   const literal = isIP(host);
   let addresses: ResolvedAddress[];
@@ -106,8 +148,9 @@ async function vet(url: URL, network: NetworkDeps): Promise<ResolvedAddress> {
     addresses = [{ address: host, family: literal === 6 ? 6 : 4 }];
   } else {
     try {
-      addresses = await network.resolve(host);
+      addresses = await network.resolve(host, signal);
     } catch {
+      if (signal.aborted) throw new SafeFetchError("timeout", "The site took too long to answer");
       throw new SafeFetchError("dns_failed", "Couldn't find that site");
     }
   }
@@ -116,14 +159,14 @@ async function vet(url: URL, network: NetworkDeps): Promise<ResolvedAddress> {
     const reason = blockedAddressReason(address);
     if (reason) throw new SafeFetchError("private_address", `That site isn't on the public internet (${reason})`);
   }
-  return addresses[0]!;
+  return addresses;
 }
 
-/** A lookup that always answers with the vetted address, whatever DNS says now. */
-function pinnedLookup(target: { address: string; family: 4 | 6 }): LookupFunction {
+/** A lookup that always answers with the vetted addresses, whatever DNS says now. */
+function pinnedLookup(targets: readonly { address: string; family: 4 | 6 }[]): LookupFunction {
   return ((_hostname: string, options: { all?: boolean }, callback: (...args: unknown[]) => void) => {
-    if (options?.all) callback(null, [{ address: target.address, family: target.family }]);
-    else callback(null, target.address, target.family);
+    if (options?.all) callback(null, targets.map(({ address, family }) => ({ address, family })));
+    else callback(null, targets[0]!.address, targets[0]!.family);
   }) as LookupFunction;
 }
 
@@ -137,9 +180,10 @@ const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 type Hop = { kind: "redirect"; location: string } | { kind: "body"; result: SafeFetchResult };
 
 /** One request to one vetted address. Resolves with a redirect target or the capped body. */
-function requestOnce(url: URL, pinned: ResolvedAddress, network: NetworkDeps, options: SafeFetchOptions, signal: AbortSignal): Promise<Hop> {
+function requestOnce(url: URL, pinned: readonly ResolvedAddress[], network: NetworkDeps, options: SafeFetchOptions, signal: AbortSignal): Promise<Hop> {
   const defaultPort = url.protocol === "https:" ? 443 : 80;
-  const target = network.dial ? network.dial(pinned, defaultPort) : { ...pinned, port: defaultPort };
+  const targets = pinned.map((address) => (network.dial ? network.dial(address, defaultPort) : { ...address, port: defaultPort }));
+  const port = targets[0]!.port;
   const transport = url.protocol === "https:" ? https : http;
 
   return new Promise<Hop>((resolve, reject) => {
@@ -155,12 +199,15 @@ function requestOnce(url: URL, pinned: ResolvedAddress, network: NetworkDeps, op
       {
         protocol: url.protocol,
         hostname: bareHostname(url),
-        port: target.port,
+        port,
         path: `${url.pathname}${url.search}`,
         method: "GET",
         // A fresh connection every time: no pooled socket to another host.
         agent: false,
-        lookup: pinnedLookup(target),
+        // Node's default autoSelectFamily tries these in turn (IPv6, then
+        // IPv4) if one can't connect; safe-fetch.test.ts checks it.
+        lookup: pinnedLookup(targets),
+        ...(network.tls ? { ca: network.tls.ca } : {}),
         headers: {
           "user-agent": USER_AGENT,
           accept: options.accept,
@@ -286,13 +333,17 @@ export async function safeFetch(input: string | URL, options: SafeFetchOptions, 
   try {
     let url = check(typeof input === "string" ? input : input.href);
     for (let redirects = 0; ; redirects++) {
-      // DNS can hang; the deadline covers it too.
-      const pinned = await Promise.race([vet(url, network), timedOut]);
+      // The deadline cancels DNS too (the resolver gets the signal).
+      const pinned = await Promise.race([vet(url, network, controller.signal), timedOut]);
       const hop = await Promise.race([requestOnce(url, pinned, network, options, controller.signal), timedOut]);
       if (hop.kind === "body") return hop.result;
       if (redirects >= maxRedirects) throw new SafeFetchError("too_many_redirects", "The link redirects too many times");
       // Every redirect target goes through the same checks, DNS included.
-      url = check(hop.location, url);
+      const next = check(hop.location, url);
+      if (url.protocol === "https:" && next.protocol === "http:") {
+        throw new SafeFetchError("insecure_redirect", "The link redirects from a secure page to an insecure one");
+      }
+      url = next;
     }
   } finally {
     clearTimeout(deadline);

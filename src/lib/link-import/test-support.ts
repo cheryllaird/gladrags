@@ -131,6 +131,7 @@ export function makeLinkDeps(network: NetworkDeps, { taggerOutputs = [] as unkno
     usageStore,
     network,
     clock,
+    now: clock,
     setNow: (iso: string) => (now = new Date(iso)),
     advance: (ms: number) => (now = new Date(now.getTime() + ms)),
   };

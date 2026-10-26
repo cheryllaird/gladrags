@@ -188,6 +188,22 @@ function imageUrl(raw: string, pageUrl: URL): string | null {
   return url.href.length > MAX_URL_LENGTH ? null : url.href;
 }
 
+/**
+ * What relative URLs resolve against: the page's <base href> (itself
+ * resolved against the page) when it's an http(s) URL, otherwise the page.
+ * Images still have to be absolute http(s) after resolving, and every one
+ * is fetched through the same SSRF checks as the page.
+ */
+function documentBase(baseHref: string | undefined, pageUrl: URL): URL {
+  if (!baseHref || baseHref.length > MAX_URL_LENGTH) return pageUrl;
+  try {
+    const base = new URL(cleanText(baseHref).trim(), pageUrl);
+    return base.protocol === "http:" || base.protocol === "https:" ? base : pageUrl;
+  } catch {
+    return pageUrl;
+  }
+}
+
 /** Contract-clean text, or null if it doesn't pass. Each field stands alone. */
 function cleanProduct(raw: Pick<RawProduct, "title" | "brand" | "colour">): LinkProduct {
   const field = (key: "title" | "brand" | "colour") => {
@@ -223,10 +239,11 @@ export function parseProductPage(html: string, pageUrl: URL): ParsedProductPage 
     colour: main?.colour ?? (ogUsable ? og.colour : null),
   });
 
+  const base = documentBase(parts.baseHref, pageUrl);
   const rawImages = [...(main?.images ?? []), ...(ogUsable ? og.images : [])];
   const imageUrls: string[] = [];
   for (const raw of rawImages) {
-    const url = imageUrl(raw, pageUrl);
+    const url = imageUrl(raw, base);
     if (url && !imageUrls.includes(url)) imageUrls.push(url);
     if (imageUrls.length >= MAX_IMAGE_CANDIDATES) break;
   }
