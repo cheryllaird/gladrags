@@ -110,6 +110,19 @@ test("add by link", async ({ page }) => {
   await shot(page, "17-add-link-screenshot-fallback");
 });
 
+test("add by link, shared to the app", async ({ page }) => {
+  await page.goto(`/add/link?url=${encodeURIComponent("https://shop.example.com/products/linen-shirt")}`);
+  await page.getByRole("button", { name: "Import this link" }).waitFor();
+  await shot(page, "26-add-link-shared");
+});
+
+test("privacy note", async ({ page }) => {
+  await page.goto("/privacy");
+  await page.getByRole("heading", { name: "GladRags: how your photos and data are handled" }).waitFor();
+  await shot(page, "24-privacy");
+  await shot(page, "25-privacy-full", true);
+});
+
 test("account sheet", async ({ page }) => {
   await page.goto("/wardrobe");
   await page.getByRole("button", { name: "Account" }).click();

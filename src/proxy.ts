@@ -10,7 +10,7 @@ import { updateSession } from "@/lib/supabase/proxy";
  */
 
 /** Paths that don't need a signed-in user. */
-const PUBLIC_PATHS = ["/sign-in", "/auth/", "/api/auth/", "/offline.html"];
+const PUBLIC_PATHS = ["/sign-in", "/auth/", "/api/auth/", "/offline.html", "/privacy"];
 
 function isPublic(pathname: string): boolean {
   return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p.endsWith("/") ? p : `${p}/`));

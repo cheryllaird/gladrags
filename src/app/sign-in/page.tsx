@@ -1,5 +1,6 @@
 import { ShirtIcon } from "lucide-react";
 import type { Metadata } from "next";
+import Link from "next/link";
 import { isMockMode } from "@/lib/env";
 import { safeReturnPath } from "@/lib/auth/redirect";
 import { SignInForm } from "./sign-in-form";
@@ -44,7 +45,15 @@ export default async function SignInPage({
           Mock mode: no email is sent and any 6-digit code works.
         </p>
       )}
-      <p className="text-muted-foreground mt-6 text-center text-xs">GladRags is invite-only while we test it.</p>
+      <div className="mt-6 flex flex-col items-center gap-1 text-center">
+        <p className="text-muted-foreground text-xs">GladRags is invite-only while we test it.</p>
+        <Link
+          href="/privacy"
+          className="inline-flex min-h-11 items-center px-2 text-sm font-medium underline underline-offset-4"
+        >
+          How your photos are handled
+        </Link>
+      </div>
     </main>
   );
 }
