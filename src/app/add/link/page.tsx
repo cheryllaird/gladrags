@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import { SignedInUser } from "@/components/app-shell/signed-in-user";
+import { getSessionUser } from "@/lib/auth/session";
 import { linkFromShare } from "@/lib/client/add-item";
 import { AddLinkFlow } from "./add-link-flow";
 
@@ -7,7 +9,9 @@ export const metadata: Metadata = { title: "Add by link" };
 /**
  * Add by link. Also the PWA share target (src/app/manifest.ts): Android
  * opens /add/link?url=… or ?text=… when a product page is shared to the
- * installed app, and the import starts straight away.
+ * installed app. The link is filled in, but the import only starts when the
+ * user taps "Import this link": a plain GET must never make the server
+ * fetch a URL, or any site could link here and do it in the user's session.
  */
 export default async function AddLinkPage({
   searchParams,
@@ -16,6 +20,14 @@ export default async function AddLinkPage({
 }) {
   const params = await searchParams;
   const first = (value: string | string[] | undefined) => (Array.isArray(value) ? value[0] : value);
-  const initialUrl = linkFromShare({ url: first(params.url), text: first(params.text) });
-  return <AddLinkFlow initialUrl={initialUrl} />;
+  const sharedUrl = linkFromShare({ url: first(params.url), text: first(params.text) });
+  // Whose add this is, for a draft kept when a session expires (pending-add.ts).
+  const user = await getSessionUser().catch(() => null);
+  const userId = user?.id ?? null;
+  return (
+    <>
+      <SignedInUser userId={userId} />
+      <AddLinkFlow sharedUrl={sharedUrl} userId={userId} />
+    </>
+  );
 }

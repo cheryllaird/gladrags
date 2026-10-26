@@ -29,6 +29,7 @@ describe("bottom navigation", () => {
   it("is hidden on the signed-out screens only", () => {
     expect(showsAppChrome("/sign-in")).toBe(false);
     expect(showsAppChrome("/auth/callback")).toBe(false);
+    expect(showsAppChrome("/privacy")).toBe(false);
     expect(showsAppChrome("/wardrobe")).toBe(true);
     expect(showsAppChrome("/sign-in-help")).toBe(true);
   });

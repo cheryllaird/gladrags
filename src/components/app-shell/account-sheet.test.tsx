@@ -16,6 +16,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  window.sessionStorage.clear();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -25,6 +26,17 @@ async function openSheet() {
   render(<AccountSheet email="cheryl@example.com" />);
   await user.click(screen.getByRole("button", { name: "Account" }));
   return { user, sheet: await screen.findByRole("dialog", { name: "Account" }) };
+}
+
+/** What a tab holds mid-use: a kept add-item draft and the wardrobe filters, plus a key that isn't ours. */
+function keepSomething() {
+  window.sessionStorage.setItem("gladrags:pending-add", JSON.stringify({ kind: "photo_lost", userId: "u1" }));
+  window.sessionStorage.setItem("gladrags:wardrobe-search", "?category=top");
+  window.sessionStorage.setItem("not-ours", "stays");
+}
+
+function gladragsKeys(): string[] {
+  return Object.keys(window.sessionStorage).filter((key) => key.startsWith("gladrags:"));
 }
 
 async function confirmDelete(user: ReturnType<typeof userEvent.setup>, sheet: HTMLElement) {
@@ -77,6 +89,40 @@ describe("AccountSheet", () => {
     const dialog = await confirmDelete(user, sheet);
     expect(await within(dialog).findByText(/sent back something unexpected/)).toBeInTheDocument();
     expect(toSignIn).not.toHaveBeenCalled();
+  });
+
+  it("links to the privacy note", async () => {
+    const { sheet } = await openSheet();
+    expect(within(sheet).getByRole("link", { name: "How your photos are handled" })).toHaveAttribute("href", "/privacy");
+  });
+
+  it("clears everything GladRags kept in this tab when signing out, before the form posts", async () => {
+    keepSomething();
+    const { user, sheet } = await openSheet();
+    const form = within(sheet).getByRole("button", { name: "Sign out" }).closest("form")!;
+    // jsdom can't navigate: stop the real post once React's handler has seen the submit.
+    form.addEventListener("submit", (event) => event.preventDefault());
+    await user.click(within(sheet).getByRole("button", { name: "Sign out" }));
+    expect(gladragsKeys()).toEqual([]);
+    expect(window.sessionStorage.getItem("not-ours")).toBe("stays");
+  });
+
+  it("clears everything GladRags kept in this tab once the account is deleted", async () => {
+    keepSomething();
+    vi.stubGlobal("fetch", vi.fn(async () => json(200, { deleted: true })));
+    const { user, sheet } = await openSheet();
+    await confirmDelete(user, sheet);
+    await waitFor(() => expect(toSignIn).toHaveBeenCalled());
+    expect(gladragsKeys()).toEqual([]);
+  });
+
+  it("keeps the tab's data if deleting the account fails", async () => {
+    keepSomething();
+    vi.stubGlobal("fetch", vi.fn(async () => json(500, { error: { code: "internal", message: "Something went wrong on our side" } })));
+    const { user, sheet } = await openSheet();
+    const dialog = await confirmDelete(user, sheet);
+    await within(dialog).findByText("Something went wrong on our side");
+    expect(gladragsKeys()).toHaveLength(2);
   });
 
   it("says why and stays when deleting fails", async () => {

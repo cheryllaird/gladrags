@@ -9,10 +9,14 @@ import { updateSession } from "@/lib/supabase/proxy";
  * via requireUser().
  */
 
-/** Paths that don't need a signed-in user. */
+/** Paths that don't need a signed-in user, along with everything under them. */
 const PUBLIC_PATHS = ["/sign-in", "/auth/", "/api/auth/", "/offline.html"];
 
+/** Single pages that don't need a signed-in user: only the exact path, nothing under it. */
+const PUBLIC_EXACT_PATHS = ["/privacy"];
+
 function isPublic(pathname: string): boolean {
+  if (PUBLIC_EXACT_PATHS.includes(pathname)) return true;
   return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p.endsWith("/") ? p : `${p}/`));
 }
 

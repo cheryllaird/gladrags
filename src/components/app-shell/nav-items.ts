@@ -15,8 +15,8 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/outfits/saved", label: "Saved", icon: "saved" },
 ];
 
-/** Pages shown without the app chrome (signed-out screens). */
-const CHROMELESS_PREFIXES = ["/sign-in", "/auth"];
+/** Pages shown without the app chrome (signed-out screens, and the public privacy note). */
+const CHROMELESS_PREFIXES = ["/sign-in", "/auth", "/privacy"];
 
 export function showsAppChrome(pathname: string): boolean {
   return !CHROMELESS_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));

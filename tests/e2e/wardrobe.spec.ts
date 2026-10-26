@@ -204,9 +204,11 @@ test.describe("add by link", () => {
     await expect(page.getByLabel("Product link")).toHaveValue("");
   });
 
-  test("a link shared to the installed app starts by itself (PWA share target)", async ({ page }) => {
-    const text = encodeURIComponent(`Look at this https://shop.example.com/products/shared-${Date.now()}`);
-    await page.goto(`/add/link?title=Shirt&text=${text}`);
+  test("a link shared to the installed app is filled in and imports on a tap (PWA share target)", async ({ page }) => {
+    const link = `https://shop.example.com/products/shared-${Date.now()}`;
+    await page.goto(`/add/link?title=Shirt&text=${encodeURIComponent(`Look at this ${link}`)}`);
+    await expect(page.getByLabel("Product link")).toHaveValue(link);
+    await page.getByRole("button", { name: "Import this link" }).click();
     await expect(page.getByRole("heading", { name: "Check the tags" })).toBeVisible();
   });
 

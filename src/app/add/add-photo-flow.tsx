@@ -31,7 +31,7 @@ type Step =
   | { kind: "error"; error: unknown };
 
 /** Add by photo: pick or take a photo, watch it process, review the tags, save, repeat. */
-export function AddPhotoFlow() {
+export function AddPhotoFlow({ userId }: { userId: string | null }) {
   const [step, setStep] = useState<Step>({ kind: "choose" });
   const [preview, setPreview] = usePreviewUrl();
   const { usage, refresh: refreshUsage } = useUsage();
@@ -40,7 +40,7 @@ export function AddPhotoFlow() {
   // Shown after signing in again, if the session expired mid-add.
   const [restored, setRestored] = useState<"draft" | "photo_lost" | null>(null);
 
-  useRestorePendingAdd((pending) => {
+  useRestorePendingAdd(userId, (pending) => {
     setRestored(pending.kind);
     if (pending.kind === "draft") {
       go({ kind: "review", result: { draft: pending.draft, cutoutFailed: pending.cutoutFailed }, restoredTags: pending.tags });
@@ -61,7 +61,7 @@ export function AddPhotoFlow() {
       go({ kind: "review", result });
     } catch (error) {
       // Signed out before the photo reached us: it can't be kept, so say so after sign-in.
-      if (error instanceof ApiClientError && error.code === "unauthorized") notePhotoLost();
+      if (error instanceof ApiClientError && error.code === "unauthorized") notePhotoLost(userId);
       go({ kind: "error", error });
     } finally {
       refreshUsage();
@@ -105,6 +105,7 @@ export function AddPhotoFlow() {
 
         {step.kind === "review" && (
           <DraftReview
+            userId={userId}
             draft={step.result.draft}
             cutoutFailed={step.result.cutoutFailed}
             restoredTags={step.restoredTags}

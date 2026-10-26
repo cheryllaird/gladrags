@@ -2,7 +2,7 @@
 
 import { CameraIcon, ImageOffIcon } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useId, useRef, useState } from "react";
+import { useId, useState } from "react";
 import { SourceUrlSchema, type ItemTags, type LinkProduct, type WardrobeItem } from "@/contracts";
 import { PageBody, PageHeader } from "@/components/app-shell/page-header";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -56,15 +56,27 @@ type Step =
  * out and sends the cut-out for tagging. If the site can't be read, ask
  * for a screenshot, which goes down the photo route and keeps the link.
  */
-export function AddLinkFlow({ initialUrl }: { initialUrl: string }) {
-  const [url, setUrl] = useState(initialUrl);
+export function AddLinkFlow({
+  sharedUrl,
+  userId,
+}: {
+  /** A link shared to the installed app (PWA share target), or "". Filled in, never imported without a tap. */
+  sharedUrl: string;
+  /** The signed-in user, for a draft kept when the session expires (pending-add.ts). */
+  userId: string | null;
+}) {
+  const [url, setUrl] = useState(sharedUrl);
+  // Arrived with a shared link: while the box still holds it, the button
+  // says what it will do with it. Editing it, or starting over, goes back
+  // to the ordinary label.
+  const [fromShare, setFromShare] = useState(sharedUrl !== "");
+  const shared = fromShare && url.trim() === sharedUrl;
   const [step, setStep] = useState<Step>({ kind: "enter" });
   const [preview, setPreview] = usePreviewUrl();
   const { usage, refresh: refreshUsage } = useUsage();
   const blocked = addingBlockedBy(usage);
   usePreloadBackgroundRemover();
   const id = useId();
-  const autoStarted = useRef(false);
   // Shown after signing in again, if the session expired mid-add.
   const [restored, setRestored] = useState<"draft" | "photo_lost" | null>(null);
 
@@ -109,7 +121,7 @@ export function AddLinkFlow({ initialUrl }: { initialUrl: string }) {
       });
       go({ kind: "review", result });
     } catch (error) {
-      if (error instanceof ApiClientError && error.code === "unauthorized") notePhotoLost();
+      if (error instanceof ApiClientError && error.code === "unauthorized") notePhotoLost(userId);
       go({ kind: "error", error, screenshot });
     } finally {
       refreshUsage();
@@ -117,30 +129,19 @@ export function AddLinkFlow({ initialUrl }: { initialUrl: string }) {
   }
 
   // Back from sign-in after the session expired mid-add: reopen what was kept.
-  // (Declared before the auto-start effect below, so it runs first.)
-  useRestorePendingAdd((pending) => {
-    autoStarted.current = true;
+  useRestorePendingAdd(userId, (pending) => {
     setRestored(pending.kind);
     if (pending.kind === "draft") {
       go({ kind: "review", result: { draft: pending.draft, cutoutFailed: pending.cutoutFailed }, restoredTags: pending.tags });
     }
   });
 
-  // Shared to GladRags from another app (PWA share target): start straight away.
-  useEffect(() => {
-    if (initialUrl && !autoStarted.current) {
-      autoStarted.current = true;
-      void start(initialUrl);
-    }
-    // Runs once, for what the page opened with.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   /** Start over with an empty link box (a new link). */
   function reset() {
     setPreview(null);
     setRestored(null);
     setUrl("");
+    setFromShare(false);
     go({ kind: "enter" });
   }
 
@@ -153,7 +154,7 @@ export function AddLinkFlow({ initialUrl }: { initialUrl: string }) {
   function saved(item: WardrobeItem) {
     setPreview(null);
     setRestored(null);
-    // A shared link arrives as ?url=… (or ?text=…); clear it so a reload doesn't import it again.
+    // A shared link arrives as ?url=… (or ?text=…); clear it so a reload doesn't offer it again.
     if (window.location.search) window.history.replaceState(null, "", window.location.pathname);
     go({ kind: "saved", item });
     refreshUsage();
@@ -198,13 +199,17 @@ export function AddLinkFlow({ initialUrl }: { initialUrl: string }) {
                 <p id={`${id}-url-error`} className="text-destructive text-sm">
                   {step.invalid}
                 </p>
+              ) : shared ? (
+                <p id={`${id}-url-hint`} className="text-muted-foreground text-xs">
+                  Shared to GladRags. Check it&apos;s the product you meant, then import it.
+                </p>
               ) : (
                 <p id={`${id}-url-hint`} className="text-muted-foreground text-xs">
                   Copy the link from the shop&apos;s product page and paste it here.
                 </p>
               )}
               <Button type="submit" size="lg" className="w-full" disabled={blocked !== null || url.trim() === ""}>
-                Add from link
+                {shared ? "Import this link" : "Add from link"}
               </Button>
             </form>
           </>
@@ -250,6 +255,7 @@ export function AddLinkFlow({ initialUrl }: { initialUrl: string }) {
 
         {step.kind === "review" && (
           <DraftReview
+            userId={userId}
             draft={step.result.draft}
             cutoutFailed={step.result.cutoutFailed}
             restoredTags={step.restoredTags}
