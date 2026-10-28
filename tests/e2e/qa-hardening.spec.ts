@@ -92,25 +92,33 @@ test.describe("security headers on every kind of response", () => {
     }
   });
 
-  // FINDING (low): src/app/auth/confirm/route.ts sets
-  // `Referrer-Policy: no-referrer` on the page that carries the one-time
-  // token in its URL, but next.config.ts's site-wide
-  // `Referrer-Policy: strict-origin-when-cross-origin` replaces it, so the
-  // browser sends the full URL (token_hash included) as the Referer of the
-  // form POST. Marked test.fail(): it flips to "passed unexpectedly" once fixed.
-  test("FINDING: the /auth/confirm page keeps its token out of the referrer (no-referrer)", async ({ page }) => {
-    test.fail(true, "next.config.ts's Referrer-Policy overrides the route's no-referrer");
+  // Was FINDING (low), resolved by orchestrator decision: the route no
+  // longer sets its own `Referrer-Policy: no-referrer` (that made browsers
+  // send `Origin: null` on the form POST, which the CSRF check refuses).
+  // The site-wide strict-origin-when-cross-origin applies: the single-use
+  // token only reaches our own origin, in the POST that consumes it.
+  test("the /auth/confirm page uses the site-wide Referrer-Policy", async ({ page }) => {
     const response = await page.goto("/auth/confirm?token_hash=qa-token-abc123&type=email&next=%2Fwardrobe");
-    expect(response?.headers()["referrer-policy"]).toBe("no-referrer");
+    expect(response?.headers()["referrer-policy"]).toBe("strict-origin-when-cross-origin");
   });
 
-  test("MEASURED: the form POST from /auth/confirm sends the token in its Referer", async ({ page }) => {
+  test("MEASURED: the form POST from /auth/confirm sends the token in a same-origin Referer only", async ({ page, baseURL }) => {
     await page.goto("/auth/confirm?token_hash=qa-token-abc123&type=email&next=%2Fwardrobe");
     const posted = page.waitForRequest((r) => r.method() === "POST" && new URL(r.url()).pathname === "/auth/confirm");
     await page.getByRole("button", { name: "Continue signing in" }).click();
     const referer = (await posted).headers()["referer"] ?? "";
-    // Documents the leak the FINDING above describes (to our own origin only).
+    expect(new URL(referer).origin).toBe(new URL(baseURL!).origin);
     expect(referer).toContain("token_hash=qa-token-abc123");
+  });
+
+  test("clicking Continue signing in gets past the CSRF check and signs in (mock mode)", async ({ page }) => {
+    await page.goto("/auth/confirm?token_hash=qa-token-abc123&type=email&next=%2Fwardrobe");
+    const response = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/auth/confirm");
+    await page.getByRole("button", { name: "Continue signing in" }).click();
+    const posted = await response;
+    expect(posted.status()).not.toBe(403);
+    expect(posted.status()).toBe(303);
+    await expect(page).toHaveURL(/\/wardrobe$/);
   });
 });
 

@@ -17,6 +17,9 @@ alter table public.usage_events drop constraint usage_events_kind_check;
 alter table public.usage_events add constraint usage_events_kind_check check (
   kind in ('item_ingest', 'outfit_request', 'link_fetch', 'tagging', 'ranking_shortlist', 'ranking_final')
 );
+-- numeric accepts 'NaN', and Postgres sorts it above every number, so
+-- "cost_pence >= 0" lets it through; a NaN would break the month's sum.
+alter table public.usage_events add constraint usage_events_cost_not_nan check (cost_pence <> 'NaN'::numeric);
 
 -- Reserve one usage event, or refuse it, in one transaction.
 --
@@ -65,7 +68,7 @@ declare
   v_spent numeric := 0;
   v_id uuid;
 begin
-  if p_cost_pence is null or p_cost_pence < 0 then
+  if p_cost_pence is null or p_cost_pence < 0 or p_cost_pence = 'NaN'::numeric then
     raise exception 'reserve_usage: cost must be zero or more' using errcode = 'invalid_parameter_value';
   end if;
   if p_daily_limit is not null and (p_user is null or p_day_start is null) then
@@ -154,9 +157,11 @@ create trigger enforce_email_allowlist_on_email_change
 
 -- 5. Sign-in rate limits ----------------------------------------------------------
 -- One row per accepted sign-in request (magic link or code check), per
--- email and per IP address. Keys are SHA-256 hashes made by the server, so
--- the table holds no email addresses or IP addresses. Server only; the
--- daily cleanup job deletes rows over a day old.
+-- email and per IP address. Keys are HMAC-SHA-256 hashes made by the
+-- server with a key the database never sees (SIGN_IN_HASH_KEY), so the
+-- table is pseudonymous: it stores no email or IP address, and its rows
+-- can't be matched to one without that key. Server only; the daily cleanup
+-- job deletes rows over a day old.
 
 create table public.sign_in_attempts (
   id bigint generated always as identity primary key,
@@ -169,7 +174,7 @@ create table public.sign_in_attempts (
 create index sign_in_attempts_lookup_idx on public.sign_in_attempts (action, key_kind, key_hash, created_at);
 create index sign_in_attempts_created_idx on public.sign_in_attempts (created_at);
 
-comment on table public.sign_in_attempts is 'Sign-in rate limiting (hashed email and IP keys). Server (secret key) only.';
+comment on table public.sign_in_attempts is 'Sign-in rate limiting (pseudonymous HMAC keys for emails and IPs). Server (secret key) only.';
 
 alter table public.sign_in_attempts enable row level security;
 revoke all on public.sign_in_attempts from anon, authenticated;

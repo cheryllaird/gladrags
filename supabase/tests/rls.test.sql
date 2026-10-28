@@ -616,7 +616,7 @@ begin
     perform public.reserve_sign_in_attempt('magic_link', 'not-a-hash', null, 5, 7, 900);
     raise exception 'FAIL: a raw (unhashed) key was stored';
   exception when check_violation then
-    raise notice 'ok: only SHA-256 hex keys are stored, never raw emails or IPs';
+    raise notice 'ok: only 64-hex-digit (HMAC-SHA-256) keys are stored, never raw emails or IPs';
   end;
 end;
 $$;

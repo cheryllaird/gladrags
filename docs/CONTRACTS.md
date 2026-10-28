@@ -113,7 +113,7 @@ insert into public.allowed_emails (email, note) values ('someone@example.com', '
 One row per add-by-link step 1: the source URL, the product data the server read, the stored image's key, and `tagged_at`. Step 2 claims the row in one statement, and only if it's unused, under an hour old, and the user's own. So each link can be tagged once, and step 2 uses what the server read rather than anything the phone sends back. Server-only.
 
 ### sign_in_attempts (sign-in rate limits)
-One row per accepted sign-in request (a magic-link request or a code check): the action, whether the key is an email or an IP address, a SHA-256 hash of that key, and the time. It holds no email or IP addresses. The `reserve_sign_in_attempt` function checks the limits and records the attempt in one step (section 5, "Sign-in"). The daily cleanup deletes rows over a day old. Server-only.
+One row per accepted sign-in request (a magic-link request or a code check): the action, whether the key is an email or an IP address, an HMAC-SHA-256 of that key made with the server-only `SIGN_IN_HASH_KEY`, and the time. The table is pseudonymous: it stores no email or IP address, and without the key its rows can't be matched to one, even by hashing guesses. The `reserve_sign_in_attempt` function checks the limits and records the attempt in one step (section 5, "Sign-in"). The daily cleanup deletes rows over a day old. Server-only.
 
 ### Image storage
 Two private buckets, `originals` and `cutouts`. Object names are `<user id>/<random id>.<ext>`. Only the server writes images, after checking them and stripping EXIF. A signed-in user can read and delete objects in their own folder, but can't upload or change them directly. Images are served through signed URLs that expire: one hour for wardrobe and outfit images, and 10 minutes for the product image in add-by-link. Stored images carry `Cache-Control: private, max-age=600`, so shared caches never keep them and a browser keeps them for at most 10 minutes.
@@ -210,7 +210,8 @@ All routes are under `/api` and return JSON. Every route except the sign-in ones
 
 ### Cross-site requests (CSRF)
 The session cookie is `httpOnly` and `SameSite=Lax` (section 9), and on top of that:
-- Any POST, PATCH, PUT or DELETE whose `Origin` header isn't this site's (the request's own address, or `NEXT_PUBLIC_SITE_URL`) is refused with `403 forbidden` before the route runs. With no `Origin`, a `Sec-Fetch-Site: cross-site` header is refused too.
+- Any POST, PATCH, PUT or DELETE from another website is refused with `403 forbidden` before the route runs. A browser's `Sec-Fetch-Site: same-origin` is trusted, since pages can't forge it (that covers testing over the LAN from a phone, a proxy in front of the app, and `Origin: null`). Otherwise the `Origin` must be this site's (the request's own address, or `NEXT_PUBLIC_SITE_URL`), so a sibling subdomain (`same-site`) is still refused. With no `Origin`, a `Sec-Fetch-Site: cross-site` header is refused too.
+- `POST /api/csp-report` is the one exception: browsers send CSP reports themselves, and a report changes nothing (section 9).
 - Routes that take a JSON body require `Content-Type: application/json`, otherwise `415 unsupported_media_type`. A form on another website can't send that type.
 
 "Built" below means it's a real implementation now. "Stub" means it validates input and serves mock data until the named agent replaces it.
@@ -227,9 +228,9 @@ The session cookie is `httpOnly` and `SameSite=Lax` (section 9), and on top of t
 
 `next` must be a path on this site, which prevents open redirects.
 
-**Why `/auth/confirm` needs a tap:** a GET only shows the page, and signing in takes the page's form POST. Email scanners and link previews that open the link can't use up the one-time token, and another website can't sign someone in by loading the link. Typing the code is unchanged.
+**Why `/auth/confirm` needs a tap:** a GET only shows the page, and signing in takes the page's form POST. Email scanners and link previews that open the link can't use up the one-time token, and another website can't sign someone in by loading the link. Typing the code is unchanged. The page uses the site-wide `Referrer-Policy: strict-origin-when-cross-origin`, so the form POST sends the page's URL, token included, as its `Referer`, but only to our own site. The token is single-use and that POST consumes it. (A page-level `no-referrer` was dropped: it makes browsers send `Origin: null` on the POST.) In mock mode the POST signs in without Supabase, like every mock sign-in.
 
-**Rate limits.** Each of `magic-link` and `verify-code` allows **5 requests per email and 20 per IP address in any 15 minutes** [Decision]. After that the answer is `429 rate_limited`, with a message saying how many minutes to wait. The check comes before the allowlist check and counts every email the same way, so it reveals nothing about who's invited. The limit on code checks also stops anyone guessing a 6-digit code. The IP address is the one Vercel reports (`x-real-ip`, or the first `x-forwarded-for` entry). When none is known, only the per-email limit applies, so one person can't lock everyone out behind a shared address.
+**Rate limits.** Each of `magic-link` and `verify-code` allows **5 requests per email and 20 per IP address in any 15 minutes** [Decision]. After that the answer is `429 rate_limited`, with a message saying how many minutes to wait. The check comes before the allowlist check and counts every email the same way, so it reveals nothing about who's invited. The limit on code checks also stops anyone guessing a 6-digit code. The IP address is the one Vercel reports (`x-real-ip`, or the first `x-forwarded-for` entry). An IPv6 address counts by its /64 network, because one home or phone connection gets a whole /64. When no IP is known, only the per-email limit applies, so one person can't lock everyone out behind a shared address. The limit is per email, whoever sends the request, so someone who knows a tester's address can keep her out for 15 minutes at a time (decision 16).
 
 **Why a code as well as a link:** on iPhone, an app added to the home screen doesn't share cookies with Safari. Tapping the emailed link signs you into Safari, not the app. Typing the code into the app works everywhere. For this, the Supabase email template needs `{{ .Token }}` added (see section 9). A minimal working sign-in page is at `/sign-in`, which wardrobe-ui will restyle.
 
@@ -328,7 +329,7 @@ An **Outfit** is `{ id, request, name, reason, itemIds, items (full WardrobeItem
 | --- | --- | --- |
 | `GET /api/cron/cleanup` | `Authorization: Bearer <CRON_SECRET>` | `{ imagesChecked, orphanedImagesDeleted, linkImportsDeleted, signInAttemptsDeleted }` (counts only) |
 
-Vercel Cron calls it once a day at 03:17 UTC (`vercel.json`). It deletes images over a day old that no item or open link import uses, `link_imports` rows over 7 days old, and `sign_in_attempts` rows over a day old. The secret is compared in constant time. A wrong or missing header gets `401 unauthorized`. If `CRON_SECRET` isn't set, the answer is `500 server_misconfigured` and nothing runs. No user is involved, so it isn't behind sign-in. Neither the response nor the logs include keys, emails or other user data.
+Vercel Cron calls it once a day at 03:17 UTC (`vercel.json`). **Vercel runs cron jobs on production deployments only**, never on previews, so until the app has a production deployment the cleanup doesn't run on its own (it can be called by hand with the secret). It deletes images over a day old that no item or open link import uses, `link_imports` rows over 7 days old, and `sign_in_attempts` rows over a day old. The secret is compared in constant time. A wrong or missing header gets `401 unauthorized`. If `CRON_SECRET` isn't set, is blank, or has spaces or a newline around it (which no header could ever match), the answer is `500 server_misconfigured` and nothing runs. No user is involved, so it isn't behind sign-in. Neither the response nor the logs include keys, emails or other user data.
 
 ---
 
@@ -376,7 +377,11 @@ The tests include recorded bad replies: an invented "accessory" category, a colo
 
 Before starting work, every route that uses AI asks the usage guard whether it's allowed (`assertCanStart`, a quick check that counts nothing). The item cap is counted where tagging runs: in add-by-photo and in add-by-link step 2. Step 1 only checks it, and counts a link fetch instead. Once the month's total reaches £5, AI features pause (`ai_paused`) until the 1st, but browsing the wardrobe and saved outfits still works. Real per-call costs should replace the estimates after the first tester week.
 
-**Checking and counting are one atomic step.** Counting an action (`reserveAction`) and reserving a Gemini call's cost (`reserveAiCost`, or `meterAiCalls` for `callWithValidation`) each go through one database function, `reserve_usage`. It locks (per user for the daily caps, and once for everyone for spend), counts, and records the row only if the cap allows it. Requests sent at the same moment queue behind each other, so a burst can't overshoot a daily cap or the monthly cap. `pnpm db:verify` proves this with 30 calls fired at once. The check is "reached, not approached": a call is allowed while the month is under £5, so the last one can take it slightly over, by at most one call's cost (0.5p). A real cost reported above the estimate can add a little more; the next call is then refused.
+**Checking and counting are one atomic step.** Counting an action (`reserveAction`) and reserving a Gemini call's cost (`reserveAiCost`, or `meterAiCalls` for `callWithValidation`) each go through one database function, `reserve_usage`. It locks (per user for the daily caps, and once for everyone for spend), counts, and records the row only if the cap allows it. Requests sent at the same moment queue behind each other, so a burst can't overshoot a daily cap or the monthly cap. `pnpm db:verify` proves this with 30 calls fired at once. The check is "reached, not approached": a call is allowed while the month is under £5.
+
+**How far past £5 the month can go.** Each call reserves its estimate first. When it returns, the real cost replaces the estimate. A real cost is only used if it's a number of zero or more, and it's recorded at most at **3 times the estimate** (a log line says so when that happens, which means the estimates need raising). So the month can end up over £5 by at most one call's estimate (0.5p), plus up to 2 × its estimate (1p at most) for each call that was already running when the cap was reached. At tester scale that's a few pence at worst.
+
+If AI pauses after a request has been counted but before its model call (another request reached the cap in between), the user gets nothing, so the count is given back: in add-by-photo, in outfit requests and refinements, and in add-by-link step 2, which also reopens the import so the link needn't be pasted again (it still expires an hour after step 1).
 
 In add-by-link step 2 the item is counted before the import is claimed. If the claim then fails (the link was already added, or a double tap lost the race), the count is given back.
 
@@ -411,7 +416,8 @@ Environment variables (see `.env.example`):
 | `GEMINI_MODEL` | Optional. Gemini model for tagging and ranking; defaults to `gemini-3.8-flash`. Must have known prices (`GEMINI_MODEL_PRICES`), otherwise startup fails with a config error. |
 | `GLADRAGS_MOCK_MODE` | `true` only for local UI work. Refused on Vercel and in production builds. |
 | `GLADRAGS_E2E` | `true` only for end-to-end test runs, to allow mock mode against `pnpm start` |
-| `CRON_SECRET` | A long random value (e.g. `openssl rand -hex 32`). Vercel sends it to the daily cleanup job; without it the job refuses to run. Set it in Vercel, for Production and Preview. |
+| `CRON_SECRET` | A long random value (e.g. `openssl rand -hex 32`). Vercel sends it to the daily cleanup job; without it the job refuses to run. Set it in Vercel for Production (cron jobs only run there); Preview too if you want to call the job by hand on a preview. |
+| `SIGN_IN_HASH_KEY` | Server only. At least 32 random characters (e.g. `openssl rand -hex 32`). The key for the pseudonymous sign-in attempt hashes. Without a usable one, sign-in answers `500 server_misconfigured` outside mock mode and tests. Changing it only resets the 15-minute limits. Set it in Vercel for Production and Preview. |
 
 There's no background-removal key: it runs in the browser.
 
@@ -428,6 +434,10 @@ In the Supabase dashboard:
 - Session cookies are `httpOnly` (page scripts can't read them), `SameSite=Lax`, and `Secure` in production. Nothing in the browser reads the session; the UI only calls our API routes.
 - Every response sends `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy: camera=(self), geolocation=(), microphone=()` and `X-Frame-Options: DENY`, and no `X-Powered-By`.
 - A Content Security Policy is sent as **Report-Only**: browsers report anything it would block, but block nothing. It allows only this site, plus Supabase for images and API calls, `blob:` and `data:` images, WebAssembly for the background remover, and inline scripts and styles (Next.js and the UI use them). The e2e suite checks our own pages raise no reports. **It should move to enforcing (`Content-Security-Policy`) after Cheryl's test**, once real use shows no reports.
+
+**Checking for reports.** Browsers send reports to `POST /api/csp-report` (`report-uri`, and `report-to` through the `Reporting-Endpoints` header). Each one is logged as `CSP report` with two fields only: the directive (e.g. `img-src`) and where the blocked thing came from, as an origin (`https://evil.example`) or a keyword (`inline`, `eval`, `data`, `blob`). No full URLs, pages or user data are logged. To check: in the Vercel dashboard open the project → Logs, pick the deployment and time range, and search for `CSP report`. None after a few days of real use means it's safe to enforce. Reports can arrive a minute or so late (browsers batch them). The route refuses bodies over 16 KB and logs at most 60 reports a minute per server instance, so junk can't flood the logs.
+
+**Vercel's preview toolbar.** On preview deployments Vercel injects its feedback toolbar from `https://vercel.live`, which the policy doesn't allow, so previews will log `CSP report` lines blocking `https://vercel.live`. Those aren't ours. Recommendation: turn the toolbar off for this project (Project → Settings → General → Vercel Toolbar, set Preview to off) while checking reports, rather than allowing `vercel.live` in the policy. Production deployments don't get the toolbar.
 
 ---
 
@@ -448,3 +458,5 @@ In the Supabase dashboard:
 13. **Link fetches have their own cap**: 80 a day per user, fallbacks included, reported as `link_fetches_per_day` (section 5).
 14. **Sign-in rate limits**: 5 per email and 20 per IP address per 15 minutes, for each sign-in route (section 5).
 15. **The `/auth/confirm` link needs one tap** ("Continue signing in") before it signs in (section 5).
+16. **A tester can be locked out by someone who knows her email.** The sign-in limits count per email, whoever sends the request, so 5 junk requests block that email for 15 minutes (on each sign-in route), from any IP. That's the trade-off for stopping code guessing. If it's a problem in practice, a mitigation is to count only **failed** code checks per email on `verify-code` (successful ones and magic-link requests would then not lock anyone out), at the cost of a little more code.
+17. **AI costs settle at most 3x their estimate**, which bounds how far past £5 the month can go (section 7).

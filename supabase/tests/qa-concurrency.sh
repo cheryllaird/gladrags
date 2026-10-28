@@ -187,7 +187,7 @@ if q "update public.usage_events set cost_pence = null where id = '${id}'" >/dev
   echo "FAIL: a null settled cost was stored" >&2
   exit 1
 fi
-# Postgres numeric does accept 'NaN'; PostgREST sends JS NaN as null, so the app can't store it, but SQL can.
+# Postgres numeric accepts 'NaN'; migration 6 refuses it with usage_events_cost_not_nan (was a NOTE).
 if q "update public.usage_events set cost_pence = 'NaN' where id = '${id}'" >/dev/null 2>&1; then
   echo "NOTE: cost_pence accepts 'NaN' at the SQL level (check (cost_pence >= 0) passes NaN); the app can't send it"
   q "update public.usage_events set cost_pence = 0.2 where id = '${id}'" >/dev/null

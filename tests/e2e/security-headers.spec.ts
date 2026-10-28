@@ -55,6 +55,9 @@ test("every page and API response carries the security headers", async ({ reques
     expect(csp, path).toContain("worker-src 'self' blob:");
     expect(csp, path).toContain("object-src 'none'");
     expect(csp, path).toContain("frame-ancestors 'none'");
+    expect(csp, path).toContain("report-uri /api/csp-report");
+    expect(csp, path).toContain("report-to csp-endpoint");
+    expect(headers["reporting-endpoints"], path).toBe('csp-endpoint="/api/csp-report"');
     // Report-Only for now: nothing is enforced yet.
     expect(headers["content-security-policy"], path).toBeUndefined();
   }
@@ -136,6 +139,23 @@ test("a JSON route refuses a body that isn't labelled JSON (what a form on anoth
   });
   expect(response.status()).toBe(415);
   expect((await response.json()).error.code).toBe("unsupported_media_type");
+});
+
+// Chrome delivers report-to reports out of band, batched and delayed, so a
+// page can't observe them; this posts the shapes browsers send.
+test("/api/csp-report takes both report formats (204) without sign-in or CSRF headers", async ({ request }) => {
+  const legacy = await request.post("/api/csp-report", {
+    headers: { "content-type": "application/csp-report" },
+    data: JSON.stringify({ "csp-report": { "effective-directive": "img-src", "blocked-uri": "https://evil.example/pixel.png" } }),
+  });
+  expect(legacy.status()).toBe(204);
+  const batch = await request.post("/api/csp-report", {
+    headers: { "content-type": "application/reports+json", origin: "null" },
+    data: JSON.stringify([{ type: "csp-violation", body: { effectiveDirective: "img-src", blockedURL: "https://evil.example/p.png" } }]),
+  });
+  expect(batch.status()).toBe(204);
+  const huge = await request.post("/api/csp-report", { headers: { "content-type": "application/csp-report" }, data: "x".repeat(20_000) });
+  expect(huge.status()).toBe(413);
 });
 
 test("the cleanup job isn't sent to sign-in and refuses without a secret", async ({ request }) => {
