@@ -98,7 +98,12 @@ const FOREIGN: [string, Record<string, string>][] = [
   ["a subdomain of the site", { origin: "http://evil.localhost:3000" }],
   ["the origin with a trailing slash", { origin: "http://localhost:3000/" }],
   ["the origin in upper case", { origin: "HTTP://LOCALHOST:3000" }],
-  ["a foreign Origin even with same-origin fetch metadata", { origin: "https://evil.example", "sec-fetch-site": "same-origin" }],
+  // Orchestrator decision (fix round): Sec-Fetch-Site: same-origin is set by
+  // the browser and can't be forged by a page, so it's trusted even with an
+  // Origin that differs from request.url (LAN testing, a proxy). A sibling
+  // subdomain (same-site) with a foreign Origin is still refused.
+  ["a foreign Origin with same-site fetch metadata", { origin: "https://evil.example", "sec-fetch-site": "same-site" }],
+  ["Origin null with same-site fetch metadata", { origin: "null", "sec-fetch-site": "same-site" }],
 ];
 
 beforeEach(() => {

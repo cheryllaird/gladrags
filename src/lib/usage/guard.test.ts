@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { CapReachedError } from "./errors";
-import { UsageGuard, type UsageLimits } from "./guard";
+import { MAX_SETTLED_COST_MULTIPLE, UsageGuard, type UsageLimits } from "./guard";
 import { InMemoryUsageStore } from "./store";
 
 const ALICE = "0a000000-0000-4000-8000-000000000001";
@@ -108,5 +108,35 @@ describe("UsageGuard summary", () => {
       dailyResetAt: "2026-10-21T23:00:00.000Z",
       aiPaused: false,
     });
+  });
+});
+
+describe("UsageGuard settling AI costs", () => {
+  it("records a reported cost up to 3x the estimate as reported", async () => {
+    const { guard, store } = setup();
+    const id = await guard.reserveAiCost(ALICE, "ranking_final", "gemini");
+    await guard.settleAiCost(id, "ranking_final", { costPence: 1.5, provider: "gemini" });
+    expect(store.events[0]!.costPence).toBe(1.5);
+  });
+
+  it("clamps a cost above 3x the estimate, and logs it without user data", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { guard, store } = setup();
+    const id = await guard.reserveAiCost(ALICE, "tagging", "gemini");
+    await guard.settleAiCost(id, "tagging", { costPence: 7, provider: "gemini" });
+    expect(store.events[0]!.costPence).toBeCloseTo(0.6, 10);
+    expect(MAX_SETTLED_COST_MULTIPLE).toBe(3);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(ALICE);
+    warn.mockRestore();
+  });
+
+  it("keeps the estimate when the cost is missing, not finite or negative", async () => {
+    const { guard, store } = setup();
+    for (const costPence of [undefined, Number.NaN, Number.POSITIVE_INFINITY, -1]) {
+      const id = await guard.reserveAiCost(ALICE, "tagging", "gemini");
+      await guard.settleAiCost(id, "tagging", { costPence, provider: "gemini" });
+    }
+    expect(store.events.map((e) => e.costPence)).toEqual([0.2, 0.2, 0.2, 0.2]);
   });
 });

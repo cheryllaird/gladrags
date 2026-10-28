@@ -35,15 +35,17 @@ const digest = (text: string) => createHash("sha256").update(text).digest();
 
 /**
  * Throws unless the request carries `Authorization: Bearer <secret>`.
- * - No secret configured: server_misconfigured (500), so a missing
- *   variable can never leave the job open to anyone.
+ * - No usable secret configured (unset, empty, only whitespace, or with
+ *   whitespace around it, which no header can match because header values
+ *   are trimmed): server_misconfigured (500), so a bad variable is noticed
+ *   and can never leave the job open to anyone.
  * - Anything else: unauthorized (401).
  * The comparison is constant-time (both sides hashed to the same length
  * first), so response timing doesn't leak the secret.
  */
 export function assertCronAuthorized(request: Request, secret: string | undefined): void {
-  if (!secret) {
-    console.error("CRON_SECRET is not set; the scheduled cleanup can't run");
+  if (!secret || secret.trim() === "" || secret.trim() !== secret) {
+    console.error("CRON_SECRET is not set (or is blank or has spaces around it); the scheduled cleanup can't run");
     throw new ApiException("server_misconfigured", "GladRags isn't set up correctly on the server yet");
   }
   const header = request.headers.get("authorization") ?? "";

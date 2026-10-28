@@ -15,6 +15,9 @@ import type { NextConfig } from "next";
  * - img-src: signed image URLs come from Supabase Storage; blob: and data:
  *   are the phone's own previews and cut-outs.
  * - worker-src: the background remover and the service worker.
+ * - report-uri / report-to: browsers post what would have been blocked to
+ *   /api/csp-report, which logs "CSP report" with the directive and the
+ *   blocked origin only (CONTRACTS.md section 9 says how to read them).
  */
 function contentSecurityPolicy(): string {
   const dev = process.env.NODE_ENV === "development";
@@ -29,6 +32,8 @@ function contentSecurityPolicy(): string {
     "base-uri 'self'",
     "form-action 'self'",
     "frame-ancestors 'none'",
+    "report-uri /api/csp-report",
+    "report-to csp-endpoint",
   ].join("; ");
 }
 
@@ -41,6 +46,8 @@ const SECURITY_HEADERS = [
   { key: "Permissions-Policy", value: "camera=(self), geolocation=(), microphone=()" },
   { key: "X-Frame-Options", value: "DENY" },
   { key: "Content-Security-Policy-Report-Only", value: contentSecurityPolicy() },
+  // Where report-to sends reports (the Reporting API); report-uri is the fallback.
+  { key: "Reporting-Endpoints", value: 'csp-endpoint="/api/csp-report"' },
 ];
 
 const nextConfig: NextConfig = {

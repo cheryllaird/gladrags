@@ -17,9 +17,10 @@ import { ApiException } from "./errors";
  * Cross-site request forgery (CSRF) protection, on top of SameSite=Lax
  * session cookies:
  * - withApiHandler refuses an unsafe method (POST, PATCH, PUT, DELETE)
- *   whose Origin isn't this site (403 forbidden). Browsers send Origin on
- *   every cross-origin request; with no Origin, a Sec-Fetch-Site of
- *   "cross-site" is refused too.
+ *   from another site (403 forbidden). A browser's `Sec-Fetch-Site:
+ *   same-origin` is trusted (pages can't set it). Otherwise the Origin
+ *   must be this site's; with no Origin, a Sec-Fetch-Site of "cross-site"
+ *   is refused too.
  * - parseJsonBody requires Content-Type: application/json (415
  *   unsupported_media_type). A plain HTML form can't send that type, so a
  *   JSON route can't be driven by a form on another site.
@@ -140,13 +141,20 @@ function allowedOrigins(request: Request): Set<string> {
 /**
  * Whether a request could have come from another site. Safe methods
  * (GET, HEAD, OPTIONS) always pass: they must not change anything.
- * Otherwise a present Origin must be this site's (an opaque "null" origin
- * never is), and with no Origin, Sec-Fetch-Site mustn't be "cross-site".
- * Requests with neither header (curl, server-to-server) pass: they carry
- * no browser cookies unless the caller has them anyway.
+ *
+ * `Sec-Fetch-Site: same-origin` passes: browsers set it and pages can't
+ * forge it. That covers an Origin of "null" (sent on a same-origin form
+ * POST from a page with `Referrer-Policy: no-referrer`) and a host that
+ * differs from request.url (testing over the LAN from a phone, or behind a
+ * proxy). Otherwise a present Origin must be this site's (a "null" origin
+ * never is: `same-site` from a sibling subdomain is still refused), and
+ * with no Origin, Sec-Fetch-Site mustn't be "cross-site". Requests with
+ * neither header (curl, server-to-server) pass: they carry no browser
+ * cookies unless the caller has them anyway.
  */
 export function isCrossSiteRequest(request: Request): boolean {
   if (SAFE_METHODS.has(request.method.toUpperCase())) return false;
+  if (request.headers.get("sec-fetch-site") === "same-origin") return false;
   const origin = request.headers.get("origin");
   if (origin !== null) return !allowedOrigins(request).has(origin);
   return request.headers.get("sec-fetch-site") === "cross-site";

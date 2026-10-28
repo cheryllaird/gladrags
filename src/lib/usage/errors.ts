@@ -3,6 +3,15 @@ import { ApiException } from "@/lib/api/errors";
 
 export type { CapKind };
 
+/**
+ * True for the monthly AI pause. Routes that counted a daily action and
+ * then hit the pause before their model call give the count back (the
+ * user got nothing for it).
+ */
+export function isAiPausedError(error: unknown): error is CapReachedError {
+  return error instanceof CapReachedError && error.cap === "monthly_ai_spend";
+}
+
 /** Thrown by UsageGuard when a daily cap or the monthly spend cap is reached. */
 export class CapReachedError extends Error {
   constructor(

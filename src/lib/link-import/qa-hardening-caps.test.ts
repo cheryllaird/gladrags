@@ -140,25 +140,22 @@ describe("step 2: the item count is given back when the claim fails", () => {
     await expect(deps.usage.reserveAction(TEST_USER, "item_ingest")).resolves.toBeDefined();
   });
 
-  // FINDING (low): if the refund itself fails after a lost claim, the user
-  // gets a 500 (internal) instead of the documented 404, because
-  // `await counted.cancel()` in the !claimed branch isn't guarded like the
-  // other two refunds.
-  it("FINDING: a lost claim whose refund fails answers with the refund's error, not not_found", async () => {
+  // Was FINDING (low), fixed: a failed refund after a lost claim gave a 500
+  // instead of the documented 404. The refund is now best effort there too.
+  it("a lost claim whose refund fails still answers not_found", async () => {
     const key = await stepOne();
     // Another request claims the import between this one's lookup and its claim.
     vi.spyOn(deps.linkImports, "claim").mockResolvedValueOnce(null);
     vi.spyOn(deps.usageStore, "cancel").mockRejectedValueOnce(new Error("Couldn't cancel usage: db down"));
     const error = await finishLinkImport(deps, TEST_USER, await upload(key)).catch((e: unknown) => e);
-    expect(error).not.toBeInstanceOf(ApiException);
-    expect((error as Error).message).toMatch(/cancel usage/);
+    expect(error).toBeInstanceOf(ApiException);
+    expect((error as ApiException).code).toBe("not_found");
   });
 
-  // FINDING (low): AI pausing between the item count and the tagging call
-  // (another user's call takes the month to £5) leaves the import used up
-  // and the item counted, with no draft: the user has to paste the link
-  // again next month.
-  it("FINDING: ai_paused during tagging after the claim keeps the count and uses the import up", async () => {
+  // Was FINDING (low), fixed: AI pausing between the item count and the
+  // tagging call used to keep the count and use the import up. Now the
+  // count is given back and the import reopened.
+  it("ai_paused during tagging after the claim gives the count back and reopens the import", async () => {
     const key = await stepOne();
     const prepare = deps.images.prepareForModel.bind(deps.images);
     vi.spyOn(deps.images, "prepareForModel").mockImplementationOnce(async (...args) => {
@@ -166,7 +163,8 @@ describe("step 2: the item count is given back when the claim fails", () => {
       return prepare(...args);
     });
     await expect(finishLinkImport(deps, TEST_USER, await upload(key))).rejects.toMatchObject({ cap: "monthly_ai_spend" });
-    expect(count("item_ingest")).toBe(1);
-    expect(await deps.linkImports.findOpen(TEST_USER, key)).toBeNull();
+    expect(count("item_ingest")).toBe(0);
+    expect(await deps.linkImports.findOpen(TEST_USER, key)).not.toBeNull();
+    expect(cutouts()).toEqual([]);
   });
 });

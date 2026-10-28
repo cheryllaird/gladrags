@@ -34,6 +34,11 @@ export interface LinkImportRepository {
    * if it isn't this user's, was already used, or has expired.
    */
   claim(userId: string, originalImageKey: string): Promise<OpenLinkImport | null>;
+  /**
+   * Undo a claim (tagged_at back to null) when step 2 stopped before
+   * tagging, e.g. because AI paused. The import's time limit still applies.
+   */
+  release(userId: string, originalImageKey: string): Promise<void>;
   /** Delete rows older than the cutoff (used or not). Returns how many went. */
   deleteCreatedBefore(cutoff: Date): Promise<number>;
 }
@@ -97,6 +102,15 @@ export class SupabaseLinkImportRepository implements LinkImportRepository {
     return toOpen(data);
   }
 
+  async release(userId: string, originalImageKey: string): Promise<void> {
+    const { error } = await this.admin
+      .from("link_imports")
+      .update({ tagged_at: null })
+      .eq("user_id", userId)
+      .eq("original_image_key", originalImageKey);
+    if (error) throw new Error(`Couldn't release the link import: ${error.message}`);
+  }
+
   async deleteCreatedBefore(cutoff: Date): Promise<number> {
     const { data, error } = await this.admin.from("link_imports").delete().lt("created_at", cutoff.toISOString()).select("id");
     if (error) throw new Error(`Couldn't delete old link imports: ${error.message}`);
@@ -145,6 +159,11 @@ export class InMemoryLinkImportRepository implements LinkImportRepository {
     return { sourceUrl: row.sourceUrl, product: structuredClone(row.product) };
   }
 
+  async release(userId: string, key: string): Promise<void> {
+    const row = this.rows.get(key);
+    if (row && row.userId === userId) row.taggedAt = null;
+  }
+
   async deleteCreatedBefore(cutoff: Date): Promise<number> {
     let deleted = 0;
     for (const [key, row] of this.rows) {
@@ -155,7 +174,6 @@ export class InMemoryLinkImportRepository implements LinkImportRepository {
     }
     return deleted;
   }
-
 
   /** Keys an unfinished import can still use (for the image cleanup tests). */
   openKeys(): Set<string> {

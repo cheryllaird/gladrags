@@ -133,16 +133,20 @@ describe("the secret", () => {
     expect(state.depsBuilt).toBe(0);
   });
 
-  // NOTE (low): a CRON_SECRET of only whitespace counts as set, but no
-  // header can ever match it (header values are trimmed), so the job
-  // silently 401s every night instead of reporting misconfiguration. Same
-  // for a secret pasted with a trailing newline.
-  it("NOTE: a whitespace-only or newline-terminated CRON_SECRET can never be matched (401, not 500)", async () => {
-    vi.stubEnv("CRON_SECRET", "   ");
-    expect((await call({ authorization: "Bearer    " })).status).toBe(401);
-    vi.stubEnv("CRON_SECRET", `${SECRET}\n`);
-    expect((await call({ authorization: `Bearer ${SECRET}\n` })).status).toBe(401);
-  });
+  // Was NOTE (low), fixed: a CRON_SECRET no header can match (only
+  // whitespace, or whitespace around it, since header values are trimmed)
+  // used to 401 every night silently. It's now reported as misconfigured.
+  it.each([["only spaces", "   "], ["a trailing newline", `${SECRET}\n`], ["a leading space", ` ${SECRET}`], ["a tab", "\t"]])(
+    "a CRON_SECRET with %s is misconfigured (500) for any header",
+    async (_label, secret) => {
+      vi.stubEnv("CRON_SECRET", secret);
+      for (const header of ["Bearer    ", `Bearer ${SECRET}`, `Bearer ${secret}`]) {
+        const res = await call({ authorization: header });
+        expect(res.status).toBe(500);
+        expect((await res.json()).error.code).toBe("server_misconfigured");
+      }
+    },
+  );
 
   it("only GET is exported: POST, PUT, PATCH and DELETE get Next's 405", () => {
     expect(Object.keys(route).filter((k) => /^[A-Z]+$/.test(k))).toEqual(["GET"]);

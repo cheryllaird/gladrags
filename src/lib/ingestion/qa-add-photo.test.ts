@@ -181,6 +181,15 @@ describe("stored images are removed when a later step fails", () => {
     expect((error as CapReachedError).toApiException().code).toBe("ai_paused");
     nothingKept(deps);
     expect(deps.fakeTagger.calls).toHaveLength(0);
+    // Nothing was tagged, so today's count is given back.
+    expect(counted(deps)).toBe(0);
+  });
+
+  it("any other failure after counting (tagging infrastructure down) keeps the count", async () => {
+    const deps = makeTestDeps({ taggerOutputs: [tagging.valid] });
+    vi.spyOn(deps.images, "prepareForModel").mockRejectedValue(new Error("vips: out of memory"));
+    await failure(addItemFromPhoto(deps, TEST_USER, await upload()));
+    expect(counted(deps)).toBe(1);
   });
 
   it("storing the original fails: nothing left behind and the model isn't called", async () => {

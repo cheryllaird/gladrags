@@ -206,13 +206,14 @@ describe("per IP address (20 in 15 minutes, across emails)", () => {
     expect(statuses.filter((s) => s === 429)).toHaveLength(0);
   });
 
-  // FINDING (low): IPv6 addresses are keyed in full. A client with an
-  // ordinary /64 (home broadband, mobile) has 2^64 addresses, so the
-  // per-IP limit doesn't stop allowlist probing over IPv6.
-  it("FINDING: each address in one IPv6 /64 gets its own limit", async () => {
+  // Was FINDING (low), fixed: IPv6 addresses were keyed in full, so a
+  // client rotating through its own /64 got a fresh limit each time. They're
+  // now keyed by their /64.
+  it("all addresses in one IPv6 /64 share one limit; another /64 has its own", async () => {
     const statuses: number[] = [];
     for (let i = 0; i < 30; i++) statuses.push((await magic(`probe${i}@example.com`, { "x-real-ip": `2001:db8:1:2::${(i + 1).toString(16)}` })).status);
-    expect(statuses.filter((s) => s === 429)).toHaveLength(0);
+    expect(statuses.filter((s) => s === 429)).toHaveLength(10);
+    expect((await magic("probe99@example.com", { "x-real-ip": "2001:db8:1:3::1" })).status).not.toBe(429);
   });
 
   it("no IP headers at all: only the per-email limit applies", async () => {

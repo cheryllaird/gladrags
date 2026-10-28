@@ -28,6 +28,8 @@ function get(query: string, headers: Record<string, string> = {}) {
 }
 
 beforeEach(() => {
+  // These check the real (Supabase) path; mock mode skips verification.
+  vi.stubEnv("GLADRAGS_MOCK_MODE", "false");
   fake.verifyOtp.mockClear();
   fake.verifyOtp.mockResolvedValue({ error: null });
   vi.spyOn(console, "error").mockImplementation(() => {});
@@ -47,7 +49,12 @@ describe("GET never signs in", () => {
     const res = await get(`token_hash=${TOKEN}&type=email&next=%2Fwardrobe`, headers);
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBe("no-store");
-    expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+    // Orchestrator decision: no route-level Referrer-Policy (a no-referrer
+    // page makes the form POST send Origin: null). The site-wide
+    // strict-origin-when-cross-origin from next.config.ts applies, so the
+    // single-use token only ever reaches our own origin, in the POST that
+    // consumes it.
+    expect(res.headers.get("referrer-policy")).toBeNull();
     expect(res.headers.get("set-cookie")).toBeNull();
     expect(fake.verifyOtp).not.toHaveBeenCalled();
   });

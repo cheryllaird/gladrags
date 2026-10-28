@@ -17,15 +17,15 @@ function isPublic(pathname: string): boolean {
 }
 
 /**
- * Scheduled jobs: called by Vercel Cron with a bearer secret, never by a
- * signed-in user, so there's no session to refresh. The route checks the
- * secret itself.
+ * Routes no signed-in user calls, so there's no session to refresh:
+ * scheduled jobs (Vercel Cron, with a bearer secret the route checks) and
+ * the browser's own CSP reports.
  */
-const CRON_PREFIX = "/api/cron/";
+const SESSIONLESS_PREFIXES = ["/api/cron/", "/api/csp-report"];
 
 export async function proxy(request: NextRequest) {
   if (isMockMode()) return NextResponse.next();
-  if (request.nextUrl.pathname.startsWith(CRON_PREFIX)) return NextResponse.next();
+  if (SESSIONLESS_PREFIXES.some((prefix) => request.nextUrl.pathname.startsWith(prefix))) return NextResponse.next();
 
   if (!hasSupabaseEnv()) {
     return new NextResponse(

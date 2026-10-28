@@ -6,21 +6,27 @@
  *
  * - The check runs BEFORE the allowlist check and counts every email
  *   alike, so a refusal says nothing about whether an email is invited.
- * - Keys are SHA-256 hashes, so the sign_in_attempts table holds no email
- *   or IP addresses. Rows over a day old are removed by the daily cleanup.
+ * - Keys are HMAC-SHA-256 hashes made with a server-only key
+ *   (SIGN_IN_HASH_KEY), so the sign_in_attempts table is pseudonymous:
+ *   without the key, its rows can't be matched to an email or IP address,
+ *   not even by hashing guesses. Rows over a day old are removed by the
+ *   daily cleanup.
  * - The IP is the client's, as Vercel reports it (x-real-ip, or the first
  *   x-forwarded-for entry, both set by Vercel's edge). If none is known, only
  *   the email limit applies: everyone is never pooled under one shared
  *   "unknown" key, which would let one person lock everyone out. The IP
  *   limit is higher than the email one, since a household, office or
- *   mobile network can share an address.
+ *   mobile network can share an address. IPv6 addresses are keyed by
+ *   their /64 network, since one home or phone connection gets a whole
+ *   /64 and could otherwise rotate through 2^64 addresses.
  */
 import "server-only";
-import { createHash } from "node:crypto";
+import { createHmac } from "node:crypto";
+import { isIPv4, isIPv6 } from "node:net";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { ApiException } from "@/lib/api/errors";
-import { isMockMode } from "@/lib/env";
+import { ConfigError, isMockMode } from "@/lib/env";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export type SignInAction = "magic_link" | "verify_code";
@@ -46,12 +52,61 @@ export interface SignInAttemptStore {
   deleteCreatedBefore(cutoff: Date): Promise<number>;
 }
 
-function sha256(text: string): string {
-  return createHash("sha256").update(text).digest("hex");
+/** Used only in mock mode and tests, where there's nothing real to protect. */
+const DEV_HASH_KEY = "gladrags-dev-only-sign-in-hash-key-not-for-production";
+
+/** The shortest SIGN_IN_HASH_KEY accepted (32 characters, e.g. `openssl rand -hex 32` gives 64). */
+export const MIN_SIGN_IN_HASH_KEY_LENGTH = 32;
+
+/**
+ * The HMAC key for sign-in attempt keys. Outside mock mode and tests it
+ * must be set (SIGN_IN_HASH_KEY), or sign-in fails closed with
+ * server_misconfigured rather than storing guessable hashes.
+ */
+export function signInHashKey(): string {
+  const key = process.env.SIGN_IN_HASH_KEY;
+  if (key && key.trim() === key && key.length >= MIN_SIGN_IN_HASH_KEY_LENGTH) return key;
+  if (!key && (isMockMode() || process.env.NODE_ENV === "test")) return DEV_HASH_KEY;
+  throw new ConfigError(
+    `SIGN_IN_HASH_KEY must be set to at least ${MIN_SIGN_IN_HASH_KEY_LENGTH} characters, with no spaces around it. See .env.example.`,
+  );
 }
 
-export const hashEmail = (email: string) => sha256(`gladrags:email:${email.trim().toLowerCase()}`);
-export const hashIp = (ip: string) => sha256(`gladrags:ip:${ip}`);
+function hmac(text: string): string {
+  return createHmac("sha256", signInHashKey()).update(text).digest("hex");
+}
+
+export const hashEmail = (email: string) => hmac(`gladrags:email:${email.trim().toLowerCase()}`);
+export const hashIp = (ip: string) => hmac(`gladrags:ip:${ipRateLimitKey(ip)}`);
+
+/**
+ * What an IP address is limited by: an IPv4 address as it is (IPv4-mapped
+ * IPv6 such as ::ffff:203.0.113.7 counts as IPv4), an IPv6 address by its
+ * /64 network, e.g. "2001:db8:1:2::/64". Anything else is used as given.
+ */
+export function ipRateLimitKey(ip: string): string {
+  const address = ip.trim().replace(/^\[|\]$/g, "");
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(address);
+  if (mapped && isIPv4(mapped[1]!)) return mapped[1]!;
+  if (isIPv4(address) || !isIPv6(address)) return address;
+  return `${expandIpv6(address).slice(0, 4).join(":")}::/64`;
+}
+
+/** The eight hextets of an IPv6 address, lower-case without leading zeros. */
+function expandIpv6(address: string): string[] {
+  let text = address.toLowerCase().split("%")[0]!;
+  // An embedded IPv4 tail (e.g. 64:ff9b::192.0.2.1) becomes two hextets.
+  const v4 = /(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(text);
+  if (v4) {
+    const [a, b, c, d] = v4.slice(1).map(Number) as [number, number, number, number];
+    text = `${text.slice(0, v4.index)}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
+  }
+  const [head, tail] = text.includes("::") ? text.split("::") : [text, null];
+  const left = head ? head.split(":") : [];
+  const right = tail ? tail.split(":") : [];
+  const zeros = tail === null ? [] : Array(8 - left.length - right.length).fill("0");
+  return [...left, ...zeros, ...right].map((part) => parseInt(part || "0", 16).toString(16));
+}
 
 /** The client's IP address as the hosting platform reports it, or null. */
 export function clientIp(request: Request): string | null {

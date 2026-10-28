@@ -25,6 +25,7 @@ import { CUTOUT_RULES, checkUploadedCutout, cleanImage } from "@/lib/ingestion/i
 import { newImageKey, type ImageStorage } from "@/lib/ingestion/storage";
 import { suggestTags, type TaggingDeps } from "@/lib/ingestion/tagging";
 import type { ImageStore } from "@/lib/outfits/thumbnails";
+import { isAiPausedError } from "@/lib/usage/errors";
 import type { LinkImportRepository, OpenLinkImport } from "./repository";
 
 export interface LinkCutoutDeps extends TaggingDeps {
@@ -81,7 +82,8 @@ export async function finishLinkImport(deps: LinkCutoutDeps, userId: string, upl
   }
   if (!claimed) {
     await removeCutout();
-    await counted.cancel();
+    // Best effort: a failed refund mustn't turn the 404 into a 500.
+    await counted.cancel().catch(() => {});
     throw importGone();
   }
 
@@ -111,6 +113,13 @@ export async function finishLinkImport(deps: LinkCutoutDeps, userId: string, upl
     // The original stays: it belongs to the import, and the cleanup job
     // removes it if no item ever uses it.
     await removeCutout();
+    // AI paused before the tagging call: nothing was tagged, so give the
+    // count back and reopen the import, so the user can finish it later
+    // (inside its hour) without pasting the link again.
+    if (isAiPausedError(error)) {
+      await counted.cancel().catch(() => {});
+      await deps.linkImports.release(userId, originalKey).catch(() => {});
+    }
     throw error;
   }
 }

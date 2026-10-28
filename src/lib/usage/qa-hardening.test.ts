@@ -3,7 +3,7 @@
  * under parallel Gemini calls, reservations that never settle, and the UK
  * day/month windows the app hands to reserve_usage.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { callWithValidation } from "@/lib/ai/validate";
 import type { ModelCall } from "@/lib/ai/types";
@@ -131,10 +131,10 @@ describe("monthly spend cap under parallel Gemini calls", () => {
     await expect(guard.isAiPaused()).resolves.toBe(true);
   });
 
-  it("MEASURED: in-flight calls that settle above the estimate push past the cap by (real - estimate) each", async () => {
-    // Pins the documented "a real cost above the estimate can add a little
-    // more". With N calls in flight when the cap is crossed, the overshoot
-    // is the sum of their excess over the estimate: not bounded by 0.5p.
+  it("MEASURED: in-flight calls that settle above the estimate push past the cap by at most 2x the estimate each", async () => {
+    // Was unbounded (the sum of each call's excess over the estimate). Now
+    // a settled cost is clamped to MAX_SETTLED_COST_MULTIPLE (3) times its
+    // estimate, so each call in flight adds at most 2 x 0.2p here.
     const { guard, store } = setup();
     await store.record({ userId: null, kind: "tagging", costPence: 498, provider: "gemini" });
     const meters = Array.from({ length: 30 }, () => guard.meterAiCalls(ALICE, "tagging", "gemini"));
@@ -142,10 +142,13 @@ describe("monthly spend cap under parallel Gemini calls", () => {
     const granted = meters.filter((_, i) => results[i]!.status === "fulfilled");
     // 498p + 0.2p each: 10 reservations fit before 500p is reached.
     expect(granted).toHaveLength(10);
-    // Every granted call then reports a real cost of 1p (5x the estimate).
+    // Every granted call then reports a real cost of 1p (5x the estimate),
+    // recorded at the 0.6p bound: 498 + 10 x 0.6 = 504p.
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     await Promise.all(granted.map((m) => m.onCall({ costPence: 1, provider: "gemini" })));
     const overshoot = spend(store) - MONTHLY_AI_SPEND_CAP_PENCE;
-    expect(overshoot).toBeCloseTo(8, 5);
+    expect(overshoot).toBeCloseTo(4, 5);
+    expect(overshoot).toBeLessThanOrEqual(granted.length * 2 * ESTIMATED_COST_PENCE.tagging + 1e-9);
     await expect(guard.reserveAiCost(ALICE, "tagging")).rejects.toBeInstanceOf(CapReachedError);
   });
 });
@@ -223,12 +226,10 @@ describe("reservations that never settle keep the estimate", () => {
     expect(store.events[0]!.costPence).toBe(ESTIMATED_COST_PENCE.tagging);
   });
 
-  // FINDING (low): the provider's reported cost is not validated before it
-  // reaches the store. The in-memory store (mock mode, tests) accepts NaN,
-  // which makes the month's total NaN and silently disables the £5 cap;
-  // Postgres would refuse NaN (sent as JSON null) and negatives (check
-  // constraint), so settle throws and the request fails after a paid call.
-  it("FINDING: a NaN cost reported by a provider disables the in-memory spend cap", async () => {
+  // Was FINDING (low), fixed: a reported cost that isn't a finite number
+  // >= 0 used to reach the store (NaN disabled the in-memory cap; Postgres
+  // refused it after a paid call). The estimate is recorded instead.
+  it("a NaN cost reported by a provider records the estimate; the cap holds", async () => {
     const { guard, store } = setup();
     await store.record({ userId: null, kind: "tagging", costPence: MONTHLY_AI_SPEND_CAP_PENCE, provider: "gemini" });
     await expect(guard.isAiPaused()).resolves.toBe(true);
@@ -238,16 +239,27 @@ describe("reservations that never settle keep the estimate", () => {
     await meter.beforeCall();
     await store.record({ userId: null, kind: "tagging", costPence: MONTHLY_AI_SPEND_CAP_PENCE, provider: "gemini" });
     await meter.onCall({ costPence: Number.NaN, provider: "gemini" });
-    expect(await guard.isAiPaused()).toBe(false); // the cap is gone
-    await expect(guard.reserveAiCost(BOB, "tagging")).resolves.toEqual(expect.any(String));
+    expect(store.events.every((e) => Number.isFinite(e.costPence))).toBe(true);
+    expect(await guard.isAiPaused()).toBe(true);
+    await expect(guard.reserveAiCost(BOB, "tagging")).rejects.toBeInstanceOf(CapReachedError);
   });
 
-  it("FINDING: a negative cost is accepted and lowers the month's spend (in memory)", async () => {
-    const { guard, store } = setup();
-    await store.record({ userId: null, kind: "tagging", costPence: MONTHLY_AI_SPEND_CAP_PENCE, provider: "gemini" });
-    await guard.recordAiCost(ALICE, "tagging", -10, "gemini");
-    expect(await guard.isAiPaused()).toBe(false);
-  });
+  it.each([[-10], [Number.NaN], [Number.POSITIVE_INFINITY], [Number.NEGATIVE_INFINITY]])(
+    "a reported cost of %s is replaced by the estimate (record and settle)",
+    async (bad) => {
+      const { guard, store } = setup();
+      await store.record({ userId: null, kind: "tagging", costPence: MONTHLY_AI_SPEND_CAP_PENCE, provider: "gemini" });
+      await guard.recordAiCost(ALICE, "tagging", bad, "gemini");
+      expect(store.events.at(-1)!.costPence).toBe(ESTIMATED_COST_PENCE.tagging);
+      expect(await guard.isAiPaused()).toBe(true);
+      // A reservation made before the month filled up.
+      const reserved = await store.reserve({ userId: ALICE, kind: "tagging", costPence: ESTIMATED_COST_PENCE.tagging, provider: "gemini", dailyLimit: null, dayStart: null, monthlyCapPence: null, monthStart: null });
+      if (!reserved.ok) throw new Error("expected a reservation");
+      const id = reserved.eventId;
+      await guard.settleAiCost(id, "tagging", { costPence: bad, provider: "gemini" });
+      expect(store.events.find((e) => e.id === id)!.costPence).toBe(ESTIMATED_COST_PENCE.tagging);
+    },
+  );
 });
 
 describe("the UK windows passed to reserve_usage always pass its sanity checks", () => {

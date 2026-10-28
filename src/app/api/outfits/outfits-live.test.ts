@@ -255,3 +255,33 @@ describe("list, get, status and refine (mock mode off)", () => {
     expect(fake.db.tables.outfit_feedback).toEqual([expect.objectContaining({ kind: "guidance", detail: "warmer" })]);
   });
 });
+
+describe("AI pausing mid-request (another request takes the month to the cap)", () => {
+  /** Fill the month's spend right after this request's outfit_request is counted. */
+  function pauseAfterCounting() {
+    const reserve = fake.usage.reserve.bind(fake.usage);
+    vi.spyOn(fake.usage, "reserve").mockImplementation(async (request) => {
+      const result = await reserve(request);
+      if (request.kind === "outfit_request") {
+        await fake.usage.record({ userId: null, kind: "tagging", costPence: MONTHLY_AI_SPEND_CAP_PENCE, provider: "gemini" });
+      }
+      return result;
+    });
+  }
+
+  it("answers ai_paused, makes no model call, and gives today's count back", async () => {
+    pauseAfterCounting();
+    await expectError(await outfits.POST(json("/api/outfits", "POST", { style: { kind: "preset", presetId: "work" }, count: 3 })), "ai_paused");
+    expect(ranking.shortlistCalls).toHaveLength(0);
+    expect(ranking.finalCalls).toHaveLength(0);
+    expect(fake.usage.events.filter((e) => e.kind === "outfit_request")).toHaveLength(0);
+    expect(fake.db.tables.outfits ?? []).toHaveLength(0);
+  });
+
+  it("a different failure after counting (the model fails twice) keeps the count", async () => {
+    ranking = new FakeRankingProvider({ shortlist: ["not json", "not json"], final: ["not json", "not json"] });
+    fake.ranking = () => ranking;
+    await expectError(await outfits.POST(json("/api/outfits", "POST", { style: { kind: "preset", presetId: "work" }, count: 3 })), "ai_failed");
+    expect(fake.usage.events.filter((e) => e.kind === "outfit_request")).toHaveLength(1);
+  });
+});

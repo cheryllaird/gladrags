@@ -22,6 +22,8 @@ function post(fields: Record<string, string>, headers: Record<string, string> = 
 }
 
 beforeEach(() => {
+  // The real (Supabase) path; the mock-mode test below turns it back on.
+  vi.stubEnv("GLADRAGS_MOCK_MODE", "false");
   fake.verifyOtp.mockClear();
   fake.verifyOtp.mockResolvedValue({ error: null });
   vi.spyOn(console, "error").mockImplementation(() => {});
@@ -38,7 +40,8 @@ describe("GET (the emailed link)", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/html");
     expect(res.headers.get("cache-control")).toBe("no-store");
-    expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+    // No route-level Referrer-Policy: the site-wide one applies (see the route's comment).
+    expect(res.headers.get("referrer-policy")).toBeNull();
     const html = await res.text();
     expect(html).toContain('<form method="post" action="/auth/confirm">');
     expect(html).toContain('name="token_hash" value="abc123"');
@@ -98,6 +101,31 @@ describe("POST (the form)", () => {
     const res = await post({ token_hash: "abc123", type: "email" }, headers);
     expect(res.status).toBe(403);
     expect(fake.verifyOtp).not.toHaveBeenCalled();
+  });
+
+  it("accepts Origin: null when the browser says Sec-Fetch-Site: same-origin (a no-referrer page's own form)", async () => {
+    const res = await post({ token_hash: "abc123", type: "email", next: "/wardrobe" }, { origin: "null", "sec-fetch-site": "same-origin" });
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe(`${BASE}/wardrobe`);
+    expect(fake.verifyOtp).toHaveBeenCalledTimes(1);
+  });
+
+  it("still refuses Origin: null without same-origin fetch metadata", async () => {
+    const attempts: Record<string, string>[] = [{ origin: "null" }, { origin: "null", "sec-fetch-site": "same-site" }, { origin: "null", "sec-fetch-site": "cross-site" }];
+    for (const headers of attempts) {
+      expect((await post({ token_hash: "abc123", type: "email" }, headers)).status).toBe(403);
+    }
+    expect(fake.verifyOtp).not.toHaveBeenCalled();
+  });
+
+  it("in mock mode (no Supabase), goes straight to next without verifying", async () => {
+    vi.stubEnv("GLADRAGS_MOCK_MODE", "true");
+    const res = await post({ token_hash: "abc123", type: "email", next: "/outfits" });
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe(`${BASE}/outfits`);
+    expect(fake.verifyOtp).not.toHaveBeenCalled();
+    // And mock mode still applies the CSRF check first.
+    expect((await post({ token_hash: "abc123", type: "email" }, { origin: "https://evil.example" })).status).toBe(403);
   });
 
   it("refuses OTP types other than email sign-in", async () => {

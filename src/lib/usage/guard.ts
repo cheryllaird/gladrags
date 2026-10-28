@@ -29,6 +29,17 @@ const USES_AI: Record<CappedAction, boolean> = {
   link_fetch: false,
 };
 
+/**
+ * A settled AI cost is recorded at most this many times its estimate, which
+ * bounds how far calls already in flight can take the month past £5.
+ */
+export const MAX_SETTLED_COST_MULTIPLE = 3;
+
+/** A provider-reported cost if it's a real, non-negative number; otherwise the estimate. */
+function usableCost(reported: number | undefined, estimate: number): number {
+  return reported !== undefined && Number.isFinite(reported) && reported >= 0 ? reported : estimate;
+}
+
 /** A counted action, which can be taken back if it didn't happen after all. */
 export interface UsageReservation {
   /** Delete the reservation, e.g. when the link import it was for turned out to be used already. */
@@ -143,23 +154,33 @@ export class UsageGuard {
 
   /**
    * After the call: record which provider answered and the real cost, if
-   * it reported one (otherwise the estimate stands). A real cost above the
-   * estimate can take the month slightly past the cap; the next
-   * reservation is then refused.
+   * it reported a usable one (otherwise the estimate stands). The settled
+   * cost is clamped to MAX_SETTLED_COST_MULTIPLE times the estimate, so
+   * calls in flight when the month reaches £5 can take it past the cap by
+   * at most (multiple - 1) × estimate each (CONTRACTS.md section 7). A
+   * clamp is logged, as it means the estimates need raising.
    */
   async settleAiCost(reservationId: string, kind: AiCostKind, call: MeteredCall): Promise<void> {
-    await this.store.settle(reservationId, call.costPence ?? ESTIMATED_COST_PENCE[kind], call.provider);
+    const estimate = ESTIMATED_COST_PENCE[kind];
+    let cost = usableCost(call.costPence, estimate);
+    const max = estimate * MAX_SETTLED_COST_MULTIPLE;
+    if (cost > max) {
+      console.warn("AI call cost above the cap's bound; recorded at the bound. Raise ESTIMATED_COST_PENCE.", { kind, reported: cost, recorded: max });
+      cost = max;
+    }
+    await this.store.settle(reservationId, cost, call.provider);
   }
 
   /**
    * Record a cost that's already been incurred, without checking the cap.
-   * Prefer `meterAiCalls`, which reserves before each call.
+   * Prefer `meterAiCalls`, which reserves before each call. A missing,
+   * non-finite or negative cost records the estimate instead.
    */
   async recordAiCost(userId: string | null, kind: AiCostKind, costPence?: number, provider?: string): Promise<void> {
     await this.store.record({
       userId,
       kind,
-      costPence: costPence ?? ESTIMATED_COST_PENCE[kind],
+      costPence: usableCost(costPence, ESTIMATED_COST_PENCE[kind]),
       provider: provider ?? null,
     });
   }

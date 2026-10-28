@@ -52,6 +52,23 @@ describe("cross-site requests", () => {
     expect(isCrossSiteRequest(request("POST", headers))).toBe(false);
   });
 
+  it.each([
+    ["Origin null (a no-referrer page's own form)", { origin: "null", "sec-fetch-site": "same-origin" }],
+    ["a LAN address the server doesn't know itself by (testing on a phone)", { origin: "http://192.168.1.20:3000", "sec-fetch-site": "same-origin" }],
+    ["a public host in front of a proxy", { origin: "https://public.example", "sec-fetch-site": "same-origin" }],
+  ])("trusts the browser's Sec-Fetch-Site: same-origin: %s", (_label, headers) => {
+    expect(isCrossSiteRequest(request("POST", headers))).toBe(false);
+  });
+
+  it.each([
+    ["same-site (a sibling subdomain) with a foreign Origin", { origin: "https://evil.gladrags.example", "sec-fetch-site": "same-site" }],
+    ["same-site with Origin null", { origin: "null", "sec-fetch-site": "same-site" }],
+    ["cross-site with this site's Origin claimed", { origin: "https://evil.example", "sec-fetch-site": "cross-site" }],
+    ["none (typed or bookmarked) with a foreign Origin", { origin: "https://evil.example", "sec-fetch-site": "none" }],
+  ])("still refuses %s", (_label, headers) => {
+    expect(isCrossSiteRequest(request("POST", headers))).toBe(true);
+  });
+
   it("allows NEXT_PUBLIC_SITE_URL's origin (e.g. behind a proxy)", () => {
     vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://app.gladrags.example/");
     expect(isCrossSiteRequest(request("POST", { origin: "https://app.gladrags.example" }))).toBe(false);

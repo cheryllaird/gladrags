@@ -12,9 +12,19 @@
 //   the token and signs in.
 // Typing the emailed code (POST /api/auth/verify-code) is unchanged, so
 // the iPhone home-screen app keeps working.
+//
+// The page uses the site-wide Referrer-Policy (strict-origin-when-cross-
+// origin), so its form POST carries the token_hash in a same-origin Referer
+// only. That token is single-use and that same POST consumes it. A
+// route-level `no-referrer` would make browsers send `Origin: null` on the
+// POST, which the CSRF check would have to special-case.
+//
+// In mock mode (no Supabase) the POST skips verification, like every mock
+// sign-in, and goes straight to `next`.
 import type { EmailOtpType } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { isCrossSiteRequest } from "@/lib/api/http";
+import { isMockMode } from "@/lib/env";
 import { safeReturnPath } from "@/lib/auth/redirect";
 import { createClient } from "@/lib/supabase/server";
 
@@ -95,9 +105,8 @@ export async function GET(request: Request) {
   return new NextResponse(continuePage({ tokenHash: params.tokenHash, type: params.type, next: params.next }), {
     headers: {
       "content-type": "text/html; charset=utf-8",
-      // The token is in this page: keep it out of every cache and referrer.
+      // The token is in this page: keep it out of every cache.
       "cache-control": "no-store",
-      "referrer-policy": "no-referrer",
     },
   });
 }
@@ -117,6 +126,7 @@ export async function POST(request: Request) {
     return signInAgain(url.origin, "/");
   }
   const { tokenHash, type, next } = readParams(form);
+  if (tokenHash && type && isMockMode()) return NextResponse.redirect(new URL(next, url.origin), 303);
   if (tokenHash && type) {
     const supabase = await createClient();
     const { error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type });
