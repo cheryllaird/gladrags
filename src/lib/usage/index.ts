@@ -4,9 +4,9 @@ import { UsageGuard } from "./guard";
 import { InMemoryUsageStore, SupabaseUsageStore } from "./store";
 
 export * from "./config";
-export { CapReachedError } from "./errors";
-export { UsageGuard, DEFAULT_USAGE_LIMITS, type UsageLimits } from "./guard";
-export { InMemoryUsageStore, SupabaseUsageStore, type UsageStore, type UsageEvent } from "./store";
+export { CapReachedError, isAiPausedError } from "./errors";
+export { UsageGuard, DEFAULT_USAGE_LIMITS, MAX_SETTLED_COST_MULTIPLE, type AiCallMeter, type MeteredCall, type UsageLimits, type UsageReservation } from "./guard";
+export { InMemoryUsageStore, SupabaseUsageStore, type UsageEvent, type UsageReservationRequest, type UsageReservationResult, type UsageStore } from "./store";
 
 // Kept on globalThis so the in-memory store survives dev-server hot reloads.
 const globalForUsage = globalThis as unknown as { __gladragsMockUsage?: InMemoryUsageStore };

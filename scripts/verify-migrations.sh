@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Apply supabase/migrations to a throwaway Postgres database (with a stub of
-# Supabase's auth and storage schemas) and run supabase/tests/rls.test.sql.
+# Supabase's auth and storage schemas), run supabase/tests/rls.test.sql, then
+# supabase/tests/concurrency.sh (parallel reservations can't overshoot a cap).
+# Then supabase/tests/qa-concurrency.sh (QA bursts: link fetches, mixed locks,
+# per-IP sign-in limits, unique image keys, window checks).
 #
 # Usage:
 #   DATABASE_URL=postgresql://postgres@127.0.0.1:5432/postgres pnpm db:verify
@@ -37,3 +40,9 @@ done
 
 echo "Running checks..."
 psql "$TEST_URL" -q -v ON_ERROR_STOP=1 -f "$ROOT/supabase/tests/rls.test.sql"
+
+echo "Running concurrency checks..."
+bash "$ROOT/supabase/tests/concurrency.sh" "$TEST_URL"
+
+echo "Running QA concurrency checks..."
+bash "$ROOT/supabase/tests/qa-concurrency.sh" "$TEST_URL"

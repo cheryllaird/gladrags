@@ -31,6 +31,7 @@ function deps(ranking: RankingProvider): PipelineDeps {
   return {
     ranking: () => ranking,
     thumbnails: new PlaceholderThumbnailSource(),
+    beforeAiCall: async () => {},
     recordAiCost: async (kind, call) => {
       costs.push({ kind, call });
     },

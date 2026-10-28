@@ -13,7 +13,8 @@ import { STORAGE_BUCKETS, UPLOAD_FIELDS, type ItemDraft } from "@/contracts";
 import type { ImageInput, TaggingProvider } from "@/lib/ai/types";
 import type { PhotoUpload } from "@/lib/api/upload";
 import { SIGNED_URL_TTL_SECONDS, type ServerImageProcessor } from "@/lib/images/server";
-import type { UsageGuard } from "@/lib/usage/guard";
+import { isAiPausedError } from "@/lib/usage/errors";
+import type { UsageGuard, UsageReservation } from "@/lib/usage/guard";
 import { CUTOUT_RULES, ORIGINAL_RULES, checkUploadedCutout, checkUploadedImage, cleanImage } from "./images";
 import { newImageKey, type ImageBucket, type ImageStorage } from "./storage";
 import { suggestTags } from "./tagging";
@@ -41,9 +42,11 @@ export async function addItemFromPhoto(deps: PhotoIngestionDeps, userId: string,
 
   // 5. Store both in the private buckets.
   const stored = await storeImages(deps.storage, userId, cleanOriginal, cleanCutout);
+  let counted: UsageReservation | null = null;
   try {
     // Stored and valid: count the item now, because tagging (which costs) happens in this request.
-    await deps.usage.recordAction(userId, "item_ingest");
+    // Atomic: two uploads at once can't both take the last place today.
+    counted = await deps.usage.reserveAction(userId, "item_ingest");
 
     // 6. Tag the cut-out if there is one, otherwise the original.
     const suggestedTags = await suggestTags(deps, userId, cleanCutout ?? cleanOriginal);
@@ -70,6 +73,9 @@ export async function addItemFromPhoto(deps: PhotoIngestionDeps, userId: string,
     };
   } catch (error) {
     await removeQuietly(deps.storage, stored);
+    // AI paused before the tagging call (another request took the month to
+    // the cap): nothing was tagged, so give today's count back.
+    if (counted && isAiPausedError(error)) await counted.cancel().catch(() => {});
     throw error;
   }
 }

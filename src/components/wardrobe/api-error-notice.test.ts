@@ -31,6 +31,17 @@ describe("errorCopy", () => {
     expect(copy.message).toMatch(/added 40 items today/);
   });
 
+  it("explains the link limit as links, not items, and points to adding by photo", () => {
+    const error = new ApiClientError("daily_cap_reached", "cap", {
+      cap: { kind: "link_fetches_per_day", limit: 80, resetsAt: "2026-10-26T00:00:00Z" },
+    });
+    const copy = errorCopy(error);
+    expect(copy).toMatchObject({ kind: "cap", title: "That's today's limit for links" });
+    expect(copy.message).toMatch(/imported 80 links today/);
+    expect(copy.message).toMatch(/by photo/);
+    expect(copy.message).not.toMatch(/items today/);
+  });
+
   it("explains the AI pause and that the wardrobe still works", () => {
     const copy = errorCopy(new ApiClientError("ai_paused", "paused"));
     expect(copy).toMatchObject({ kind: "paused", title: "Adding is paused" });

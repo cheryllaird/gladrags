@@ -28,7 +28,8 @@ import {
 } from "@/contracts";
 import type { RankingProvider } from "@/lib/ai/types";
 import { ApiException, notFound } from "@/lib/api/errors";
-import type { UsageGuard } from "@/lib/usage/guard";
+import { isAiPausedError } from "@/lib/usage/errors";
+import type { UsageGuard, UsageReservation } from "@/lib/usage/guard";
 import { MAX_REJECTED_OUTFITS_FOR_HINTS, REFINE_COUNT } from "./config";
 import { runOutfitPipeline, type PipelineInput, type PipelineResult } from "./pipeline";
 import type { OutfitRepository } from "./repository";
@@ -179,18 +180,38 @@ export class OutfitService {
   ): Promise<OutfitGenerationResponse> {
     const { repository, usage, thumbnails } = this.deps;
     const rejectedOutfits = await repository.listRejectedItemIds(userId, MAX_REJECTED_OUTFITS_FOR_HINTS);
+    // Each model call reserves its estimated cost before it's made, then
+    // records the real cost: one meter per pass.
+    const meters = {
+      ranking_shortlist: usage.meterAiCalls(userId, "ranking_shortlist"),
+      ranking_final: usage.meterAiCalls(userId, "ranking_final"),
+    };
 
-    const result = await runOutfitPipeline(
-      { ...input, rejectedOutfits },
-      {
-        ranking: this.deps.ranking,
-        thumbnails,
-        random: this.random,
-        now: this.now,
-        onRankingStart: () => usage.recordAction(userId, "outfit_request"),
-        recordAiCost: (kind, call) => usage.recordAiCost(userId, kind, call.costPence, call.provider),
-      },
-    );
+    const counted: { reservation: UsageReservation | null } = { reservation: null };
+    let result;
+    try {
+      result = await runOutfitPipeline(
+        { ...input, rejectedOutfits },
+        {
+          ranking: this.deps.ranking,
+          thumbnails,
+          random: this.random,
+          now: this.now,
+          // Counted atomically just before the first model call, so parallel
+          // requests can't overshoot the daily cap.
+          onRankingStart: async () => {
+            counted.reservation = await usage.reserveAction(userId, "outfit_request");
+          },
+          beforeAiCall: (kind) => meters[kind].beforeCall(),
+          recordAiCost: (kind, call) => meters[kind].onCall(call),
+        },
+      );
+    } catch (error) {
+      // AI paused before a model call (another request took the month to
+      // the cap): the user gets no outfits, so give today's count back.
+      if (counted.reservation && isAiPausedError(error)) await counted.reservation.cancel().catch(() => {});
+      throw error;
+    }
 
     if (result.status !== "ok") {
       return {

@@ -2,7 +2,7 @@
 
 Maintained by the orchestrator (main Claude Code session). Source of truth for scope: `docs/SPEC.md`.
 
-**Current status:** Milestone 4 (integration) in progress. Journey tests merged and green (192 e2e on the build). Security check done: no code blocker for a Cheryl-only preview; pre-tester hardening running on two branches (`fix/hardening`, `fix/ui-hardening`). Waiting on Cheryl for Supabase network access, Vercel and the Gemini paid tier.
+**Current status:** Milestone 4 (integration): all code work merged (journey tests, security review, both hardening branches). Remaining steps need Cheryl: Supabase network access for the live checks, a Vercel project for the preview deploy, and the Gemini paid tier.
 
 Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 
@@ -56,7 +56,7 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 | Security check (RLS, signed URLs, secrets, uploads, link fetching, deletion) | security | ☑ | No code blocker for a Cheryl-only preview. Blocker P1: run migrations on the real project and a live two-user RLS check. Before testers: T1 atomic caps, T2 Gemini paid tier, T3 privacy note, T4 scheduled cleanup, T5 kept-draft cross-user leak. Fixes in progress (below). |
 | Vercel preview deploy | orchestrator | ☐ |
 | Tester privacy note (owner: orchestrator) | orchestrator | ☑ draft | `docs/PRIVACY.md`, shown at `/privacy` (`src/app/privacy/content.ts`; a test keeps them in step). Needs Cheryl's contact address and the Supabase region. |
-| Pre-tester hardening, backend: atomic caps, unique image keys, link fetch attempts, scheduled cleanup, security headers, httpOnly cookies, CSRF, sign-in rate limit | foundations (`fix/hardening`) | ◐ |
+| Pre-tester hardening, backend: atomic caps, unique image keys, link fetch attempts, scheduled cleanup, security headers, httpOnly cookies, CSRF, sign-in rate limit | foundations (`fix/hardening`) | ☑ merged | Review: changes needed (confirm page's no-referrer made its own POST fail with Origin: null) → fixed, approved at dbe9262. QA: lows only, all fixed. 30 parallel requests against a limit of 5 grant exactly 5. At merge: kept both branches' same-named test files (`qa-hardening-backend.spec.ts`, `proxy-hardening.test.ts`); link-limit error copy. |
 | Pre-tester hardening, UI: kept-draft user check, tap to start shared-link imports, /privacy page | wardrobe-ui (`fix/ui-hardening`) | ☑ merged | Approved twice, QA passed (93 adversarial tests). Stored session data is cleared when a different user signs in on the tab. At merge: the expired-session redirect drops the query string, and cross-user e2e checks wait for hydration. |
 | Live checks once Supabase is reachable: migrations, buckets private, two-user RLS, real sign-in | orchestrator | ⛔ network |
 | Record real Gemini fixtures; time real tagging; check guidance like "no heels" is respected (no code backstop: the model decides) | orchestrator | ⛔ Gemini quota |
@@ -91,12 +91,12 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 
 | Item | Owner | When |
 | --- | --- | --- |
-| Make cap check and usage record atomic (parallel requests can overshoot daily caps and the monthly spend check) | foundations / orchestrator | Before tester build |
+| ~~Make cap check and usage record atomic~~ | foundations | Done in `fix/hardening` (`reserve_usage`) |
 | Run cut-out checks before claiming a link import, so a rejected cut-out doesn't use it up | link-import | Milestone 3 |
 | Clean up orphaned images (unfinished link imports, unsaved drafts) | ingestion, link-import | Milestone 3 |
 | Check cut-out PNGs have an alpha channel | ingestion | Milestone 3 |
 | Client re-encodes HEIC (iPhone) photos to JPEG | wardrobe-ui, ingestion | Milestone 3 |
-| Allowlist update trigger: only fire when the email actually changes | foundations / orchestrator | Before tester build |
+| ~~Allowlist update trigger: only fire when the email actually changes~~ | foundations | Done in `fix/hardening` |
 | Apply migrations to Cheryl's Supabase project and test auth end to end | orchestrator | Once keys exist |
 | Supabase email template (`{{ .Token }}`) and redirect URLs | Cheryl | Before sign-in can be tested live |
 

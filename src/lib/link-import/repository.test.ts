@@ -113,19 +113,6 @@ describe("SupabaseLinkImportRepository", () => {
     await expect(repo.create({ userId: TEST_USER, sourceUrl: ROW.source_url, originalImageKey: KEY, product: ROW.product })).rejects.toThrow("down");
   });
 
-  it("createdSince reads the user's newest rows inside the window, limited (the user_id, created_at desc index)", async () => {
-    const { client, queries } = fakeClient(() => ({ data: [{ created_at: "2026-10-25T09:00:00Z" }, { created_at: "2026-10-25T08:00:00Z" }], error: null }));
-    const since = new Date("2026-10-24T10:00:00Z");
-    const dates = await new SupabaseLinkImportRepository(client, () => NOW).createdSince(TEST_USER, since, 80);
-    expect(dates.map((d) => d.toISOString())).toEqual(["2026-10-25T09:00:00.000Z", "2026-10-25T08:00:00.000Z"]);
-    const q = queries[0]!;
-    expect(has(q, "select", "created_at")).toBe(true);
-    expect(has(q, "eq", "user_id", TEST_USER)).toBe(true);
-    expect(has(q, "gt", "created_at", since.toISOString())).toBe(true);
-    expect(has(q, "order", "created_at", { ascending: false })).toBe(true);
-    expect(has(q, "limit", 80)).toBe(true);
-  });
-
   it("deleteCreatedBefore deletes by age", async () => {
     const { client, queries } = fakeClient(() => ({ data: [{ id: "a" }, { id: "b" }], error: null }));
     expect(await new SupabaseLinkImportRepository(client, () => NOW).deleteCreatedBefore(NOW)).toBe(2);

@@ -34,13 +34,13 @@ export interface LinkImportRepository {
    * if it isn't this user's, was already used, or has expired.
    */
   claim(userId: string, originalImageKey: string): Promise<OpenLinkImport | null>;
+  /**
+   * Undo a claim (tagged_at back to null) when step 2 stopped before
+   * tagging, e.g. because AI paused. The import's time limit still applies.
+   */
+  release(userId: string, originalImageKey: string): Promise<void>;
   /** Delete rows older than the cutoff (used or not). Returns how many went. */
   deleteCreatedBefore(cutoff: Date): Promise<number>;
-  /**
-   * When this user's imports since `since` were created, newest first, at
-   * most `limit` of them (for step 1's rate limit).
-   */
-  createdSince(userId: string, since: Date, limit: number): Promise<Date[]>;
 }
 
 const OpenRowSchema = z.object({ source_url: SourceUrlSchema, product: LinkProductSchema });
@@ -102,27 +102,21 @@ export class SupabaseLinkImportRepository implements LinkImportRepository {
     return toOpen(data);
   }
 
+  async release(userId: string, originalImageKey: string): Promise<void> {
+    const { error } = await this.admin
+      .from("link_imports")
+      .update({ tagged_at: null })
+      .eq("user_id", userId)
+      .eq("original_image_key", originalImageKey);
+    if (error) throw new Error(`Couldn't release the link import: ${error.message}`);
+  }
+
   async deleteCreatedBefore(cutoff: Date): Promise<number> {
     const { data, error } = await this.admin.from("link_imports").delete().lt("created_at", cutoff.toISOString()).select("id");
     if (error) throw new Error(`Couldn't delete old link imports: ${error.message}`);
     return (data ?? []).length;
   }
 
-  async createdSince(userId: string, since: Date, limit: number): Promise<Date[]> {
-    // Served by link_imports_user_created_idx (user_id, created_at desc).
-    const { data, error } = await this.admin
-      .from("link_imports")
-      .select("created_at")
-      .eq("user_id", userId)
-      .gt("created_at", since.toISOString())
-      .order("created_at", { ascending: false })
-      .limit(limit);
-    if (error) throw new Error(`Couldn't count link imports: ${error.message}`);
-    return z
-      .array(z.object({ created_at: z.string() }))
-      .parse(data ?? [])
-      .map((row) => new Date(row.created_at));
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -165,6 +159,11 @@ export class InMemoryLinkImportRepository implements LinkImportRepository {
     return { sourceUrl: row.sourceUrl, product: structuredClone(row.product) };
   }
 
+  async release(userId: string, key: string): Promise<void> {
+    const row = this.rows.get(key);
+    if (row && row.userId === userId) row.taggedAt = null;
+  }
+
   async deleteCreatedBefore(cutoff: Date): Promise<number> {
     let deleted = 0;
     for (const [key, row] of this.rows) {
@@ -174,14 +173,6 @@ export class InMemoryLinkImportRepository implements LinkImportRepository {
       }
     }
     return deleted;
-  }
-
-  async createdSince(userId: string, since: Date, limit: number): Promise<Date[]> {
-    return [...this.rows.values()]
-      .filter((row) => row.userId === userId && row.createdAt > since)
-      .map((row) => row.createdAt)
-      .sort((a, b) => b.getTime() - a.getTime())
-      .slice(0, limit);
   }
 
   /** Keys an unfinished import can still use (for the image cleanup tests). */

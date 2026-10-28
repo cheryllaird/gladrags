@@ -34,6 +34,12 @@ export interface PipelineDeps {
   /** Makes the ranking provider; called only once the model is needed. */
   ranking: () => RankingProvider;
   thumbnails: ThumbnailSource;
+  /**
+   * Before each model call (every attempt): reserve its estimated cost
+   * against the monthly AI cap. Throws CapReachedError (ai_paused) if the
+   * cap is reached, which stops the pipeline.
+   */
+  beforeAiCall: (kind: Extract<AiCostKind, "ranking_shortlist" | "ranking_final">) => Promise<void>;
   /** Record one model call's cost (every attempt, including failed ones). */
   recordAiCost: (kind: Extract<AiCostKind, "ranking_shortlist" | "ranking_final">, call: ModelCall) => Promise<void>;
   /**
@@ -171,6 +177,7 @@ export async function runOutfitPipeline(input: PipelineInput, deps: PipelineDeps
           candidates,
           shortlistSize: SHORTLIST_SIZE,
         }),
+      beforeCall: () => deps.beforeAiCall("ranking_shortlist"),
       onCall: (call) => deps.recordAiCost("ranking_shortlist", call),
       provider: ranking.name,
     });
@@ -198,6 +205,7 @@ export async function runOutfitPipeline(input: PipelineInput, deps: PipelineDeps
         })),
         count: input.count,
       }),
+    beforeCall: () => deps.beforeAiCall("ranking_final"),
     onCall: (call) => deps.recordAiCost("ranking_final", call),
     provider: ranking.name,
   });
@@ -224,6 +232,7 @@ interface RankPass<T> {
   /** This many valid outfits make a reply good enough (no retry). */
   enough: number;
   call: () => Promise<ModelCall>;
+  beforeCall: () => Promise<void>;
   onCall: (call: ModelCall) => Promise<void>;
   provider: string;
 }
@@ -242,6 +251,7 @@ async function rankPass<T extends { itemIds: string[]; name?: string; reason?: s
       if (valid.length > best.length) best = valid;
       return problem;
     },
+    beforeCall: pass.beforeCall,
     onCall: pass.onCall,
     provider: pass.provider,
   });

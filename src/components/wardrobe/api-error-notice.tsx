@@ -29,6 +29,13 @@ export function errorCopy(error: unknown): ErrorCopy {
       case "daily_cap_reached": {
         const limit = error.cap?.limit;
         const when = error.cap ? ` You can add more ${formatResetTime(error.cap.resetsAt)}.` : "";
+        if (error.cap?.kind === "link_fetches_per_day") {
+          return {
+            kind: "cap",
+            title: "That's today's limit for links",
+            message: `You've imported ${limit ?? "the most"} links today. You can still add items by photo.${when}`,
+          };
+        }
         return {
           kind: "cap",
           title: "That's today's limit",

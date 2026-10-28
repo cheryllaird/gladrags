@@ -8,10 +8,12 @@
  * 2. Look the import up WITHOUT using it, and check and clean the cut-out
  *    against the stored original. A bad cut-out is a 400 and the import
  *    can still be used (follow-up from the foundations review).
- * 3. Store the cut-out, then claim the import in one statement. Losing a
- *    race (or a replay) is a 404, and the stored cut-out is removed.
- * 4. Count the item, tag the cut-out (or the original) with the product
- *    data the SERVER stored in step 1 as untrusted hints, return the draft.
+ * 3. Count the item (atomically, so a parallel request can't take the
+ *    last place today after this one passed), store the cut-out, then
+ *    claim the import in one statement. Losing a race (or a replay) is a
+ *    404: the stored cut-out is removed and the count taken back.
+ * 4. Tag the cut-out (or the original) with the product data the SERVER
+ *    stored in step 1 as untrusted hints, return the draft.
  */
 import "server-only";
 import { STORAGE_BUCKETS, UPLOAD_FIELDS, imageKeyBelongsTo, type ItemDraft } from "@/contracts";
@@ -23,6 +25,7 @@ import { CUTOUT_RULES, checkUploadedCutout, cleanImage } from "@/lib/ingestion/i
 import { newImageKey, type ImageStorage } from "@/lib/ingestion/storage";
 import { suggestTags, type TaggingDeps } from "@/lib/ingestion/tagging";
 import type { ImageStore } from "@/lib/outfits/thumbnails";
+import { isAiPausedError } from "@/lib/usage/errors";
 import type { LinkImportRepository, OpenLinkImport } from "./repository";
 
 export interface LinkCutoutDeps extends TaggingDeps {
@@ -53,9 +56,18 @@ export async function finishLinkImport(deps: LinkCutoutDeps, userId: string, upl
   const checked = upload.cutout ? await checkUploadedCutout(deps.images, upload.cutout, UPLOAD_FIELDS.cutout, originalInfo) : null;
   const cutout = checked ? await cleanImage(deps.images, checked, CUTOUT_RULES.maxBytes, UPLOAD_FIELDS.cutout, "cut-out") : null;
 
-  // 3. Store the cut-out, then claim.
+  // 3. Count it (tagging, which costs, happens in this request). Before
+  // the claim, so a cap reached meanwhile doesn't use the import up.
+  const counted = await deps.usage.reserveAction(userId, "item_ingest");
+
+  // Store the cut-out, then claim.
   const cutoutKey = cutout ? newImageKey(userId, cutout.mimeType) : null;
-  if (cutout && cutoutKey) await deps.storage.upload(STORAGE_BUCKETS.cutouts, cutoutKey, cutout);
+  try {
+    if (cutout && cutoutKey) await deps.storage.upload(STORAGE_BUCKETS.cutouts, cutoutKey, cutout);
+  } catch (error) {
+    await counted.cancel().catch(() => {});
+    throw error;
+  }
   const removeCutout = async () => {
     if (cutoutKey) await deps.storage.remove(STORAGE_BUCKETS.cutouts, [cutoutKey]).catch(() => {});
   };
@@ -65,16 +77,18 @@ export async function finishLinkImport(deps: LinkCutoutDeps, userId: string, upl
     claimed = await deps.linkImports.claim(userId, originalKey);
   } catch (error) {
     await removeCutout();
+    await counted.cancel().catch(() => {});
     throw error;
   }
   if (!claimed) {
     await removeCutout();
+    // Best effort: a failed refund mustn't turn the 404 into a 500.
+    await counted.cancel().catch(() => {});
     throw importGone();
   }
 
   try {
-    // 4. Count it now: tagging, which costs, happens in this request.
-    await deps.usage.recordAction(userId, "item_ingest");
+    // 4. Tag it.
     const tagImage: ImageInput = cutout ?? original;
     const suggestedTags = await suggestTags(deps, userId, tagImage, claimed.product);
 
@@ -99,6 +113,13 @@ export async function finishLinkImport(deps: LinkCutoutDeps, userId: string, upl
     // The original stays: it belongs to the import, and the cleanup job
     // removes it if no item ever uses it.
     await removeCutout();
+    // AI paused before the tagging call: nothing was tagged, so give the
+    // count back and reopen the import, so the user can finish it later
+    // (inside its hour) without pasting the link again.
+    if (isAiPausedError(error)) {
+      await counted.cancel().catch(() => {});
+      await deps.linkImports.release(userId, originalKey).catch(() => {});
+    }
     throw error;
   }
 }

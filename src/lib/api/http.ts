@@ -13,6 +13,17 @@ import { ApiException } from "./errors";
  *     ...
  *     return jsonResponse(SomeResponseSchema, data);
  *   });
+ *
+ * Cross-site request forgery (CSRF) protection, on top of SameSite=Lax
+ * session cookies:
+ * - withApiHandler refuses an unsafe method (POST, PATCH, PUT, DELETE)
+ *   from another site (403 forbidden). A browser's `Sec-Fetch-Site:
+ *   same-origin` is trusted (pages can't set it). Otherwise the Origin
+ *   must be this site's; with no Origin, a Sec-Fetch-Site of "cross-site"
+ *   is refused too.
+ * - parseJsonBody requires Content-Type: application/json (415
+ *   unsupported_media_type). A plain HTML form can't send that type, so a
+ *   JSON route can't be driven by a form on another site.
  */
 
 function issuesFrom(error: z.ZodError) {
@@ -26,8 +37,20 @@ function badRequest(error: z.ZodError, what: string): ApiException {
   return new ApiException("bad_request", `The ${what} isn't valid`, { issues: issuesFrom(error) });
 }
 
-/** Parse and validate a JSON request body. Throws a bad_request ApiException. */
+/** True if the Content-Type is JSON (application/json, optionally with parameters such as charset). */
+export function isJsonContentType(contentType: string | null): boolean {
+  return contentType !== null && /^\s*application\/json\s*(;|$)/i.test(contentType);
+}
+
+/**
+ * Parse and validate a JSON request body. Throws unsupported_media_type
+ * unless the Content-Type is application/json, and bad_request if the
+ * body isn't valid JSON or fails the schema.
+ */
 export async function parseJsonBody<T extends z.ZodType>(request: Request, schema: T): Promise<z.infer<T>> {
+  if (!isJsonContentType(request.headers.get("content-type"))) {
+    throw new ApiException("unsupported_media_type", "The request must be sent as JSON (Content-Type: application/json)");
+  }
   let body: unknown;
   try {
     body = await request.json();
@@ -99,12 +122,57 @@ export function describeError(error: unknown): { name: string; code?: string; me
   return { name: typeof error, message: "Non-Error value thrown" };
 }
 
-/** Wrap a route handler so thrown errors become typed JSON error responses. */
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+/** The origins this site answers to: the request's own, and NEXT_PUBLIC_SITE_URL's if set. */
+function allowedOrigins(request: Request): Set<string> {
+  const origins = new Set([new URL(request.url).origin]);
+  const site = process.env.NEXT_PUBLIC_SITE_URL;
+  if (site) {
+    try {
+      origins.add(new URL(site).origin);
+    } catch {
+      // A malformed NEXT_PUBLIC_SITE_URL adds nothing.
+    }
+  }
+  return origins;
+}
+
+/**
+ * Whether a request could have come from another site. Safe methods
+ * (GET, HEAD, OPTIONS) always pass: they must not change anything.
+ *
+ * `Sec-Fetch-Site: same-origin` passes: browsers set it and pages can't
+ * forge it. That covers an Origin of "null" (sent on a same-origin form
+ * POST from a page with `Referrer-Policy: no-referrer`) and a host that
+ * differs from request.url (testing over the LAN from a phone, or behind a
+ * proxy). Otherwise a present Origin must be this site's (a "null" origin
+ * never is: `same-site` from a sibling subdomain is still refused), and
+ * with no Origin, Sec-Fetch-Site mustn't be "cross-site". Requests with
+ * neither header (curl, server-to-server) pass: they carry no browser
+ * cookies unless the caller has them anyway.
+ */
+export function isCrossSiteRequest(request: Request): boolean {
+  if (SAFE_METHODS.has(request.method.toUpperCase())) return false;
+  if (request.headers.get("sec-fetch-site") === "same-origin") return false;
+  const origin = request.headers.get("origin");
+  if (origin !== null) return !allowedOrigins(request).has(origin);
+  return request.headers.get("sec-fetch-site") === "cross-site";
+}
+
+/**
+ * Wrap a route handler so thrown errors become typed JSON error responses,
+ * and cross-site requests with unsafe methods are refused (403 forbidden)
+ * before the handler runs.
+ */
 export function withApiHandler<Args extends unknown[]>(
   handler: (request: Request, ...rest: Args) => Promise<Response>,
 ): (request: Request, ...rest: Args) => Promise<Response> {
   return async (request, ...rest) => {
     try {
+      if (isCrossSiteRequest(request)) {
+        throw new ApiException("forbidden", "That request came from another site, so it was refused");
+      }
       return await handler(request, ...rest);
     } catch (error) {
       return errorResponse(toApiException(error));

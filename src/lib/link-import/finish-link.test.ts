@@ -188,10 +188,39 @@ describe("single use and ownership", () => {
 describe("caps", () => {
   it("at today's cap: 429 before anything, and the import stays usable", async () => {
     const key = await stepOne();
-    for (let i = 0; i < TEST_LIMITS.dailyCaps.item_ingest; i++) await deps.usage.recordAction(TEST_USER, "item_ingest");
+    for (let i = 0; i < TEST_LIMITS.dailyCaps.item_ingest; i++) await deps.usage.reserveAction(TEST_USER, "item_ingest");
     const error = await errorOf(finishLinkImport(deps, TEST_USER, await upload(key)));
     expect(error).toMatchObject({ cap: "items_per_day" });
     expect(await deps.linkImports.findOpen(TEST_USER, key)).not.toBeNull();
+  });
+
+  it("the last place taken by a parallel request between the check and the count: 429, and the import stays usable", async () => {
+    const key = await stepOne();
+    for (let i = 0; i < TEST_LIMITS.dailyCaps.item_ingest - 1; i++) await deps.usage.reserveAction(TEST_USER, "item_ingest");
+    // Another upload takes the last place while this one checks its cut-out.
+    const inspect = deps.images.inspect.bind(deps.images);
+    vi.spyOn(deps.images, "inspect").mockImplementationOnce(async (data) => {
+      await deps.usage.reserveAction(TEST_USER, "item_ingest");
+      return inspect(data);
+    });
+    const error = await errorOf(finishLinkImport(deps, TEST_USER, await upload(key)));
+    expect(error).toMatchObject({ cap: "items_per_day" });
+    expect(await itemsUsed()).toBe(TEST_LIMITS.dailyCaps.item_ingest);
+    expect(await deps.linkImports.findOpen(TEST_USER, key)).not.toBeNull();
+    expect([...deps.storage.objects.keys()].filter((k) => k.startsWith("cutouts/"))).toEqual([]);
+  });
+
+  it("two step 2s for one import at once: one draft, counted once (the loser's count is given back)", async () => {
+    const key = await stepOne();
+    const results = await Promise.allSettled([
+      finishLinkImport(deps, TEST_USER, await upload(key)),
+      finishLinkImport(deps, TEST_USER, await upload(key)),
+    ]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    const rejected = results.find((r) => r.status === "rejected") as PromiseRejectedResult;
+    expect((rejected.reason as ApiException).code).toBe("not_found");
+    expect(await itemsUsed()).toBe(1);
+    expect(deps.fakeTagger.calls).toHaveLength(1);
   });
 
   it("AI paused: 503 before anything", async () => {

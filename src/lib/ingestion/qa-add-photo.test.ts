@@ -138,7 +138,7 @@ describe("AI paused: nothing is stored, counted or sent", () => {
 
   it("a paused month and a used-up day together answer ai_paused (AI is checked first)", async () => {
     const deps = makeTestDeps({ taggerOutputs: [tagging.valid] });
-    for (let i = 0; i < 3; i++) await deps.usage.recordAction(TEST_USER, "item_ingest");
+    for (let i = 0; i < 3; i++) await deps.usage.reserveAction(TEST_USER, "item_ingest");
     await deps.usage.recordAiCost(null, "tagging", 5, "gemini");
     const error = await failure(addItemFromPhoto(deps, TEST_USER, await upload()));
     expect((error as CapReachedError).toApiException().code).toBe("ai_paused");
@@ -156,9 +156,40 @@ describe("stored images are removed when a later step fails", () => {
 
   it("recording the AI cost fails (database down): both images removed, no tags handed out unrecorded", async () => {
     const deps = makeTestDeps({ taggerOutputs: [tagging.valid] });
-    vi.spyOn(deps.usage, "recordAiCost").mockRejectedValue(new Error("Couldn't record usage"));
+    vi.spyOn(deps.usage, "settleAiCost").mockRejectedValue(new Error("Couldn't settle usage"));
     await failure(addItemFromPhoto(deps, TEST_USER, await upload()));
     nothingKept(deps);
+  });
+
+  it("reserving the AI cost fails (database down): both images removed and the model isn't called", async () => {
+    const deps = makeTestDeps({ taggerOutputs: [tagging.valid] });
+    vi.spyOn(deps.usage, "reserveAiCost").mockRejectedValue(new Error("Couldn't reserve usage"));
+    await failure(addItemFromPhoto(deps, TEST_USER, await upload()));
+    nothingKept(deps);
+    expect(deps.fakeTagger.calls).toHaveLength(0);
+  });
+
+  it("AI paused between the first check and the tagging call: ai_paused, images removed, model not called", async () => {
+    const deps = makeTestDeps({ taggerOutputs: [tagging.valid] });
+    const prepare = deps.images.prepareForModel.bind(deps.images);
+    vi.spyOn(deps.images, "prepareForModel").mockImplementation(async (...args) => {
+      await deps.usage.recordAiCost(null, "tagging", 5, "gemini"); // someone else used up the month meanwhile
+      return prepare(...args);
+    });
+    const error = await failure(addItemFromPhoto(deps, TEST_USER, await upload()));
+    expect(error).toBeInstanceOf(CapReachedError);
+    expect((error as CapReachedError).toApiException().code).toBe("ai_paused");
+    nothingKept(deps);
+    expect(deps.fakeTagger.calls).toHaveLength(0);
+    // Nothing was tagged, so today's count is given back.
+    expect(counted(deps)).toBe(0);
+  });
+
+  it("any other failure after counting (tagging infrastructure down) keeps the count", async () => {
+    const deps = makeTestDeps({ taggerOutputs: [tagging.valid] });
+    vi.spyOn(deps.images, "prepareForModel").mockRejectedValue(new Error("vips: out of memory"));
+    await failure(addItemFromPhoto(deps, TEST_USER, await upload()));
+    expect(counted(deps)).toBe(1);
   });
 
   it("storing the original fails: nothing left behind and the model isn't called", async () => {

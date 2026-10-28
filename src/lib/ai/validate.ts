@@ -8,12 +8,18 @@ export type ValidatedCallResult<T> =
 
 export interface CallWithValidationOptions<T> {
   /**
+   * Called before every attempt, e.g. to reserve the call's estimated cost
+   * against the monthly AI cap. If it throws (the cap is reached), no call
+   * is made and the error is passed on: it isn't a failed attempt.
+   *
+   *   ...usage.meterAiCalls(user.id, "tagging")  // sets beforeCall and onCall
+   */
+  beforeCall?: () => void | Promise<void>;
+  /**
    * Called after every attempt so its cost can be recorded, including
    * attempts where the provider threw (a timed-out call may still be
    * billed). For a thrown attempt, `raw` and `costPence` are undefined, so
-   * recording `call.costPence` falls back to the estimate:
-   *
-   *   onCall: (call) => usage.recordAiCost(user.id, "tagging", call.costPence, call.provider)
+   * the reserved estimate stands (see UsageGuard.meterAiCalls).
    */
   onCall?: (call: ModelCall) => void | Promise<void>;
   /**
@@ -41,10 +47,11 @@ export interface CallWithValidationOptions<T> {
 export async function callWithValidation<T>(
   schema: z.ZodType<T>,
   call: () => Promise<ModelCall>,
-  { onCall, check, provider = "unknown", maxAttempts = 2 }: CallWithValidationOptions<T> = {},
+  { beforeCall, onCall, check, provider = "unknown", maxAttempts = 2 }: CallWithValidationOptions<T> = {},
 ): Promise<ValidatedCallResult<T>> {
   const errors: string[] = [];
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    await beforeCall?.();
     let result: ModelCall;
     try {
       result = await call();

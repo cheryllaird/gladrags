@@ -19,18 +19,63 @@ export const DEFAULT_USAGE_LIMITS: UsageLimits = {
 const CAP_KIND: Record<CappedAction, CapKind> = {
   item_ingest: "items_per_day",
   outfit_request: "outfit_requests_per_day",
+  link_fetch: "link_fetches_per_day",
 };
+
+/** Daily actions that lead to AI calls, so they're refused while AI is paused. */
+const USES_AI: Record<CappedAction, boolean> = {
+  item_ingest: true,
+  outfit_request: true,
+  link_fetch: false,
+};
+
+/**
+ * A settled AI cost is recorded at most this many times its estimate, which
+ * bounds how far calls already in flight can take the month past £5.
+ */
+export const MAX_SETTLED_COST_MULTIPLE = 3;
+
+/** A provider-reported cost if it's a real, non-negative number; otherwise the estimate. */
+function usableCost(reported: number | undefined, estimate: number): number {
+  return reported !== undefined && Number.isFinite(reported) && reported >= 0 ? reported : estimate;
+}
+
+/** A counted action, which can be taken back if it didn't happen after all. */
+export interface UsageReservation {
+  /** Delete the reservation, e.g. when the link import it was for turned out to be used already. */
+  cancel(): Promise<void>;
+}
+
+/** The real cost of a model call, as far as it's known. */
+export interface MeteredCall {
+  /** Undefined when the provider couldn't say (or threw): the estimate stands. */
+  costPence?: number;
+  provider: string;
+}
+
+/**
+ * Hooks for callWithValidation: reserve each Gemini call's estimated cost
+ * before it's made, then settle it with the real cost.
+ */
+export interface AiCallMeter {
+  beforeCall: () => Promise<void>;
+  onCall: (call: MeteredCall) => Promise<void>;
+}
 
 /**
  * Enforces the per-user daily caps and the £5/month AI spend cap.
  *
+ * Checking and counting are one atomic step (`reserveAction`,
+ * `reserveAiCost`): the database version locks and counts in one SQL
+ * function, so requests sent at the same moment can't overshoot a cap.
+ *
  * How the owning agents use it (ingestion, link-import, outfit-engine):
  *
  *   const usage = getUsageGuard();
- *   await usage.assertCanStart(user.id, "item_ingest"); // throws CapReachedError
- *   await usage.recordAction(user.id, "item_ingest");
- *   ... call providers; after each AI call:
- *   await usage.recordAiCost(user.id, "tagging", call.costPence, call.provider);
+ *   await usage.assertCanStart(user.id, "item_ingest");  // early, cheap check before any work
+ *   ... validate input ...
+ *   await usage.reserveAction(user.id, "item_ingest");   // counts it, or throws CapReachedError
+ *   ... call the model through callWithValidation with ...usage.meterAiCalls(user.id, "tagging")
  *
  * withApiHandler turns CapReachedError into a 429 (daily_cap_reached) or
  * 503 (ai_paused) response.
@@ -42,45 +87,124 @@ export class UsageGuard {
     private readonly now: () => Date = () => new Date(),
   ) {}
 
-  /** Throws CapReachedError if AI is paused or the user hit today's cap for this action. */
+  /**
+   * Throws CapReachedError if AI is paused (for actions that use AI) or the
+   * user hit today's cap for this action. A check only: it counts nothing,
+   * and a request that passes can still be refused by `reserveAction`.
+   */
   async assertCanStart(userId: string, action: CappedAction): Promise<void> {
-    await this.assertAiAvailable();
+    if (USES_AI[action]) await this.assertAiAvailable();
     const used = await this.store.countSince(userId, action, this.dayStart());
     const limit = this.limits.dailyCaps[action];
-    if (used >= limit) {
-      throw new CapReachedError(CAP_KIND[action], limit, startOfNextDay(this.now(), this.limits.timeZone));
-    }
+    if (used >= limit) throw this.dailyCapError(action);
   }
 
   /** Throws CapReachedError if this month's AI spend has reached the cap. */
   async assertAiAvailable(): Promise<void> {
-    if (await this.isAiPaused()) {
-      throw new CapReachedError(
-        "monthly_ai_spend",
-        this.limits.monthlySpendCapPence,
-        startOfNextMonth(this.now(), this.limits.timeZone),
-      );
-    }
+    if (await this.isAiPaused()) throw this.monthlyCapError();
   }
 
   async isAiPaused(): Promise<boolean> {
-    const spent = await this.store.spendSince(startOfMonth(this.now(), this.limits.timeZone));
+    const spent = await this.store.spendSince(this.monthStart());
     return spent >= this.limits.monthlySpendCapPence;
   }
 
-  /** Count one capped action (an item upload/import, or an outfit request/refinement). */
-  async recordAction(userId: string, action: CappedAction): Promise<void> {
-    await this.store.record({ userId, kind: action, costPence: 0, provider: null });
+  /**
+   * Count one capped action (an item upload or link import that gets
+   * tagged, an outfit request or refinement, a link page fetch), checking
+   * the caps in the same atomic step. Throws CapReachedError instead of
+   * counting if the cap (or, for AI actions, the monthly pause) is reached.
+   */
+  async reserveAction(userId: string, action: CappedAction): Promise<UsageReservation> {
+    const usesAi = USES_AI[action];
+    const result = await this.store.reserve({
+      userId,
+      kind: action,
+      costPence: 0,
+      provider: null,
+      dailyLimit: this.limits.dailyCaps[action],
+      dayStart: this.dayStart(),
+      monthlyCapPence: usesAi ? this.limits.monthlySpendCapPence : null,
+      monthStart: usesAi ? this.monthStart() : null,
+    });
+    if (!result.ok) throw result.denied === "monthly_spend" ? this.monthlyCapError() : this.dailyCapError(action);
+    const { eventId } = result;
+    return { cancel: () => this.store.cancel(eventId) };
   }
 
-  /** Record one AI call's cost. Leave costPence out to use the estimate for that kind. */
+  /**
+   * Reserve one AI call's estimated cost before making it. Throws
+   * CapReachedError (ai_paused) if the month's spend has reached the cap.
+   * Returns the reservation's ID for `settleAiCost`.
+   */
+  async reserveAiCost(userId: string | null, kind: AiCostKind, provider?: string): Promise<string> {
+    const result = await this.store.reserve({
+      userId,
+      kind,
+      costPence: ESTIMATED_COST_PENCE[kind],
+      provider: provider ?? null,
+      dailyLimit: null,
+      dayStart: null,
+      monthlyCapPence: this.limits.monthlySpendCapPence,
+      monthStart: this.monthStart(),
+    });
+    if (!result.ok) throw this.monthlyCapError();
+    return result.eventId;
+  }
+
+  /**
+   * After the call: record which provider answered and the real cost, if
+   * it reported a usable one (otherwise the estimate stands). The settled
+   * cost is clamped to MAX_SETTLED_COST_MULTIPLE times the estimate, so
+   * calls in flight when the month reaches £5 can take it past the cap by
+   * at most (multiple - 1) × estimate each (CONTRACTS.md section 7). A
+   * clamp is logged, as it means the estimates need raising.
+   */
+  async settleAiCost(reservationId: string, kind: AiCostKind, call: MeteredCall): Promise<void> {
+    const estimate = ESTIMATED_COST_PENCE[kind];
+    let cost = usableCost(call.costPence, estimate);
+    const max = estimate * MAX_SETTLED_COST_MULTIPLE;
+    if (cost > max) {
+      console.warn("AI call cost above the cap's bound; recorded at the bound. Raise ESTIMATED_COST_PENCE.", { kind, reported: cost, recorded: max });
+      cost = max;
+    }
+    await this.store.settle(reservationId, cost, call.provider);
+  }
+
+  /**
+   * Record a cost that's already been incurred, without checking the cap.
+   * Prefer `meterAiCalls`, which reserves before each call. A missing,
+   * non-finite or negative cost records the estimate instead.
+   */
   async recordAiCost(userId: string | null, kind: AiCostKind, costPence?: number, provider?: string): Promise<void> {
     await this.store.record({
       userId,
       kind,
-      costPence: costPence ?? ESTIMATED_COST_PENCE[kind],
+      costPence: usableCost(costPence, ESTIMATED_COST_PENCE[kind]),
       provider: provider ?? null,
     });
+  }
+
+  /**
+   * beforeCall/onCall hooks for callWithValidation: every attempt reserves
+   * its estimated cost first (or is refused with ai_paused), then settles
+   * it with the real cost once known.
+   *
+   *   callWithValidation(Schema, call, { ...usage.meterAiCalls(user.id, "tagging", "gemini"), provider: "gemini" })
+   */
+  meterAiCalls(userId: string | null, kind: AiCostKind, provider?: string): AiCallMeter {
+    let pending: string | null = null;
+    return {
+      beforeCall: async () => {
+        pending = await this.reserveAiCost(userId, kind, provider);
+      },
+      onCall: async (call) => {
+        const reservation = pending;
+        pending = null;
+        if (reservation) await this.settleAiCost(reservation, kind, call);
+        else await this.recordAiCost(userId, kind, call.costPence, call.provider);
+      },
+    };
   }
 
   async summary(userId: string): Promise<UsageSummary> {
@@ -98,7 +222,19 @@ export class UsageGuard {
     };
   }
 
+  private dailyCapError(action: CappedAction): CapReachedError {
+    return new CapReachedError(CAP_KIND[action], this.limits.dailyCaps[action], startOfNextDay(this.now(), this.limits.timeZone));
+  }
+
+  private monthlyCapError(): CapReachedError {
+    return new CapReachedError("monthly_ai_spend", this.limits.monthlySpendCapPence, startOfNextMonth(this.now(), this.limits.timeZone));
+  }
+
   private dayStart(): Date {
     return startOfDay(this.now(), this.limits.timeZone);
+  }
+
+  private monthStart(): Date {
+    return startOfMonth(this.now(), this.limits.timeZone);
   }
 }

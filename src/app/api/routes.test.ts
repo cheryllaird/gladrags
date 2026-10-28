@@ -343,8 +343,10 @@ describe("outfits", () => {
 
   it("rejects a bad request body", async () => {
     await expectError(await outfits.POST(json("/api/outfits", "POST", { style: "work", count: 9 })), 400, "bad_request");
-    const notJson = new Request(`${BASE}/api/outfits`, { method: "POST", body: "{nope" });
+    const notJson = new Request(`${BASE}/api/outfits`, { method: "POST", headers: { "content-type": "application/json" }, body: "{nope" });
     await expectError(await outfits.POST(notJson), 400, "bad_request");
+    const notLabelledJson = new Request(`${BASE}/api/outfits`, { method: "POST", body: JSON.stringify({ style: "work" }) });
+    await expectError(await outfits.POST(notLabelledJson), 415, "unsupported_media_type");
   });
 
   describe("with a generated outfit", () => {

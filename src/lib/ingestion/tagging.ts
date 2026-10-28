@@ -4,7 +4,8 @@
  *
  * Spec: the vision model returns tags as strict JSON; anything that fails
  * the item tags schema is retried once, then the user gets empty tags to
- * fill in. Every attempt's cost is recorded against the monthly AI cap.
+ * fill in. Every attempt's cost is reserved against the monthly AI cap
+ * before the call is made.
  */
 import "server-only";
 import { TaggingModelOutputSchema, type ItemTags } from "@/contracts";
@@ -38,7 +39,9 @@ export async function suggestTags(
     TaggingModelOutputSchema,
     () => deps.tagger.tagItem({ image: modelImage, ...(productHints ? { productHints } : {}) }),
     {
-      onCall: (call) => deps.usage.recordAiCost(userId, "tagging", call.costPence, call.provider),
+      // Each attempt reserves its estimated cost first (ai_paused if the
+      // month's cap is reached), then records the real cost.
+      ...deps.usage.meterAiCalls(userId, "tagging", deps.tagger.name),
       provider: deps.tagger.name,
     },
   );
