@@ -51,7 +51,7 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 
 | Task | Agent | Status |
 | --- | --- | --- |
-| Switch UIs from mocks to real APIs | orchestrator | ☐ |
+| Switch UIs from mocks to real APIs | orchestrator | ☑ | The UIs call the real routes; mock data is served only when `GLADRAGS_MOCK_MODE=true`, which is refused on Vercel and in production builds. The background remover is the real in-browser model. Unverified end to end against live Supabase and Gemini. |
 | Journey tests 1–5 + add-by-link + missing-category | qa | ☑ merged | `test/journeys` (tests/e2e/journeys.spec.ts): all pass on the build ×3 and dev, no flakes. Missing-category and account deletion intercept one response each (shared mock store). 20 items in ~0.24 s/item of app time; estimate 8–12 min for 20 with real cut-out and tagging. |
 | Security check (RLS, signed URLs, secrets, uploads, link fetching, deletion) | security | ☑ | No code blocker for a Cheryl-only preview. Blocker P1: run migrations on the real project and a live two-user RLS check. Before testers: T1 atomic caps, T2 Gemini paid tier, T3 privacy note, T4 scheduled cleanup, T5 kept-draft cross-user leak. Fixes in progress (below). |
 | Vercel preview deploy | orchestrator | ☐ |
