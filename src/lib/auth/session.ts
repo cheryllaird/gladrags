@@ -1,3 +1,4 @@
+import { unstable_rethrow } from "next/navigation";
 import { unauthorized } from "@/lib/api/errors";
 import { isMockMode } from "@/lib/env";
 import { createClient } from "@/lib/supabase/server";
@@ -22,6 +23,21 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   } = await supabase.auth.getUser();
   if (!user?.email) return null;
   return { id: user.id, email: user.email };
+}
+
+/**
+ * For pages that can render without knowing the user: the signed-in user, or
+ * null if it can't be read. Next.js's own signals are re-thrown, above all the
+ * one cookies() throws at build time to mark the page dynamic. Swallowing that
+ * made Next pre-render the page once, with no user, for everyone.
+ */
+export async function getSessionUserOrNull(): Promise<SessionUser | null> {
+  try {
+    return await getSessionUser();
+  } catch (error) {
+    unstable_rethrow(error);
+    return null;
+  }
 }
 
 /** Use at the top of every API route. Throws an `unauthorized` ApiException. */

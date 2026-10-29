@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { SignedInUser } from "@/components/app-shell/signed-in-user";
-import { getSessionUser } from "@/lib/auth/session";
+import { getSessionUserOrNull } from "@/lib/auth/session";
 import { linkFromShare } from "@/lib/client/add-item";
 import { AddLinkFlow } from "./add-link-flow";
 
@@ -22,7 +22,7 @@ export default async function AddLinkPage({
   const first = (value: string | string[] | undefined) => (Array.isArray(value) ? value[0] : value);
   const sharedUrl = linkFromShare({ url: first(params.url), text: first(params.text) });
   // Whose add this is, for a draft kept when a session expires (pending-add.ts).
-  const user = await getSessionUser().catch(() => null);
+  const user = await getSessionUserOrNull();
   const userId = user?.id ?? null;
   return (
     <>
