@@ -2,7 +2,7 @@
 
 Maintained by the orchestrator (main Claude Code session). Source of truth for scope: `docs/SPEC.md`.
 
-**Current status:** Milestone 4 checkpoint: journey tests green, Vercel preview up. Waiting on Cheryl to apply the migrations / Supabase auth settings so sign-in works on the preview, and for the Gemini paid tier.
+**Current status:** Milestone 4 done: journey tests green, Vercel preview up, migrations applied to Supabase, and Cheryl signed in on the preview (2026-10-29). Milestone 5 (Cheryl's own test) next. Gemini is still on the free tier.
 
 Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 
@@ -13,8 +13,8 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 | 1 | Spec sign-off | ☑ | Done |
 | 2 | Foundations | ☑ | Stop for Cheryl to approve contracts |
 | 3 | Parallel build | ☑ | Preview build of screens part-way |
-| 4 | Integration | ◐ | Journey tests green, Vercel preview, stop for Cheryl |
-| 5 | Cheryl's test | ☐ | Her sign-off |
+| 4 | Integration | ☑ | Journey tests green, Vercel preview, stop for Cheryl |
+| 5 | Cheryl's test | ◐ | Her sign-off |
 | 6 | Tester build | ☐ | Testers invited by Cheryl |
 
 ## Milestone 2 — Foundations (agent: `foundations`, branch `feat/foundations`)
@@ -58,7 +58,7 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 | Tester privacy note (owner: orchestrator) | orchestrator | ☑ draft | `docs/PRIVACY.md`, shown at `/privacy` (`src/app/privacy/content.ts`; a test keeps them in step). Needs Cheryl's contact address and the Supabase region. |
 | Pre-tester hardening, backend: atomic caps, unique image keys, link fetch attempts, scheduled cleanup, security headers, httpOnly cookies, CSRF, sign-in rate limit | foundations (`fix/hardening`) | ☑ merged | Review: changes needed (confirm page's no-referrer made its own POST fail with Origin: null) → fixed, approved at dbe9262. QA: lows only, all fixed. 30 parallel requests against a limit of 5 grant exactly 5. At merge: kept both branches' same-named test files (`qa-hardening-backend.spec.ts`, `proxy-hardening.test.ts`); link-limit error copy. |
 | Pre-tester hardening, UI: kept-draft user check, tap to start shared-link imports, /privacy page | wardrobe-ui (`fix/ui-hardening`) | ☑ merged | Approved twice, QA passed (93 adversarial tests). Stored session data is cleared when a different user signs in on the tab. At merge: the expired-session redirect drops the query string, and cross-user e2e checks wait for hydration. |
-| Live checks once Supabase is reachable: migrations, buckets private, two-user RLS, real sign-in | orchestrator | ⛔ network |
+| Live checks once Supabase is reachable: migrations, buckets private, two-user RLS, real sign-in | orchestrator | ◐ | Migrations applied by Cheryl in the SQL editor; real sign-in works on the preview (no runtime errors). Still to do: confirm buckets private and run the two-user RLS check (needs Supabase reachable from this environment, or Cheryl in the dashboard). |
 | Record real Gemini fixtures; time real tagging; check guidance like "no heels" is respected (no code backstop: the model decides) | orchestrator | ⛔ Gemini quota |
 
 ## Setup Cheryl owns
