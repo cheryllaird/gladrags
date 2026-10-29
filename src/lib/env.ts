@@ -74,6 +74,19 @@ export function getSupabasePublicEnv(): SupabasePublicEnv {
   );
 }
 
+/**
+ * Why Supabase isn't configured, naming only the variables at fault (never
+ * their values), or null when it is.
+ */
+export function supabaseEnvProblem(): string | null {
+  try {
+    getSupabasePublicEnv();
+    return null;
+  } catch (error) {
+    return error instanceof ConfigError ? error.message : "Supabase is not configured.";
+  }
+}
+
 export function hasSupabaseEnv(): boolean {
   try {
     getSupabasePublicEnv();

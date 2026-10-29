@@ -120,8 +120,19 @@ describe("configuration", () => {
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "");
     const res = await visit("/wardrobe");
     expect(res.status).toBe(500);
-    expect(await res.text()).toMatch(/isn't configured/);
+    const text = await res.text();
+    expect(text).toMatch(/isn't configured/);
+    expect(text).toContain("NEXT_PUBLIC_SUPABASE_URL");
     expect(session.calls).toBe(0);
+  });
+
+  it("names a misconfigured variable but never shows its value", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "not-a-url-but-a-secret-looking-value");
+    const res = await visit("/wardrobe");
+    const text = await res.text();
+    expect(res.status).toBe(500);
+    expect(text).toContain("NEXT_PUBLIC_SUPABASE_URL");
+    expect(text).not.toContain("secret-looking-value");
   });
 });
 

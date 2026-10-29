@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { hasSupabaseEnv, isMockMode } from "@/lib/env";
+import { isMockMode, supabaseEnvProblem } from "@/lib/env";
 import { updateSession } from "@/lib/supabase/proxy";
 
 /**
@@ -31,9 +31,12 @@ export async function proxy(request: NextRequest) {
   if (isMockMode()) return NextResponse.next();
   if (SESSIONLESS_PREFIXES.some((prefix) => request.nextUrl.pathname.startsWith(prefix))) return NextResponse.next();
 
-  if (!hasSupabaseEnv()) {
+  const configProblem = supabaseEnvProblem();
+  if (configProblem) {
+    // Names the variables at fault (not their values), so a deployment's
+    // settings can be fixed without guessing.
     return new NextResponse(
-      "GladRags isn't configured: set the Supabase variables from .env.example, or GLADRAGS_MOCK_MODE=true for local UI work.",
+      `GladRags isn't configured. ${configProblem} For local UI work without Supabase, set GLADRAGS_MOCK_MODE=true.`,
       { status: 500, headers: { "content-type": "text/plain; charset=utf-8" } },
     );
   }
