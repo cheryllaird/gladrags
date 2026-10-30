@@ -34,8 +34,12 @@ export interface ModelCall {
 // ---------------------------------------------------------------------------
 
 export interface TaggingInput {
-  /** The cut-out (or original if background removal failed). */
-  image: ImageInput;
+  /**
+   * The item's image (the original; a cut-out where one exists). Null only
+   * for an order-email line with no usable picture: the model then tags from
+   * `productHints` alone, which must include a title.
+   */
+  image: ImageInput | null;
   /** What a product page said, when the item came from a link. */
   productHints?: {
     title?: string | null;

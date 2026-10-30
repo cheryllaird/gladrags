@@ -69,7 +69,7 @@ describe("addItemFromPhoto: the happy path", () => {
 
     // The model saw the cut-out, flattened to a small JPEG.
     expect(deps.fakeTagger.calls).toHaveLength(1);
-    const sent = deps.fakeTagger.calls[0]!.image;
+    const sent = deps.fakeTagger.calls[0]!.image!;
     expect(sent.mimeType).toBe("image/jpeg");
     const sentMeta = await sharp(sent.data).metadata();
     expect([sentMeta.width, sentMeta.height]).toEqual([200, 300]); // the cut-out's size, not the photo's
@@ -82,7 +82,7 @@ describe("addItemFromPhoto: the happy path", () => {
     const deps = makeTestDeps({ taggerOutputs: [tagging.valid] });
     const draft = await addItemFromPhoto(deps, TEST_USER, await upload({ cutout: false }));
     expect(draft).toMatchObject({ cutoutImageKey: null, cutoutUrl: null });
-    const sentMeta = await sharp(deps.fakeTagger.calls[0]!.image.data).metadata();
+    const sentMeta = await sharp(deps.fakeTagger.calls[0]!.image!.data).metadata();
     expect(Math.max(sentMeta.width!, sentMeta.height!)).toBe(768);
   });
 

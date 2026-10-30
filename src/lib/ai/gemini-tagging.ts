@@ -233,7 +233,9 @@ export function buildTaggingRequest(model: string, input: TaggingInput): Generat
       {
         role: "user",
         parts: [
-          { inlineData: { mimeType: input.image.mimeType, data: Buffer.from(input.image.data).toString("base64") } },
+          ...(input.image
+            ? [{ inlineData: { mimeType: input.image.mimeType, data: Buffer.from(input.image.data).toString("base64") } }]
+            : []),
           { text: TAGGING_INSTRUCTIONS },
           ...(hints ? [{ text: hints }] : []),
         ],

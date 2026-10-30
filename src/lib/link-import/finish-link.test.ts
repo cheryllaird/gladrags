@@ -94,7 +94,7 @@ describe("step 2 succeeds", () => {
     const draft = await finishLinkImport(deps, TEST_USER, await upload(key, "none"));
     expect(draft.cutoutImageKey).toBeNull();
     expect(draft.cutoutUrl).toBeNull();
-    const tagged = deps.fakeTagger.calls[0]!.image;
+    const tagged = deps.fakeTagger.calls[0]!.image!;
     expect(tagged.mimeType).toBe("image/jpeg");
   });
 
