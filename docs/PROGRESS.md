@@ -61,6 +61,27 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 | Live checks once Supabase is reachable: migrations, buckets private, two-user RLS, real sign-in | orchestrator | ◐ | Migrations applied by Cheryl in the SQL editor; real sign-in works on the preview (no runtime errors). Still to do: confirm buckets private and run the two-user RLS check (needs Supabase reachable from this environment, or Cheryl in the dashboard). |
 | Record real Gemini fixtures; time real tagging; check guidance like "no heels" is respected (no code backstop: the model decides) | orchestrator | ⛔ Gemini quota |
 
+## Milestone 5 — Cheryl's test
+
+| Task | Owner | Status |
+| --- | --- | --- |
+| Cheryl uses the preview with her real wardrobe and sends notes | Cheryl | ◐ |
+| Fixes from her notes (owning agent per area; reviewer + qa before merge) | orchestrator | ☐ |
+| Record real Gemini fixtures, time real tagging (needs paid tier) | orchestrator | ⛔ Gemini quota |
+
+## Handoff notes for a new session
+
+Read these before acting on Cheryl's notes.
+
+- **Branch.** All work lives on `claude/build-setup-68by4m`, which acts as `main` for the merge rules. `main` holds only the spec; Cheryl merges via PR when she chooses. Feature and fix branches start from `claude/build-setup-68by4m` and merge back into it. If a new session is assigned a different branch, start it from `claude/build-setup-68by4m`.
+- **Preview.** Vercel project `gladrags` (team "cheryllaird's projects"). Every push to the branch builds a Preview at https://gladrags-git-claude-build-setup-68by4m-cheryllairds-projects.vercel.app (behind Vercel login; the Vercel MCP `web_fetch_vercel_url` can fetch it). Never deploy to production.
+- **Environment variables** are set by Cheryl in Vercel for Preview (and Production): Supabase URL, publishable and secret keys, Gemini key and model, `SIGN_IN_HASH_KEY`, `CRON_SECRET`, `NEXT_PUBLIC_SITE_URL`. The Vercel MCP can't list them (403). `NEXT_PUBLIC_*` values are baked in at build time, so a change needs a fresh build: a push, or `create_deployment` with a `gitSource` (a redeploy of an old deployment keeps its old variables). If the app answers 500 "isn't configured", the message names the missing variable.
+- **Supabase.** Migrations 1–6 were applied by Cheryl in the SQL editor on 2026-10-29; apply any new migration the same way (or via the CLI if Supabase becomes reachable). This cloud environment can't reach `*.supabase.co` (network policy). Cheryl is on `allowed_emails` and has signed in on the preview.
+- **Gemini** is still on the free tier: tagging and ranking will mostly fail with 503 or 429 until Cheryl switches to paid. The app falls back to empty tags or `ai_failed`; don't mistake that for a bug.
+- **Local checks:** `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, and e2e with `PLAYWRIGHT_USE_BUILD=true PLAYWRIGHT_CHROMIUM_EXECUTABLE=/opt/pw-browsers/chromium-1194/chrome-linux/chrome pnpm test:e2e` (never `playwright install`). `pnpm db:verify` needs a throwaway local Postgres 16.
+- **Gotchas found so far:** e2e photo tests use the fake background remover via `tests/e2e/helpers.ts`; e2e mock mode gives each request a fresh usage counter; `package.json` pins Node 24 because Vercel follows `engines`; two QA branches once created test files with the same name, so check for add/add conflicts at merge.
+- **Agents** hit the account's usage limit several times; if one stops, resume it with a message rather than starting over, and check its worktree for uncommitted work first.
+
 ## Setup Cheryl owns
 
 | Item | Needed by | Status |
