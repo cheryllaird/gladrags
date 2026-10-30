@@ -203,13 +203,6 @@ export const SourceUrlSchema = z.url({ protocol: /^https?$/, error: "Must be an 
  */
 export const ImageUrlSchema = z.string().min(1);
 
-/**
- * Shown as the original for an item saved without a usable picture (an
- * order email line with no image). A static file, so it's the same for
- * everyone; the item has `needsPhoto: true`.
- */
-export const PLACEHOLDER_ITEM_IMAGE_URL = "/placeholder-item.svg";
-
 // ---------------------------------------------------------------------------
 // Items as the API returns them
 // ---------------------------------------------------------------------------
@@ -242,8 +235,9 @@ export const WardrobeItemSchema = z.object({
   needsReview: z.boolean(),
   /**
    * True when the item came from an order email without a usable picture:
-   * originalUrl is PLACEHOLDER_ITEM_IMAGE_URL and the user is asked to add
-   * a photo (PUT /api/items/[id]/photo).
+   * its original is a plain placeholder picture the server stored (so every
+   * item still has an original), and the user is asked to add a photo
+   * (PUT /api/items/[id]/photo). Ranking should skip its thumbnail.
    */
   needsPhoto: z.boolean(),
   createdAt: TimestampSchema,

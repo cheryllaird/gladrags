@@ -800,6 +800,8 @@ function usage(used: number, aiPaused = false) {
   return {
     itemsToday: { used, limit: 40 },
     outfitRequestsToday: { used: 0, limit: 25 },
+    emailsToday: { used: 0, limit: 10 },
+    shopSearchesToday: { used: 0, limit: 10 },
     dailyResetAt: new Date(Date.now() + 3600_000).toISOString(),
     aiPaused,
   };
@@ -943,6 +945,8 @@ test.describe("phone layout at 390 px: no sideways scroll, 44 px targets, nav co
             cutoutUrl: "/mock/items/blue-oxford-shirt.svg",
             tags: SUGGESTED_TAGS,
             tagsEdited: false,
+            needsReview: false,
+            needsPhoto: false,
             createdAt: new Date().toISOString(),
           },
         },

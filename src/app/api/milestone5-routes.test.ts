@@ -185,7 +185,7 @@ describe("item images after adding", () => {
     await inboundEmail.POST(inbound());
     const list = ItemListResponseSchema.parse(await (await items.GET(new Request(`${BASE}/api/items?needsReview=true`))).json());
     const noPhoto = list.items.find((i) => i.needsPhoto)!;
-    expect(noPhoto.originalUrl).toBe("/placeholder-item.svg");
+    expect(noPhoto.originalUrl).toBe("/mock/items/no-picture.svg");
     const res = await itemPhotoReplace.PUT(form(`/api/items/${noPhoto.id}/photo`, "PUT", { original: jpeg() }), ctx(noPhoto.id));
     expect(ItemResponseSchema.parse(await res.json()).item).toMatchObject({ needsPhoto: false, needsReview: true });
   });

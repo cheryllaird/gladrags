@@ -11,7 +11,6 @@
 import {
   DEFAULT_FAVOURITE_SHOP_IDS,
   LINK_IMPORT_TTL_SECONDS,
-  PLACEHOLDER_ITEM_IMAGE_URL,
   SHOPS_BY_ID,
   SHOP_PRODUCTS_PER_GAP,
   type Category,
@@ -36,6 +35,7 @@ import {
   MOCK_FORWARDING_TOKEN,
   MOCK_GAP_OUTFITS,
   MOCK_ITEMS,
+  MOCK_NO_PICTURE_IMAGE_URL,
   MOCK_SUGGESTED_TAGS,
   MOCK_UPLOAD_IMAGE_URL,
 } from "./fixtures";
@@ -429,7 +429,7 @@ export function addMockEmailImport(receivedAt: string): EmailImport {
       id: crypto.randomUUID(),
       source: "email",
       sourceUrl: line.productUrl,
-      originalUrl: line.hasPicture ? MOCK_UPLOAD_IMAGE_URL : PLACEHOLDER_ITEM_IMAGE_URL,
+      originalUrl: line.hasPicture ? MOCK_UPLOAD_IMAGE_URL : MOCK_NO_PICTURE_IMAGE_URL,
       cutoutUrl: null,
       tags: clone(line.tags),
       tagsEdited: false,

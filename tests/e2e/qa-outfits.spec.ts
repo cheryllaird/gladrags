@@ -122,6 +122,8 @@ function wardrobeItem(
       description: options.description ?? `Test ${category.replace("_", " ")}`,
     },
     tagsEdited: false,
+    needsReview: false,
+    needsPhoto: false,
     createdAt: "2026-10-25T09:00:00.000Z",
   };
 }

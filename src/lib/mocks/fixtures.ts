@@ -91,6 +91,9 @@ export const MOCK_ITEMS: readonly WardrobeItem[] = [
   }),
 ];
 
+/** The placeholder original of an email item without a picture (needsPhoto), in mock mode. */
+export const MOCK_NO_PICTURE_IMAGE_URL = "/mock/items/no-picture.svg";
+
 /** Shown for any photo uploaded in mock mode. */
 export const MOCK_UPLOAD_IMAGE_URL = "/mock/items/uploaded.svg";
 
