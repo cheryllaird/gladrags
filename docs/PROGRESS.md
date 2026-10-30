@@ -2,7 +2,7 @@
 
 Maintained by the orchestrator (main Claude Code session). Source of truth for scope: `docs/SPEC.md`.
 
-**Current status:** Milestone 4 done: journey tests green, Vercel preview up, migrations applied to Supabase, and Cheryl signed in on the preview (2026-10-29). Milestone 5 (Cheryl's own test) next. Gemini is still on the free tier.
+**Current status:** Milestone 5: Cheryl sent her first notes (2026-10-30). Spec updated with her decisions; round 1 of fixes in progress (see Milestone 5). Gemini is still on the free tier.
 
 Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 
@@ -65,9 +65,32 @@ Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 
 | Task | Owner | Status |
 | --- | --- | --- |
-| Cheryl uses the preview with her real wardrobe and sends notes | Cheryl | ◐ |
-| Fixes from her notes (owning agent per area; reviewer + qa before merge) | orchestrator | ☐ |
+| Cheryl uses the preview with her real wardrobe and sends notes | Cheryl | ☑ first notes 2026-10-30 (six notes; decisions in SPEC.md "Changes from Cheryl's test") |
+| Spec updated with her decisions | orchestrator | ☑ |
 | Record real Gemini fixtures, time real tagging (needs paid tier) | orchestrator | ⛔ Gemini quota |
+
+### Round 1 of fixes from Cheryl's notes
+
+Integration branch for this round: `claude/cheryl-test-feedback-5xw3vb` (started from `claude/build-setup-68by4m` at e1c0d9b). Each task goes reviewer → qa before merge.
+
+| # | Task | Owner | Branch | Status | Depends on |
+| --- | --- | --- | --- | --- | --- |
+| C1 | Contracts + migrations: `items.needs_review`, source `email`, outfit gaps and `includeShopItems`, favourite shops list + user setting, forwarding token, email import records, cut-out upload for an existing item, new cap kinds (emails/day, shop searches/day), shop search request/result, email extraction model output; CONTRACTS.md | foundations | `m5/contracts` | ☐ | Spec |
+| C2 | Photo add without background removal; `PUT /api/items/[id]/cutout`; batch-friendly photo route (save as to-review) | ingestion | `m5/ingestion` | ☐ | C1 |
+| C3 | Order email import: inbound webhook (provider interface, signature check, sender check), Gemini line-item extraction, per-item image fetch + tag, raw email deleted; link step 2 without cut-out | link-import | `m5/email-import` | ☐ | C1, C2 |
+| C4 | Gaps in candidates/ranking/validation; "include shop items"; shop search (Gemini + Google Search, domain filter, page check via link fetcher); shop search cap | outfit-engine | `m5/outfit-gaps` | ☐ | C1 |
+| C5 | Batch photo and link add, Review N new items list, get-started checklist, forwarding address + favourite shops in settings, wardrobe shows originals | wardrobe-ui | `m5/wardrobe-ui` | ☐ | C1 (mocks) |
+| C6 | Gap placeholders in collages, cut-out on first collage use + upload, "Include items from my shops", "Find in my shops" product cards, add bought product by link | outfit-ui | `m5/outfit-ui` | ☐ | C1 (mocks) |
+| C7 | Journey tests updated (add without cut-out, batch add, email import with fixture, gaps from one item, shop search with mocked provider) | qa | `m5/journeys` | ☐ | C2–C6 |
+| C8 | Security re-check: inbound webhook, email content handling, shop search links, privacy note | security | | ☐ | C3, C4 |
+| C9 | Preview deploy, checkpoint report to Cheryl | orchestrator | | ☐ | C7, C8 |
+
+Decisions made by the orchestrator within Cheryl's choices (tell her at the checkpoint):
+
+- Shop search runs only when the user taps "Find in my shops" on an outfit, not for every suggestion, to keep the cost down. Up to three products per gap.
+- With "Include items from my shops" on, an outfit may have at most one shop item where the wardrobe could fill the slot; missing categories can always be gaps. Every outfit keeps at least one owned item.
+- Forwarded emails are accepted only from the user's sign-in address and only if they pass the email service's authentication checks.
+- Batch-added items are saved straight away as "to review" rather than held as drafts.
 
 ## Handoff notes for a new session
 
@@ -94,8 +117,13 @@ Read these before acting on Cheryl's notes.
 | CRON_SECRET in Vercel (for the daily cleanup) | Vercel preview | ☐ Missing |
 | Contact address and Supabase region for the privacy note | Before testers | ☐ Missing |
 | A request quota on the Generative Language API in Google Cloud (a hard stop; budget alerts don't stop charges) | Before testers | ☐ Missing |
+| Inbound email service (e.g. Postmark inbound or Cloudflare Email Routing) and a domain for forwarding addresses, plus its webhook secret in Vercel | End-to-end check of email import (C3) | ☐ Missing (built against recorded fixtures until then) |
+| Gemini paid tier (Google Search grounding for shop search has a small free allowance and then charges per search) | Live shop search (C4) | ☐ Missing |
 
 ## Decisions log
+
+- 2026-10-30: This session can only push to `claude/cheryl-test-feedback-5xw3vb`, so it is the integration branch for round 1 of Cheryl's fixes. It started from `claude/build-setup-68by4m`; Cheryl merges it back via PR.
+- 2026-10-30: Cheryl's decisions on her six notes recorded in SPEC.md ("Changes from Cheryl's test"): batch add, order email forwarding, gaps, live shop search, background removal moved to collage time, collage-only previews.
 
 - 2026-10-21: This session can only push to `claude/build-setup-68by4m`, so that branch acts as the integration branch ("main" in CLAUDE.md's merge rules) until Cheryl opens a PR into `main`. Feature branches are merged into it locally.
 - 2026-10-25: Cheryl approved the contracts and all decisions in CONTRACTS.md section 10.

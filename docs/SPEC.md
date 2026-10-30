@@ -1,6 +1,6 @@
 # GladRags — v1 Spec
 
-Source of truth for the v1 build. Exported from the reviewed spec doc on 2026-10-21. If anything here conflicts with code, the spec wins until Cheryl changes it.
+Source of truth for the v1 build. Exported from the reviewed spec doc on 2026-10-21, and updated on 2026-10-30 with Cheryl's decisions from her own test (milestone 5; see "Changes from Cheryl's test" at the end). If anything here conflicts with code, the spec wins until Cheryl changes it.
 
 ## Overview
 
@@ -19,8 +19,8 @@ GladRags v1 is a mobile web app (PWA) that lets a user photograph or link their 
 
 The target user owns a reasonable wardrobe but gets stuck putting it together, and uses their phone for everything. The app is for men and women alike.
 
-1. **Build the wardrobe:** sign in, photograph an item (or paste a product link), check the auto-filled tags, save. Repeat.
-2. **Get outfits for an occasion:** pick a style from the preset list or type their own, optionally add guidance ("no heels", "use my green dress"), see 3–5 outfit collages.
+1. **Build the wardrobe:** sign in, add items by photo (several at once), product links (several at once) or by forwarding order confirmation emails, then check the auto-filled tags. A get-started checklist guides a new user, and outfits work from the first item.
+2. **Get outfits for an occasion:** pick a style from the preset list or type their own, optionally add guidance ("no heels", "use my green dress"), see 3–5 outfit collages. Where the wardrobe has a gap, an outfit can include a suggested item to buy, found in the user's favourite shops.
 3. **Build around an item:** pick one item from the wardrobe and ask for outfits that include it.
 4. **Refine:** reject or tweak a suggestion ("swap the shoes", "warmer"), get a revised set.
 5. **Save and rate:** save outfits they like, mark ones they'd never wear, which feeds future suggestions.
@@ -31,16 +31,20 @@ v1 covers getting items in and getting outfits out; buying and try-on wait until
 
 | Feature | v1 | Later |
 | --- | --- | --- |
-| Add item by photo, with background removal and auto-tagging | In | |
-| Add item by product link, with fallbacks | In | |
+| Add item by photo, with auto-tagging (several photos at once) | In | |
+| Add item by product link, with fallbacks (several links at once) | In | |
+| Add items by forwarding order confirmation emails | In | |
+| Get-started checklist for a new wardrobe | In | |
 | Wardrobe browse, filter, edit, delete | In | |
 | Outfit suggestions by style or occasion, using clothes and shoes | In | |
 | Outfits built around a chosen item | In | |
 | Free-text guidance and refinement | In | |
-| Collage previews of outfits | In | |
+| Collage previews of outfits, with background removal done when the collage is first drawn | In | |
+| Outfits with gaps filled by suggested items, and live search of the user's favourite shops for them | In | |
 | Save, like, reject outfits | In | |
 | Bags and accessories in the wardrobe and outfits | Out | Later |
-| "Complete the look" shopping suggestions | Out | v2 |
+| Real product feeds from retailers (affiliate feeds, prices kept in sync) | Out | Later |
+| Outfit previews on a generated model or the user's own photo | Out | Later (Cheryl's test asked for it; collage only for now) |
 | Virtual try-on on the user's own photo | Out | v3 |
 | Bring your own AI API key, for power users who want to go past the daily caps | Out | Later |
 | Weather, calendar, social sharing | Out | Not planned |
@@ -48,15 +52,15 @@ v1 covers getting items in and getting outfits out; buying and try-on wait until
 
 ## Building the wardrobe
 
-Every item ends up as a clean cut-out image plus structured tags, whichever way it came in.
+Every item ends up as an image plus structured tags, whichever way it came in. The wardrobe shows the original image; background removal is only needed for outfit collages, so it happens later (see Collage preview), not while adding.
 
 ### Add by photo
 
-1. User takes a photo or picks one from the camera roll. The client resizes it to max 1600 px.
-2. The client removes the background in the browser and uploads both the original and the cut-out. If removal fails (an older or low-memory phone, say), it uploads the original alone and the item uses the original image wherever a cut-out would appear.
-3. Server strips EXIF, validates both images and stores them.
-4. A vision model returns tags as strict JSON (schema below), working from the cut-out where there is one.
-5. User sees the cut-out and pre-filled tags, can correct any, and saves.
+1. User takes a photo or picks one or more from the camera roll. The client resizes each to max 1600 px.
+2. The client uploads the original. No background removal at this stage.
+3. Server strips EXIF, validates the image and stores it.
+4. A vision model returns tags as strict JSON (schema below).
+5. For a single photo, the user sees the image and pre-filled tags, can correct any, and saves. For several photos, the client uploads them one after another; each is saved with its suggested tags and marked "to review", and the user checks them as a list (see Reviewing new items).
 
 One item per photo in v1. Photos of several items at once are out of scope.
 
@@ -64,10 +68,31 @@ One item per photo in v1. Photos of several items at once are out of scope.
 
 1. User pastes a product URL (or shares it to the PWA from their browser).
 2. Server fetches the page and reads structured product data (Open Graph tags, schema.org Product JSON-LD) for title, brand, image and colour.
-3. Server downloads the product image and stores it as the original. The client then cuts it out in the browser and uploads the cut-out, which triggers tagging.
+3. Server downloads the product image and stores it as the original, then tags it.
 4. **Fallback** when the site blocks fetching or has no usable data: ask the user to upload a screenshot of the product, which then goes down the photo route.
 
 The source URL is kept on the item.
+
+The user can paste several links at once (one per line, or a block of text with links in it). They are imported one after another, saved as "to review", and any that need the screenshot fallback are listed at the end.
+
+### Add by forwarding order emails
+
+Each user has a private forwarding address shown in the app (a random token, which they can reset). Forwarding an order confirmation email from a shop to it adds the items bought.
+
+1. An inbound email service receives the email and posts it to the app. The app checks the service's signature, finds the user by the token, and accepts the email only if it was forwarded from the user's own sign-in address and passes the service's spam and authentication checks.
+2. The model reads the email (text and HTML, no attachments) and returns the clothing and shoe line items as strict JSON: name, brand, colour, size if shown, product link and image link where present. Anything that isn't clothes or shoes (bags, homeware, gift cards) is left out.
+3. For each item, the server fetches the product image (from the email's image link, else from the product page through the add-by-link route), stores it, tags it and saves the item as "to review". Items without a usable image are saved with a placeholder and flagged to add a photo.
+4. The raw email is deleted as soon as it has been processed. Only the extracted items, the shop name and the order date are kept.
+
+Forwarded emails count against the daily item cap, and there's a cap on emails per day.
+
+### Reviewing new items
+
+Items added in a batch (several photos, several links, or an email) are saved straight away with their suggested tags and a "to review" mark. The wardrobe shows a "Review N new items" banner, which opens a list where the user can confirm or correct each item's tags quickly. Unreviewed items are still used for outfits.
+
+### Getting started
+
+A new or nearly empty wardrobe shows a short checklist instead of an empty grid: add your first item, add several at once, forward an order email, get your first outfit. It shows progress, and points out that outfits work from the first item (gaps are filled with suggestions). It disappears once the user has a few items in each main category, or dismisses it.
 
 ### Tags per item
 
@@ -80,7 +105,7 @@ The source URL is kept on the item.
 
 ### Wardrobe screen
 
-A grid of cut-outs, filterable by category, colour and occasion, with search on the description. Tapping an item opens it to edit tags, delete it, or "build an outfit around this".
+A grid of item images (the originals), filterable by category, colour and occasion, with search on the description. Tapping an item opens it to edit tags, delete it, or "build an outfit around this".
 
 ## Outfit suggestions
 
@@ -107,12 +132,25 @@ Each preset sets a formality band, which the filter step uses before ranking.
 ### Pipeline
 
 1. **Filter:** drop items whose formality, season or occasion tags clearly don't fit the request.
-2. **Generate candidates in code:** valid combinations only. Either top + bottom, or a dress or jumpsuit, plus shoes, with optional outerwear. Must include the anchor item if given.
-3. **Rank with the AI model, in two passes.** First, send the filtered wardrobe's tags plus the request and guidance; the model shortlists about 8 outfits by item ID. Then send small thumbnails (around 256 px) of each shortlisted outfit's cut-outs, so the model can judge real shades, textures and proportions. It picks the best N, each with a short name and a one-line reason ("Navy and tan keep this smart without being stiff").
-4. **Validate:** reject any outfit with an unknown item ID or a broken composition rule, then retry once.
+2. **Generate candidates in code:** valid combinations only. Either top + bottom, or a dress or jumpsuit, plus shoes, with optional outerwear. Must include the anchor item if given. A slot the wardrobe can't fill becomes a **gap** (see Gaps and shop suggestions); every outfit has at least one owned item, and complete outfits from the wardrobe are preferred over ones with gaps.
+3. **Rank with the AI model, in two passes.** First, send the filtered wardrobe's tags plus the request and guidance; the model shortlists about 8 outfits by item ID. Then send small thumbnails (around 256 px) of each shortlisted outfit's item images (cut-outs where they exist, originals otherwise), so the model can judge real shades, textures and proportions. It picks the best N, each with a short name and a one-line reason ("Navy and tan keep this smart without being stiff").
+4. **Validate:** reject any outfit with an unknown item ID, a broken composition rule, or a gap where the wardrobe has a suitable item and the user didn't ask for shop items, then retry once. For each gap the model describes the item it would add (category, subcategory, colours, a short description).
 5. **Render** a collage for each outfit.
 
-If the wardrobe can't make a valid outfit (no shoes yet, say), the app tells the user which category is missing.
+If the wardrobe can't make a complete outfit (no shoes yet, say), the app still suggests outfits, with the missing pieces as gaps, and tells the user which categories to add.
+
+### Gaps and shop suggestions
+
+A gap is a slot in an outfit that the wardrobe doesn't fill: the model describes the item that would complete the look ("white leather trainers"). Gaps appear in two cases:
+
+- **The wardrobe is missing a category** the outfit needs. This happens automatically, so a user with one item still gets outfits.
+- **The user turns on "Include items from my shops"** on the request. Outfits may then include one shop item even when the wardrobe could fill the slot.
+
+The user picks their favourite shops in their settings, from a fixed list of UK high-street shops with known website addresses (defaults: Next, M&S, New Look).
+
+On an outfit with gaps, "Find in my shops" runs a live web search (Gemini with Google Search) for each gap, limited to the chosen shops' websites. The model returns candidate product page links; the server keeps only links on a chosen shop's domain, fetches each page through the add-by-link fetcher (with its safety checks) to confirm it exists and read its title, price and image, and shows up to three products per gap. The user can open the shop's page, or, once they've bought it, add it to the wardrobe through the add-by-link route. Search results are not stored beyond the outfit, and nothing is bought in the app.
+
+Shop searches cost more than ranking, so they run only when the user asks, and have their own daily cap.
 
 ### Refinement
 
@@ -120,7 +158,9 @@ On any outfit the user can tap "swap" on one item, or type guidance ("warmer", "
 
 ### Collage preview
 
-The cut-outs are arranged in a fixed flat-lay layout: top or dress upper centre, bottom below, shoes at the foot, outerwear to the side. The collage is rendered on the client with canvas, and the user can save it as an image. No generated images in v1.
+The cut-outs are arranged in a fixed flat-lay layout: top or dress upper centre, bottom below, shoes at the foot, outerwear to the side. Gaps appear in their slot as a dashed placeholder with the suggested item's description (or the chosen shop product's image). The collage is rendered on the client with canvas, and the user can save it as an image. No generated images in v1.
+
+Background removal happens when a collage first needs an item: the client cuts the item out in the browser and uploads the cut-out, which is stored on the item and reused from then on. Until then, or if removal fails, the collage uses the original image.
 
 ### Saving and feedback
 
@@ -133,8 +173,9 @@ Four tables in Postgres. Images live in object storage and are referenced by key
 | Table | Key fields |
 | --- | --- |
 | users | id, email, display_name, created_at |
-| items | id, user_id, source (photo, link), source_url, original_image_key, cutout_image_key (null if background removal failed), category, subcategory, colours[], pattern, formality (1–5), seasons[], warmth, occasions[], fabric, description, tags_edited (bool), created_at |
-| outfits | id, user_id, request (style, guidance, anchor_item_id), name, reason, item_ids[], status (suggested, saved, liked, rejected), parent_outfit_id (for refinements), created_at |
+| items | id, user_id, source (photo, link, email), source_url, original_image_key, cutout_image_key (null until a collage has cut it out, or if removal failed), category, subcategory, colours[], pattern, formality (1–5), seasons[], warmth, occasions[], fabric, description, tags_edited (bool), needs_review (bool), created_at |
+| outfits | id, user_id, request (style, guidance, anchor_item_id, include_shop_items), name, reason, item_ids[], gaps[] (category, subcategory, colours, description, chosen shop product if any), status (suggested, saved, liked, rejected), parent_outfit_id (for refinements), created_at |
+| user settings | favourite shops, forwarding address token (on users, or a settings table) |
 | outfit_feedback | id, outfit_id, user_id, kind (swap, guidance, reject), detail, created_at |
 
 The tagging model must return JSON that validates against the items schema (a shared Zod schema). Anything that fails validation is retried once, then shown to the user with empty tags to fill in.
@@ -151,9 +192,11 @@ One Next.js app on Vercel, with Supabase for auth, database and image storage, a
 | Background removal | In the browser, using an open-source segmentation model run on the phone (WebAssembly/WebGPU), behind an interface so it can be swapped | Free, no extra API key, and photos aren't sent to another third party; the model downloads once and is cached |
 | Tagging and outfit ranking | Gemini API (a Flash model): vision for tagging, ranking in two passes, structured JSON output. Behind a provider interface so it can be swapped | Free tier for development; ranking shortlists on tags and only sends thumbnails for the shortlist, so it stays cheap |
 | Link import | Server-side fetch + Open Graph / JSON-LD parsing | No scraping service needed for v1 |
+| Order email import | An inbound email service (Cheryl to choose and set up, e.g. Postmark inbound or Cloudflare Email Routing) posting to a webhook, behind an interface so it can be swapped | Users forward emails; no access to their mailbox needed |
+| Shop search | Gemini with Google Search grounding, behind the ranking provider's interface family; results checked with the link-import fetcher | No retailer accounts or feeds needed |
 | Testing | Vitest for logic, Playwright for the core journeys on a mobile viewport | Gives review agents something to run |
 
-**Cost controls:** each tester gets a daily cap on new items and outfit requests. Tags are generated once per item and stored. Outfit requests send images only for the shortlist, as small thumbnails, which keeps image costs bounded. Real per-request costs get measured in the first tester week. Total AI spend (Gemini) is capped at £5 a month during testing. Budget alerts fire at 50% and 90%, but they don't stop charges, so the app tracks its own spend and pauses AI features when the cap is reached. Bring-your-own API key is a later option (see Scope).
+**Cost controls:** each tester gets a daily cap on new items, outfit requests, forwarded emails and shop searches. Tags are generated once per item and stored. Outfit requests send images only for the shortlist, as small thumbnails, which keeps image costs bounded. Real per-request costs get measured in the first tester week. Total AI spend (Gemini) is capped at £5 a month during testing. Budget alerts fire at 50% and 90%, but they don't stop charges, so the app tracks its own spend and pauses AI features when the cap is reached. Bring-your-own API key is a later option (see Scope).
 
 ## Privacy and security
 
@@ -165,7 +208,7 @@ Even with only a few testers, photos can be taken in someone's bedroom, so treat
 - Strip EXIF data (including location) from uploads before storing them.
 - Users can delete an item and its images, or delete their whole account and data.
 - Secrets live only in environment variables (`.env.local` locally, Vercel in deployment), never in the repo.
-- A one-page privacy note for testers listing the third-party services that see their images (Google Gemini; background removal runs on their phone, so it sees nothing). Switch Gemini to the paid tier before testers join: on the free tier, Google can use prompts and images to improve its products.
+- A one-page privacy note for testers listing the third-party services that see their images and emails (Google Gemini; the inbound email service; background removal runs on their phone, so it sees nothing). Forwarded emails contain names, addresses and order details: the app sends only the email's text to the model, deletes the raw email after processing, and keeps only the extracted items. Switch Gemini to the paid tier before testers join: on the free tier, Google can use prompts and images to improve its products.
 - Body photos for try-on are out of v1 entirely, which avoids the most sensitive data until it's needed.
 
 ## Agent swarm build plan
@@ -211,3 +254,14 @@ A branch merges only when it is reviewed, tests pass, and it has no changes to a
 ## Still open
 
 - Look and feel: reference apps, colours, mood. Until decided, use a clean, neutral design with shadcn/ui defaults so it's easy to restyle later.
+
+## Changes from Cheryl's test (2026-10-30)
+
+Cheryl's notes from milestone 5 and her decisions on them:
+
+1. **The empty start is daunting and adding items is slow.** Decided: add several photos at once, paste several links at once, a get-started checklist, and outfits from the first item (gaps).
+2. **Add many items from order emails.** Decided: a private forwarding address per user, through an inbound email service. Reading the mailbox directly (Gmail access) is out: it needs Google's paid security assessment.
+3. **Outfits from an incomplete wardrobe, with suggested items to complete them.** Decided: gaps, described by the model.
+4. **Suggestions from shops the user likes (Next, M&S, New Look).** Decided: live web search of the user's chosen shops for each gap, on request. Retailer affiliate feeds were considered and left for later.
+5. **No background removal for the wardrobe library; it's only for outfit previews.** Decided: background removal moves from adding an item to the first time a collage uses it.
+6. **Outfit previews on a model matching the user's build and gender, optionally their own full-length photo.** Decided: collage only for now; generated model previews and try-on stay out of v1.
