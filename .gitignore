@@ -23,3 +23,6 @@ AGENTS.md
 
 # Copied from node_modules by scripts/copy-ort-wasm.mjs
 public/ort/
+
+# Agent worktrees (local only)
+.claude/worktrees/
