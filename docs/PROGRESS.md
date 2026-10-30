@@ -75,7 +75,7 @@ Integration branch for this round: `claude/cheryl-test-feedback-5xw3vb` (started
 
 | # | Task | Owner | Branch | Status | Depends on |
 | --- | --- | --- | --- | --- | --- |
-| C1 | Contracts + migrations: `items.needs_review`, source `email`, outfit gaps and `includeShopItems`, favourite shops list + user setting, forwarding token, email import records, cut-out upload for an existing item, new cap kinds (emails/day, shop searches/day), shop search request/result, email extraction model output; CONTRACTS.md | foundations | `m5/contracts` | ☐ | Spec |
+| C1 | Contracts + migrations: `items.needs_review`, source `email`, outfit gaps and `includeShopItems`, favourite shops list + user setting, forwarding token, email import records, cut-out upload for an existing item, new cap kinds (emails/day, shop searches/day), shop search request/result, email extraction model output; CONTRACTS.md | foundations | `m5/contracts` | ◐ running | Spec |
 | C2 | Photo add without background removal; `PUT /api/items/[id]/cutout`; batch-friendly photo route (save as to-review) | ingestion | `m5/ingestion` | ☐ | C1 |
 | C3 | Order email import: inbound webhook (provider interface, signature check, sender check), Gemini line-item extraction, per-item image fetch + tag, raw email deleted; link step 2 without cut-out | link-import | `m5/email-import` | ☐ | C1, C2 |
 | C4 | Gaps in candidates/ranking/validation; "include shop items"; shop search (Gemini + Google Search, domain filter, page check via link fetcher); shop search cap | outfit-engine | `m5/outfit-gaps` | ☐ | C1 |
