@@ -28,6 +28,8 @@ export function itemRowToWardrobeItem(
       description: row.description,
     },
     tagsEdited: row.tags_edited,
+    needsReview: row.needs_review,
+    needsPhoto: row.needs_photo,
     createdAt: new Date(row.created_at).toISOString(),
   };
 }
@@ -74,6 +76,7 @@ export function outfitRowToOutfit(row: OutfitRow, itemsById: ReadonlyMap<string,
     reason: row.reason,
     itemIds: row.item_ids,
     items,
+    gaps: row.gaps,
     status: row.status,
     parentOutfitId: row.parent_outfit_id,
     createdAt: new Date(row.created_at).toISOString(),

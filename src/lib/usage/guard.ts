@@ -20,6 +20,8 @@ const CAP_KIND: Record<CappedAction, CapKind> = {
   item_ingest: "items_per_day",
   outfit_request: "outfit_requests_per_day",
   link_fetch: "link_fetches_per_day",
+  email_import: "emails_per_day",
+  shop_search: "shop_searches_per_day",
 };
 
 /** Daily actions that lead to AI calls, so they're refused while AI is paused. */
@@ -27,6 +29,8 @@ const USES_AI: Record<CappedAction, boolean> = {
   item_ingest: true,
   outfit_request: true,
   link_fetch: false,
+  email_import: true,
+  shop_search: true,
 };
 
 /**
@@ -209,14 +213,18 @@ export class UsageGuard {
 
   async summary(userId: string): Promise<UsageSummary> {
     const since = this.dayStart();
-    const [items, outfits, aiPaused] = await Promise.all([
+    const [items, outfits, emails, shopSearches, aiPaused] = await Promise.all([
       this.store.countSince(userId, "item_ingest", since),
       this.store.countSince(userId, "outfit_request", since),
+      this.store.countSince(userId, "email_import", since),
+      this.store.countSince(userId, "shop_search", since),
       this.isAiPaused(),
     ]);
     return {
       itemsToday: { used: items, limit: this.limits.dailyCaps.item_ingest },
       outfitRequestsToday: { used: outfits, limit: this.limits.dailyCaps.outfit_request },
+      emailsToday: { used: emails, limit: this.limits.dailyCaps.email_import },
+      shopSearchesToday: { used: shopSearches, limit: this.limits.dailyCaps.shop_search },
       dailyResetAt: startOfNextDay(this.now(), this.limits.timeZone).toISOString(),
       aiPaused,
     };

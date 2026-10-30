@@ -7,7 +7,7 @@ const ALICE = "0a000000-0000-4000-8000-000000000001";
 const BOB = "0b000000-0000-4000-8000-000000000002";
 
 const limits: UsageLimits = {
-  dailyCaps: { item_ingest: 2, outfit_request: 1, link_fetch: 2 },
+  dailyCaps: { item_ingest: 2, outfit_request: 1, link_fetch: 2, email_import: 2, shop_search: 2 },
   monthlySpendCapPence: 10,
   timeZone: "Europe/London",
 };
@@ -105,6 +105,8 @@ describe("UsageGuard summary", () => {
     expect(await guard.summary(ALICE)).toEqual({
       itemsToday: { used: 1, limit: 2 },
       outfitRequestsToday: { used: 0, limit: 1 },
+      emailsToday: { used: 0, limit: 2 },
+      shopSearchesToday: { used: 0, limit: 2 },
       dailyResetAt: "2026-10-21T23:00:00.000Z",
       aiPaused: false,
     });

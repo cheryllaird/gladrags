@@ -233,7 +233,12 @@ describe("mock outfits obey the composition rule", () => {
   it("keeps the guidance and custom style on the stored request", async () => {
     const body = await generate({ style: { kind: "custom", text: "garden party" }, guidance: "no heels" });
     if (body.status !== "ok") throw new Error("expected outfits");
-    expect(body.outfits[0]!.request).toEqual({ style: { kind: "custom", text: "garden party" }, guidance: "no heels", anchorItemId: null });
+    expect(body.outfits[0]!.request).toEqual({
+      style: { kind: "custom", text: "garden party" },
+      guidance: "no heels",
+      anchorItemId: null,
+      includeShopItems: false,
+    });
   });
 
   it("refined outfits are wearable, linked to the parent, and leave out the swapped item", async () => {

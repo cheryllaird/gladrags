@@ -16,7 +16,7 @@ export const TEST_USER = "0c000000-0000-4000-8000-000000000003";
 export const OTHER_USER = "0b000000-0000-4000-8000-000000000002";
 
 export const TEST_LIMITS: UsageLimits = {
-  dailyCaps: { item_ingest: 3, outfit_request: 2, link_fetch: 20 },
+  dailyCaps: { item_ingest: 3, outfit_request: 2, link_fetch: 20, email_import: 2, shop_search: 2 },
   monthlySpendCapPence: 1,
   timeZone: "Europe/London",
 };

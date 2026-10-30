@@ -2,7 +2,18 @@
  * Fake providers that return recorded outputs instead of calling a model.
  * Used by unit tests and mock mode. No network.
  */
-import type { FinalPickInput, ModelCall, RankingProvider, ShortlistInput, TaggingInput, TaggingProvider } from "./types";
+import type {
+  FinalPickInput,
+  ModelCall,
+  OrderEmailInput,
+  OrderEmailProvider,
+  RankingProvider,
+  ShopSearchInput,
+  ShopSearchProvider,
+  ShortlistInput,
+  TaggingInput,
+  TaggingProvider,
+} from "./types";
 
 /** Returns the queued outputs in order, then repeats the last one. */
 function queue(outputs: unknown[]): () => unknown {
@@ -46,5 +57,35 @@ export class FakeRankingProvider implements RankingProvider {
   async pickFinal(input: FinalPickInput): Promise<ModelCall> {
     this.finalCalls.push(input);
     return { raw: this.nextFinal(), costPence: 0, provider: this.name, model: "fake-ranker" };
+  }
+}
+
+export class FakeOrderEmailProvider implements OrderEmailProvider {
+  readonly name = "fake";
+  readonly calls: OrderEmailInput[] = [];
+  private readonly next: () => unknown;
+
+  constructor(outputs: unknown[]) {
+    this.next = queue(outputs);
+  }
+
+  async extractOrder(input: OrderEmailInput): Promise<ModelCall> {
+    this.calls.push(input);
+    return { raw: this.next(), costPence: 0, provider: this.name, model: "fake-email-reader" };
+  }
+}
+
+export class FakeShopSearchProvider implements ShopSearchProvider {
+  readonly name = "fake";
+  readonly calls: ShopSearchInput[] = [];
+  private readonly next: () => unknown;
+
+  constructor(outputs: unknown[]) {
+    this.next = queue(outputs);
+  }
+
+  async searchGaps(input: ShopSearchInput): Promise<ModelCall> {
+    this.calls.push(input);
+    return { raw: this.next(), costPence: 0, provider: this.name, model: "fake-shop-search" };
   }
 }

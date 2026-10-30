@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { IdSchema, TimestampSchema, singleLineText } from "./common";
+import { IdSchema, TimestampSchema, emptyToNull, singleLineText } from "./common";
 import { PresetStyleIdSchema } from "./styles";
 
 // ---------------------------------------------------------------------------
@@ -89,7 +89,11 @@ export const WARMTH_LEVELS = ["light", "medium", "warm"] as const;
 export const WarmthSchema = z.enum(WARMTH_LEVELS);
 export type Warmth = z.infer<typeof WarmthSchema>;
 
-export const ITEM_SOURCES = ["photo", "link"] as const;
+/**
+ * How the item came in: a photo (or screenshot), a product link, or a
+ * forwarded order confirmation email.
+ */
+export const ITEM_SOURCES = ["photo", "link", "email"] as const;
 export const ItemSourceSchema = z.enum(ITEM_SOURCES);
 export type ItemSource = z.infer<typeof ItemSourceSchema>;
 
@@ -100,14 +104,8 @@ export const DESCRIPTION_MAX_LENGTH = 120;
 // Item tags
 // ---------------------------------------------------------------------------
 
-/** For optional text: "", whitespace-only and missing all become null. */
-export function emptyToNull(value: unknown): unknown {
-  if (value === undefined) return null;
-  if (typeof value === "string" && value.trim() === "") return null;
-  return value;
-}
-
-function uniqueArray<T extends z.ZodType>(item: T, min: number, max: number) {
+/** An array of min..max distinct values. */
+export function uniqueArray<T extends z.ZodType>(item: T, min: number, max: number) {
   return z
     .array(item)
     .min(min)
@@ -174,18 +172,18 @@ export function imageKeyBelongsTo(key: string, userId: string): boolean {
 }
 
 /**
- * Upload limits. Background removal runs in the browser, so one upload
- * carries the original photo and (optionally) its cut-out. Vercel caps a
- * request body at 4.5 MB, so the two files share a 4 MB budget:
+ * Upload limits. Vercel caps a request body at 4.5 MB.
  *
  * - original: JPEG, PNG or WebP, at most 1600 px on its longest side
  *   (the client resizes first) and 1.5 MB. A 1600 px JPEG at quality ~0.85
  *   is usually well under 1 MB.
  * - cut-out: PNG with transparency, at most 1600 px and 2.5 MB. If the PNG
  *   comes out bigger, the client scales the cut-out down until it fits.
+ *   Since milestone 5 the phone makes the cut-out the first time a collage
+ *   needs the item, and sends it on its own (PUT /api/items/[id]/cutout).
  *
  * The server re-checks type (from the file bytes, not the declared type),
- * byte size and pixel dimensions, and strips EXIF from both.
+ * byte size and pixel dimensions, and strips EXIF.
  */
 export const MAX_IMAGE_DIMENSION_PX = 1600;
 export const MAX_ORIGINAL_BYTES = 1.5 * 1024 * 1024;
@@ -205,6 +203,13 @@ export const SourceUrlSchema = z.url({ protocol: /^https?$/, error: "Must be an 
  */
 export const ImageUrlSchema = z.string().min(1);
 
+/**
+ * Shown as the original for an item saved without a usable picture (an
+ * order email line with no image). A static file, so it's the same for
+ * everyone; the item has `needsPhoto: true`.
+ */
+export const PLACEHOLDER_ITEM_IMAGE_URL = "/placeholder-item.svg";
+
 // ---------------------------------------------------------------------------
 // Items as the API returns them
 // ---------------------------------------------------------------------------
@@ -212,32 +217,68 @@ export const ImageUrlSchema = z.string().min(1);
 export const WardrobeItemSchema = z.object({
   id: IdSchema,
   source: ItemSourceSchema,
+  /**
+   * The product page: always set for `link` items, set for `email` items
+   * when the email linked to the product, null for photos.
+   */
   sourceUrl: SourceUrlSchema.nullable(),
+  /** The photo or product image. The wardrobe grid shows this. */
   originalUrl: ImageUrlSchema,
-  /** Null when background removal failed on the phone: show originalUrl instead (see displayImageUrl). */
+  /**
+   * The transparent cut-out, for collages. Null until a collage first cuts
+   * the item out on the phone (PUT /api/items/[id]/cutout), or if that
+   * failed: collages then use originalUrl (see collageImageUrl).
+   */
   cutoutUrl: ImageUrlSchema.nullable(),
   tags: ItemTagsSchema,
   /** True if the user changed any auto-filled tag (feeds the "4 in 5" success measure). */
   tagsEdited: z.boolean(),
+  /**
+   * True for items added in a batch (several photos, several links, or an
+   * order email) that the user hasn't confirmed yet: the "Review N new
+   * items" list. Any PATCH /api/items/[id] clears it. Unreviewed items are
+   * still used for outfits.
+   */
+  needsReview: z.boolean(),
+  /**
+   * True when the item came from an order email without a usable picture:
+   * originalUrl is PLACEHOLDER_ITEM_IMAGE_URL and the user is asked to add
+   * a photo (PUT /api/items/[id]/photo).
+   */
+  needsPhoto: z.boolean(),
   createdAt: TimestampSchema,
 });
 export type WardrobeItem = z.infer<typeof WardrobeItemSchema>;
 
-/** The image to show for an item: the cut-out, or the original if there isn't one. */
-export function displayImageUrl(item: { cutoutUrl: string | null; originalUrl: string }): string {
+/** The picture for a collage: the cut-out, or the original until there is one. */
+export function collageImageUrl(item: { cutoutUrl: string | null; originalUrl: string }): string {
   return item.cutoutUrl ?? item.originalUrl;
 }
 
 /**
+ * The same as collageImageUrl; kept for existing callers. Since milestone 5
+ * the wardrobe shows `originalUrl`, and only collages use the cut-out.
+ */
+export const displayImageUrl = collageImageUrl;
+
+/** Drafts (and items the user saves from one) come from a photo or a link. Email items are saved by the server. */
+export const DRAFT_SOURCES = ["photo", "link"] as const;
+export const DraftSourceSchema = z.enum(DRAFT_SOURCES);
+
+/**
  * An uploaded, tagged item that hasn't been saved yet. Returned by
- * POST /api/items/photo and POST /api/items/link/cutout; the user reviews
+ * POST /api/items/photo and POST /api/items/link/cutout for a single add
+ * (and for a batch add whose tagging failed); the user reviews
  * `suggestedTags` and then saves with POST /api/items.
  */
 export const ItemDraftSchema = z.object({
-  source: ItemSourceSchema,
+  source: DraftSourceSchema,
   sourceUrl: SourceUrlSchema.nullable(),
   originalImageKey: ImageKeySchema,
-  /** Null when the phone couldn't remove the background. */
+  /**
+   * Null unless an older client sent a cut-out with the photo (deprecated).
+   * New clients don't: cut-outs are made at collage time.
+   */
   cutoutImageKey: ImageKeySchema.nullable(),
   originalUrl: ImageUrlSchema,
   cutoutUrl: ImageUrlSchema.nullable(),

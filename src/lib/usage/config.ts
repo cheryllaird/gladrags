@@ -16,6 +16,12 @@ export const DAILY_CAPS: Readonly<Record<CappedAction, number>> = {
   // Add-by-link step 1 attempts (page fetches), fallbacks included. Twice
   // the item cap: room for links that are pasted but never saved.
   link_fetch: 80,
+  // Forwarded order emails accepted. Each can add several items, which
+  // also count against item_ingest.
+  email_import: 10,
+  // "Find in my shops" on an outfit (all its gaps in one search). Grounded
+  // searches cost more than ranking, so the cap is low.
+  shop_search: 10,
 };
 
 /**
@@ -32,6 +38,13 @@ export const ESTIMATED_COST_PENCE: Readonly<Record<AiCostKind, number>> = {
   tagging: 0.2,
   ranking_shortlist: 0.2,
   ranking_final: 0.5,
+  // Reading an order email's text (up to ~25k tokens in, a short JSON reply).
+  email_extraction: 0.5,
+  // One Gemini call with Google Search grounding. A GUESS until measured:
+  // Google bills grounding per search query on top of tokens (roughly
+  // 1p-3p a query at list prices, and one call can make several queries),
+  // so this is set high.
+  shop_grounding: 3,
 };
 
 /** Day and month boundaries for caps are in UK time. */

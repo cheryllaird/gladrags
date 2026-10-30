@@ -28,6 +28,36 @@ export function singleLineText(max: number) {
     .regex(/^[^\r\n]*$/, { error: "Must be a single line" });
 }
 
+/** For optional text: "", whitespace-only and missing all become null. */
+export function emptyToNull(value: unknown): unknown {
+  if (value === undefined) return null;
+  if (typeof value === "string" && value.trim() === "") return null;
+  return value;
+}
+
+/**
+ * Removes half of a surrogate pair, e.g. an emoji cut in two by a length
+ * limit. Postgres jsonb rejects lone surrogates, so they must never be stored.
+ */
+function dropLoneSurrogates(text: string): string {
+  return text.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "");
+}
+
+/**
+ * Text scraped from a web page or an email (or returned by a model reading
+ * one), on its way into a prompt or the database: whitespace (including
+ * newlines) collapsed to single spaces, cut to `max` characters, and ""
+ * read as null. After that it must be a single line, like every other
+ * prompt-bound text.
+ */
+export function scrapedText(max: number) {
+  return z.preprocess((value) => {
+    if (typeof value !== "string") return emptyToNull(value);
+    const flat = dropLoneSurrogates(value.replace(/\s+/g, " ").trim().slice(0, max)).trim();
+    return flat === "" ? null : flat;
+  }, singleLineText(max).nullable());
+}
+
 /**
  * Error codes every API route can return. The HTTP status for each is fixed
  * (see API_ERROR_STATUS) so the UI can branch on `code` alone.
@@ -39,7 +69,7 @@ export const API_ERROR_CODES = [
   "forbidden", // a cross-site request (its Origin isn't this site)
   "not_found", // row doesn't exist or isn't yours
   "unsupported_media_type", // a JSON route was sent something other than JSON
-  "daily_cap_reached", // per-user daily cap on items, outfit requests or link fetches
+  "daily_cap_reached", // per-user daily cap on items, outfit requests, link fetches, forwarded emails or shop searches
   "rate_limited", // too many sign-in attempts; try again later
   "ai_paused", // the monthly AI spend cap has been reached
   "ai_failed", // model output failed validation twice, or the provider errored
@@ -67,7 +97,14 @@ export const API_ERROR_STATUS: Record<ApiErrorCode, number> = {
 };
 
 /** Which cap an error refers to (`cap.kind`). */
-export const CAP_KINDS = ["items_per_day", "outfit_requests_per_day", "link_fetches_per_day", "monthly_ai_spend"] as const;
+export const CAP_KINDS = [
+  "items_per_day",
+  "outfit_requests_per_day",
+  "link_fetches_per_day",
+  "emails_per_day",
+  "shop_searches_per_day",
+  "monthly_ai_spend",
+] as const;
 export const CapKindSchema = z.enum(CAP_KINDS);
 export type CapKind = z.infer<typeof CapKindSchema>;
 

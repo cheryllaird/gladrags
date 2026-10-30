@@ -40,6 +40,7 @@ export class MockOutfitRepository implements OutfitRepository {
         reason: o.reason,
         itemIds: o.itemIds,
         items,
+        gaps: [],
         status: "suggested",
         parentOutfitId: o.parentOutfitId,
         createdAt,

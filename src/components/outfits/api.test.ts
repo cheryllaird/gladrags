@@ -8,11 +8,12 @@ const trainers = MOCK_ITEMS[9]!;
 
 const OUTFIT: Outfit = {
   id: "2b000000-0000-4000-8000-000000000001",
-  request: { style: { kind: "preset", presetId: "casual" }, guidance: null, anchorItemId: null },
+  request: { style: { kind: "preset", presetId: "casual" }, guidance: null, anchorItemId: null, includeShopItems: false },
   name: "Easy weekend",
   reason: "Relaxed pieces in calm colours",
   itemIds: [shirt!.id, jeans!.id, trainers.id],
   items: [shirt!, jeans!, trainers],
+  gaps: [],
   status: "suggested",
   parentOutfitId: null,
   createdAt: "2026-10-25T10:00:00.000Z",
@@ -35,7 +36,7 @@ describe("outfits API client", () => {
     const { api, fetchImpl } = apiWith(jsonResponse(200, { status: "ok", outfits: [OUTFIT] }));
     const result = await api.requestOutfits({ style: { kind: "preset", presetId: "casual" }, guidance: "no heels" });
 
-    expect(result).toEqual({ ok: true, data: { status: "ok", outfits: [OUTFIT] } });
+    expect(result).toEqual({ ok: true, data: { status: "ok", outfits: [OUTFIT], missingCategories: [] } });
     const [url, init] = fetchImpl.mock.calls[0]!;
     expect(url).toBe("/api/outfits");
     expect(init?.method).toBe("POST");

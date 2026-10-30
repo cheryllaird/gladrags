@@ -188,7 +188,7 @@ export function OutfitsScreen({ initialAnchorId }: { initialAnchorId: string | n
       setPending(null);
       setSets((s) => [
         ...s.slice(0, -2),
-        { ...previous, response: { status: "ok", outfits: fresh }, fetchedAt: timestamp() },
+        { ...previous, response: { ...previous.response, outfits: fresh }, fetchedAt: timestamp() },
       ]);
     } else {
       setSets((s) => s.slice(0, -1));
