@@ -813,5 +813,154 @@ select pg_temp.expect_count(
   'select 1 from public.email_imports where user_id = ''5d000000-0000-4000-8000-00000000000d''', 0,
   'D''s email imports are deleted with the account');
 
+-- QA: milestone 5 extras ---------------------------------------------------------
+-- A third user, E, so C has someone else's settings and imports to reach for.
+
+insert into public.allowed_emails (email) values ('m5e@example.com');
+insert into auth.users (id, email) values ('5e000000-0000-4000-8000-00000000000e', 'm5e@example.com');
+insert into public.email_imports (user_id, message_hash, received_at, status, error)
+values ('5e000000-0000-4000-8000-00000000000e', repeat('e', 64), now(), 'failed', 'failed_checks');
+
+set role authenticated;
+select set_config('request.jwt.claim.sub', '5c000000-0000-4000-8000-00000000000c', false);
+select pg_temp.expect_count(
+  'select 1 from public.user_settings where user_id = ''5e000000-0000-4000-8000-00000000000e''', 0,
+  'QA: C cannot read E''s settings (or forwarding token) by asking for them');
+select pg_temp.expect_count(
+  'select 1 from public.user_settings where forwarding_token = (select forwarding_token from public.user_settings where user_id = ''5e000000-0000-4000-8000-00000000000e'')', 0,
+  'QA: C cannot find E''s row by token either');
+select pg_temp.expect_count(
+  'select 1 from public.email_imports where user_id = ''5e000000-0000-4000-8000-00000000000e''', 0,
+  'QA: C cannot read E''s email imports');
+select pg_temp.expect_error(
+  'update public.user_settings set user_id = ''5e000000-0000-4000-8000-00000000000e'' where user_id = ''5c000000-0000-4000-8000-00000000000c''',
+  'QA: C moving their settings row to E');
+select pg_temp.expect_error(
+  'update public.user_settings set updated_at = now() - interval ''1 year'' where user_id = ''5c000000-0000-4000-8000-00000000000c''',
+  'QA: C setting updated_at directly');
+select pg_temp.expect_error(
+  'update public.user_settings set favourite_shop_ids = array[''next'', null] where user_id = ''5c000000-0000-4000-8000-00000000000c''',
+  'QA: C choosing a null shop');
+select pg_temp.expect_error(
+  'update public.user_settings set favourite_shop_ids = null where user_id = ''5c000000-0000-4000-8000-00000000000c''',
+  'QA: C clearing their shops to null');
+select pg_temp.expect_error(
+  $$update public.user_settings set favourite_shop_ids = array['next','marks_and_spencer','new_look','john_lewis','river_island','zara','hm','uniqlo','asos','mango','matalan','fatface','next'] where user_id = '5c000000-0000-4000-8000-00000000000c'$$,
+  'QA: C choosing 13 shops');
+select pg_temp.expect_error(
+  'select public.create_user_settings()', 'QA: C calling the settings trigger function');
+select pg_temp.expect_error(
+  'update public.email_imports set status = ''done'', error = null', 'QA: C clearing a failed import');
+select pg_temp.expect_error(
+  $$insert into public.usage_events (user_id, kind, cost_pence) values ('5c000000-0000-4000-8000-00000000000c', 'shop_search', 0)$$,
+  'QA: C recording their own shop search (only the server counts)');
+select pg_temp.expect_error(
+  $$delete from public.usage_events where kind in ('email_import', 'shop_search')$$,
+  'QA: C deleting their email and shop search counts');
+-- Known gap (reported to the orchestrator, low): the database allows
+-- duplicate shop IDs and a two-dimensional array, which FavouriteShopIdsSchema
+-- (and so UserSettingsRowSchema) refuses. A user writing their own row
+-- through the Supabase API can make their own settings unreadable by the
+-- app (500 on GET /api/settings). Pinned as allowed; flip to expect_error
+-- once the constraint checks for duplicates and one dimension.
+select pg_temp.expect_rows(
+  'update public.user_settings set favourite_shop_ids = array[''next'', ''next''] where user_id = ''5c000000-0000-4000-8000-00000000000c''', 1,
+  'QA KNOWN GAP: duplicate favourite shops are accepted by the database');
+select pg_temp.expect_rows(
+  'update public.user_settings set favourite_shop_ids = ''{{next,zara}}''::text[] where user_id = ''5c000000-0000-4000-8000-00000000000c''', 1,
+  'QA KNOWN GAP: a two-dimensional shop list is accepted by the database');
+select pg_temp.expect_rows(
+  'update public.user_settings set favourite_shop_ids = array[''next''] where user_id = ''5c000000-0000-4000-8000-00000000000c''', 1,
+  'QA: C puts a valid list back');
+reset role;
+
+-- updated_at moves on every change.
+do $$
+declare
+  before_ts timestamptz;
+  after_ts timestamptz;
+begin
+  update public.user_settings set updated_at = '2000-01-01' where user_id = '5c000000-0000-4000-8000-00000000000c';
+  select updated_at into before_ts from public.user_settings where user_id = '5c000000-0000-4000-8000-00000000000c';
+  if before_ts <> now() then
+    raise exception 'FAIL: the trigger should overwrite a hand-set updated_at (got %)', before_ts;
+  end if;
+  raise notice 'ok: QA: updated_at is set by the trigger, not the caller';
+end;
+$$;
+
+-- reset_forwarding_token: only for a signed-in user with a settings row.
+do $$
+begin
+  perform set_config('request.jwt.claim.sub', '', true);
+  set local role authenticated;
+  begin
+    perform public.reset_forwarding_token();
+    raise exception 'FAIL: reset_forwarding_token ran without a signed-in user';
+  exception when insufficient_privilege then
+    raise notice 'ok: QA: reset_forwarding_token refuses a caller with no user';
+  end;
+  reset role;
+end;
+$$;
+
+-- Server-side constraints on email_imports.
+select pg_temp.expect_error(
+  $$insert into public.email_imports (user_id, message_hash, received_at, shop_name) values ('5c000000-0000-4000-8000-00000000000c', repeat('5', 64), now(), '')$$,
+  'QA: an empty shop name (store null instead)');
+select pg_temp.expect_error(
+  $$insert into public.email_imports (user_id, message_hash, received_at, shop_name) values ('5c000000-0000-4000-8000-00000000000c', repeat('5', 64), now(), repeat('x', 81))$$,
+  'QA: a shop name over 80 characters');
+select pg_temp.expect_error(
+  $$insert into public.email_imports (user_id, message_hash, received_at, item_count) values ('5c000000-0000-4000-8000-00000000000c', repeat('5', 64), now(), -1)$$,
+  'QA: a negative item count');
+select pg_temp.expect_error(
+  $$insert into public.email_imports (user_id, message_hash, received_at, status, error) values ('5c000000-0000-4000-8000-00000000000c', repeat('5', 64), now(), 'failed', 'spam')$$,
+  'QA: an unknown error code');
+select pg_temp.expect_error(
+  $$insert into public.email_imports (user_id, message_hash, received_at) values ('5c000000-0000-4000-8000-00000000000c', upper(repeat('a', 64)), now())$$,
+  'QA: an upper-case message hash (the app stores lower-case hex)');
+select pg_temp.expect_rows(
+  $$insert into public.email_imports (user_id, message_hash, received_at) values ('5e000000-0000-4000-8000-00000000000e', repeat('1', 64), now())$$, 1,
+  'QA: the same message hash for a different user is a different import');
+select pg_temp.expect_error(
+  $$insert into public.items (user_id, source, original_image_key, category, subcategory, colours, pattern, formality, seasons, warmth, occasions, description, needs_review)
+    values ('5c000000-0000-4000-8000-00000000000c', 'email', '5c000000-0000-4000-8000-00000000000c/00000000-0000-4000-8000-000000000009.jpg',
+      'top', 'shirt', array['white'], 'plain', 2, array['spring'], 'light', array['casual'], 'Shirt', null)$$,
+  'QA: needs_review can''t be null');
+
+-- Gap counts at the edges.
+select pg_temp.expect_rows($$
+  insert into public.outfits (user_id, request, name, reason, item_ids, gaps)
+  values ('5c000000-0000-4000-8000-00000000000c', '{"style": {"kind": "preset", "presetId": "casual"}}',
+    'Three gaps', 'One owned', array['c0000000-0000-4000-8000-000000000002']::uuid[],
+    '[{"category": "bottom"}, {"category": "shoes"}, {"category": "outerwear"}]')
+$$, 1, 'QA: one owned item and three gaps (four pieces)');
+select pg_temp.expect_error($$
+  insert into public.outfits (user_id, request, name, reason, item_ids, gaps)
+  values ('5c000000-0000-4000-8000-00000000000c', '{"style": {"kind": "preset", "presetId": "casual"}}',
+    'Four gaps', 'One owned', array['c0000000-0000-4000-8000-000000000002']::uuid[],
+    '[{"category": "bottom"}, {"category": "shoes"}, {"category": "outerwear"}, {"category": "top"}]')
+$$, 'QA: four gaps');
+select pg_temp.expect_error($$
+  insert into public.outfits (user_id, request, name, reason, item_ids, gaps)
+  values ('5c000000-0000-4000-8000-00000000000c', '{"style": {"kind": "preset", "presetId": "casual"}}',
+    'Null gaps', 'x', array['c0000000-0000-4000-8000-000000000001', 'c0000000-0000-4000-8000-000000000002']::uuid[], null)
+$$, 'QA: gaps set to null');
+select pg_temp.expect_error($$
+  insert into public.outfits (user_id, request, name, reason, item_ids, gaps)
+  values ('5c000000-0000-4000-8000-00000000000c', '{"style": {"kind": "preset", "presetId": "casual"}}',
+    'JSON null gaps', 'x', array['c0000000-0000-4000-8000-000000000001', 'c0000000-0000-4000-8000-000000000002']::uuid[], 'null'::jsonb)
+$$, 'QA: gaps set to JSON null');
+
+-- Deleting E removes E's settings and imports and leaves C's alone.
+delete from auth.users where id = '5e000000-0000-4000-8000-00000000000e';
+select pg_temp.expect_count(
+  'select 1 from public.user_settings where user_id = ''5e000000-0000-4000-8000-00000000000e''', 0,
+  'QA: E''s settings are deleted with the account');
+select pg_temp.expect_count(
+  'select 1 from public.user_settings where user_id = ''5c000000-0000-4000-8000-00000000000c''', 1,
+  'QA: C''s settings survive E''s deletion');
+
 \o
 \echo 'All migration checks passed.'
