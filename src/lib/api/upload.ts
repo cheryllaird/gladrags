@@ -14,8 +14,9 @@ import { sniffImageType } from "@/lib/images/server";
 import { ApiException } from "./errors";
 
 /**
- * Parsing for the multipart upload routes (POST /api/items/photo and
- * POST /api/items/link/cutout).
+ * Parsing for the multipart upload routes (POST /api/items/photo,
+ * POST /api/items/link/cutout, PUT /api/items/[id]/cutout and
+ * PUT /api/items/[id]/photo).
  *
  * Checked here: required fields, real file type (from the bytes, not the
  * declared type) and byte size. NOT checked here: pixel dimensions, which
@@ -75,25 +76,59 @@ async function readImage(form: FormData, field: string, rules: ImageFieldRules, 
 
 export interface PhotoUpload {
   original: UploadedImage;
+  /** Deprecated: only older clients send a cut-out with the photo. */
   cutout: UploadedImage | null;
   sourceUrl: string | undefined;
+  /** A batch add: save the item as "to review" instead of returning a draft. */
+  saveForReview?: boolean;
 }
 
-/** POST /api/items/photo: `original` (required), `cutout` (optional), `sourceUrl` (optional). */
+function textField(form: FormData, field: string): string | undefined {
+  const value = form.get(field);
+  return typeof value === "string" && value !== "" ? value : undefined;
+}
+
+/**
+ * POST /api/items/photo: `original` (required), `cutout` (optional,
+ * deprecated), `sourceUrl` (optional), `saveForReview` (optional, "true"/"false").
+ */
 export async function parsePhotoUpload(request: Request): Promise<PhotoUpload> {
   const form = await readForm(request);
   const original = await readImage(form, UPLOAD_FIELDS.original, ORIGINAL_RULES, true);
   const cutout = await readImage(form, UPLOAD_FIELDS.cutout, CUTOUT_RULES, false);
 
-  const rawSourceUrl = form.get(UPLOAD_FIELDS.sourceUrl);
   const fields = PhotoUploadFieldsSchema.safeParse({
-    sourceUrl: typeof rawSourceUrl === "string" && rawSourceUrl !== "" ? rawSourceUrl : undefined,
+    sourceUrl: textField(form, UPLOAD_FIELDS.sourceUrl),
+    saveForReview: textField(form, UPLOAD_FIELDS.saveForReview),
   });
   if (!fields.success) {
+    const field = String(fields.error.issues[0]?.path[0] ?? UPLOAD_FIELDS.sourceUrl);
+    if (field === UPLOAD_FIELDS.saveForReview) {
+      throw fieldError(field, "saveForReview must be true or false", "Must be true or false");
+    }
     throw fieldError(UPLOAD_FIELDS.sourceUrl, "The source link isn't valid", "Must be an http or https link");
   }
 
-  return { original: original!, cutout, sourceUrl: fields.data.sourceUrl };
+  return { original: original!, cutout, sourceUrl: fields.data.sourceUrl, saveForReview: fields.data.saveForReview };
+}
+
+/**
+ * PUT /api/items/[id]/cutout: `cutout` (required), PNG. Checked here for
+ * type and size only; the route must still check dimensions against the
+ * item's original and transparency (checkUploadedCutout), and strip EXIF.
+ */
+export async function parseCutoutUpload(request: Request): Promise<UploadedImage> {
+  const form = await readForm(request);
+  return (await readImage(form, UPLOAD_FIELDS.cutout, CUTOUT_RULES, true))!;
+}
+
+/**
+ * PUT /api/items/[id]/photo: `original` (required). Checked here for type
+ * and size only; the route must still check dimensions and strip EXIF.
+ */
+export async function parsePhotoReplaceUpload(request: Request): Promise<UploadedImage> {
+  const form = await readForm(request);
+  return (await readImage(form, UPLOAD_FIELDS.original, ORIGINAL_RULES, true))!;
 }
 
 export interface LinkCutoutUpload {

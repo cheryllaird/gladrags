@@ -1,5 +1,5 @@
 // Add by link, step 2 of 2 (owner: link-import, using ingestion's checks
-// and tagging). See docs/CONTRACTS.md section 5 and
+// and tagging). Since milestone 5 no cut-out is sent; the path keeps its name. See docs/CONTRACTS.md section 5 and
 // src/lib/link-import/finish-link.ts for the steps.
 //
 // The client's meta is only the step-1 image key; the source URL and
@@ -9,7 +9,7 @@
 //
 // In mock mode it validates the upload and the caps, then returns a mock
 // draft; mock-no-tags in the step-1 URL makes suggestedTags null.
-import { ItemDraftResponseSchema } from "@/contracts";
+import { BatchAddResponseSchema, ItemDraftResponseSchema } from "@/contracts";
 import { ApiException } from "@/lib/api/errors";
 import { jsonResponse, withApiHandler } from "@/lib/api/http";
 import { parseLinkCutoutUpload, type LinkCutoutUpload } from "@/lib/api/upload";
@@ -28,6 +28,8 @@ export const POST = withApiHandler(async (request) => {
   const user = await requireUser();
   const upload = await parseLinkCutoutUpload(request);
   if (isMockMode()) return mockLinkCutout(user, upload);
+  // TODO(link-import, milestone 5): batch add (save as "to review").
+  if (upload.meta.saveForReview) throw new ApiException("not_implemented", "Adding several links at once isn't built yet");
 
   const draft = await finishLinkImport(getLinkCutoutDeps(), user.id, upload);
   return jsonResponse(ItemDraftResponseSchema, { draft });
@@ -51,5 +53,11 @@ async function mockLinkCutout(user: SessionUser, { meta, cutout }: LinkCutoutUpl
     originalImageKey: meta.originalImageKey,
     taggingFails: hasMarker([linkImport.sourceUrl], MOCK_MARKERS.noTags),
   });
+  if (meta.saveForReview) {
+    const response = draft.suggestedTags
+      ? { status: "saved" as const, item: mock.saveDraftForReview({ ...draft, suggestedTags: draft.suggestedTags }) }
+      : { status: "draft" as const, draft };
+    return jsonResponse(BatchAddResponseSchema, response);
+  }
   return jsonResponse(ItemDraftResponseSchema, { draft });
 }
