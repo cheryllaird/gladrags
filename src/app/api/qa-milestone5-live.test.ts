@@ -4,6 +4,10 @@
  * serve the shared in-memory mock data to real users) until its builder
  * ships it; signed-in routes must still answer 401 to a signed-out caller
  * first; and the inbound webhook alone works without a session.
+ *
+ * Routes whose builder has shipped them (BUILT) leave the 501 list but keep
+ * the sign-in and cross-site checks. Their real behaviour is tested by
+ * their builder (e.g. src/app/api/items/review-routes.test.ts).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { API_ERROR_STATUS, ApiErrorSchema, type ApiErrorCode } from "@/contracts";
@@ -81,7 +85,7 @@ const EMAIL = {
 };
 
 /** Every new signed-in route or option, as a request it would otherwise accept. */
-const CASES: [string, () => Promise<Response>][] = [
+const ALL_CASES: [string, () => Promise<Response>][] = [
   ["GET /api/settings", () => settings.GET(json("/api/settings", "GET"))],
   ["PUT /api/settings", () => settings.PUT(json("/api/settings", "PUT", { favouriteShopIds: ["zara"] }))],
   ["POST /api/settings/forwarding-address", () => forwardingAddress.POST(json("/api/settings/forwarding-address", "POST"))],
@@ -104,6 +108,19 @@ const CASES: [string, () => Promise<Response>][] = [
   ],
 ];
 
+/** Built by ingestion (C2). */
+const BUILT = new Set([
+  "POST /api/items/reviewed",
+  "PUT /api/items/:id/cutout",
+  "PUT /api/items/:id/photo",
+  "GET /api/items?needsReview=true",
+  "GET /api/items?needsReview=false",
+  "PATCH /api/items/:id { reviewed: true }",
+  "POST /api/items/photo saveForReview=true",
+]);
+const CASES = ALL_CASES;
+const STUB_CASES = ALL_CASES.filter(([name]) => !BUILT.has(name));
+
 beforeEach(() => {
   vi.stubEnv("GLADRAGS_MOCK_MODE", "false");
   vi.stubEnv("INBOUND_EMAIL_DOMAIN", "in.gladrags.example");
@@ -117,7 +134,11 @@ afterEach(() => {
 });
 
 describe("outside mock mode", () => {
-  it.each(CASES)("%s answers 501 not_implemented, not mock data", async (_name, call) => {
+  it("still lists every built route among the cases", () => {
+    expect([...BUILT].every((name) => ALL_CASES.some(([n]) => n === name))).toBe(true);
+  });
+
+  it.each(STUB_CASES)("%s answers 501 not_implemented, not mock data", async (_name, call) => {
     await expectError(await call(), "not_implemented");
   });
 

@@ -9,6 +9,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { getUsageGuard } from "@/lib/usage";
 import type { PhotoIngestionDeps } from "./add-photo";
+import type { ItemImageDeps } from "./item-images";
 import { SupabaseItemRepository } from "./items-repository";
 import { SupabaseImageStorage } from "./storage";
 import type { WardrobeDeps } from "./wardrobe";
@@ -28,4 +29,9 @@ export function getPhotoIngestionDeps(): PhotoIngestionDeps {
     tagger: getTaggingProvider(),
     usage: getUsageGuard(),
   };
+}
+
+/** For the routes that change an existing item's pictures: the wardrobe deps plus image processing. */
+export async function getItemImageDeps(): Promise<ItemImageDeps> {
+  return { ...(await getWardrobeDeps()), images: getServerImageProcessor() };
 }

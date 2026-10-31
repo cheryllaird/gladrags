@@ -34,6 +34,17 @@ export const GEMINI_TAGGING_RECORDINGS = {
       usageMetadata: { ...usage, promptTokenCount: 1801 },
     },
   },
+  textOnly: {
+    /**
+     * An order-email line with no picture: "Stretch Slim Chinos", Next,
+     * colour "Stone". Text only, so far fewer prompt tokens. Hand-written,
+     * like the others.
+     */
+    chinosFromEmail: {
+      text: '{"category":"bottom","subcategory":"chinos","colours":["beige"],"pattern":"plain","formality":3,"seasons":["spring","summer","autumn"],"warmth":"medium","occasions":["smart_casual","casual","work"],"fabric":"cotton","description":"Stone stretch slim-fit chinos"}',
+      usageMetadata: { promptTokenCount: 1180, candidatesTokenCount: 88, thoughtsTokenCount: 140, totalTokenCount: 1408 },
+    },
+  },
   bad: {
     /** Cut off mid-reply (e.g. hit the output limit). */
     truncated: {
@@ -48,4 +59,4 @@ export const GEMINI_TAGGING_RECORDINGS = {
     /** No text at all (e.g. the reply was blocked). */
     empty: { text: "", usageMetadata: { promptTokenCount: 1712 } },
   },
-} satisfies { good: Record<string, RecordedReply>; bad: Record<string, RecordedReply> };
+} satisfies { good: Record<string, RecordedReply>; textOnly: Record<string, RecordedReply>; bad: Record<string, RecordedReply> };

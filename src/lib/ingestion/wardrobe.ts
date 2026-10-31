@@ -1,7 +1,8 @@
 /**
  * The wardrobe item routes, the real versions (CONTRACTS.md section 5,
  * "Wardrobe items"): list with filters and search, read one, save a
- * reviewed draft, replace tags, delete with images.
+ * reviewed draft, save a batch-added item as "to review", replace tags or
+ * confirm them, delete with images.
  */
 import "server-only";
 import {
@@ -11,12 +12,13 @@ import {
   type ItemListQuery,
   type ItemRow,
   type ItemTags,
+  type UpdateItemRequest,
   type WardrobeItem,
 } from "@/contracts";
 import { ApiException, notFound } from "@/lib/api/errors";
 import { itemRowToWardrobeItem } from "@/lib/db/mappers";
 import { SIGNED_URL_TTL_SECONDS } from "@/lib/images/server";
-import { DuplicateImageKeyError, type ItemRepository } from "./items-repository";
+import { DuplicateImageKeyError, type ItemRepository, type NewItem } from "./items-repository";
 import type { ImageStorage } from "./storage";
 
 export interface WardrobeDeps {
@@ -46,7 +48,7 @@ export async function toWardrobeItems(storage: ImageStorage, rows: readonly Item
   return items;
 }
 
-async function toWardrobeItem(storage: ImageStorage, row: ItemRow): Promise<WardrobeItem> {
+export async function toWardrobeItem(storage: ImageStorage, row: ItemRow): Promise<WardrobeItem> {
   const [item] = await toWardrobeItems(storage, [row]);
   if (!item) throw new Error("Couldn't sign the item's image URL");
   return item;
@@ -95,10 +97,43 @@ export async function createWardrobeItem(deps: WardrobeDeps, userId: string, req
   return toWardrobeItem(deps.storage, row);
 }
 
+/** An item the server saves itself, with its suggested tags, for the user to review later. */
+export type ItemForReview = Omit<NewItem, "tagsEdited" | "needsReview">;
+
+/**
+ * Save a batch-added item straight away, marked "to review" (spec:
+ * "Reviewing new items"). For add-by-photo and add-by-link batches and
+ * order emails. The images must be ones the server just stored for this
+ * user: unlike createWardrobeItem, nothing here checks keys a phone sent.
+ */
+export async function saveItemForReview(deps: WardrobeDeps, userId: string, item: ItemForReview): Promise<WardrobeItem> {
+  return toWardrobeItem(deps.storage, await saveItemRowForReview(deps.items, userId, item));
+}
+
+/** saveItemForReview without signing the image URLs: just the row. */
+export async function saveItemRowForReview(items: ItemRepository, userId: string, item: ItemForReview): Promise<ItemRow> {
+  return items.create(userId, { ...item, tagsEdited: false, needsReview: true });
+}
+
 export async function updateWardrobeItemTags(deps: WardrobeDeps, userId: string, id: string, tags: ItemTags): Promise<WardrobeItem> {
   const row = await deps.items.updateTags(userId, id, tags);
   if (!row) throw notFound("That item");
   return toWardrobeItem(deps.storage, row);
+}
+
+/**
+ * PATCH /api/items/[id]: new tags (sets tags_edited), or `reviewed: true`
+ * to confirm the suggested ones, or both. Every PATCH clears needs_review.
+ */
+export async function updateWardrobeItem(deps: WardrobeDeps, userId: string, id: string, update: UpdateItemRequest): Promise<WardrobeItem> {
+  const row = update.tags ? await deps.items.updateTags(userId, id, update.tags) : await deps.items.markReviewed(userId, id);
+  if (!row) throw notFound("That item");
+  return toWardrobeItem(deps.storage, row);
+}
+
+/** "Confirm all" in the review list. IDs that aren't the user's items are ignored. */
+export async function markWardrobeItemsReviewed(deps: Pick<WardrobeDeps, "items">, userId: string, ids: readonly string[]): Promise<number> {
+  return deps.items.markManyReviewed(userId, ids);
 }
 
 /**
