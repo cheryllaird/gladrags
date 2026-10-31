@@ -241,7 +241,7 @@ test.describe("caps and paused AI", () => {
     await page.goto("/add");
     await choosePhoto(page, "shirt-mock-ai-paused.jpg");
     await expect(page.getByText("Adding is paused")).toBeVisible();
-    await expect(page.getByText(/Your wardrobe still works\. It starts again on 1 /)).toBeVisible();
+    await expect(page.getByText(/Your wardrobe still works\. It starts again (on 1 |at midnight)/)).toBeVisible();
   });
 
   test("paused AI stops adding by link", async ({ page }) => {
