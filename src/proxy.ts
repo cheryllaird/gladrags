@@ -22,10 +22,11 @@ function isPublic(pathname: string): boolean {
 
 /**
  * Routes no signed-in user calls, so there's no session to refresh:
- * scheduled jobs (Vercel Cron, with a bearer secret the route checks) and
- * the browser's own CSP reports.
+ * scheduled jobs (Vercel Cron, with a bearer secret the route checks), the
+ * browser's own CSP reports, and the inbound email service's webhook
+ * (which checks the provider's signature itself).
  */
-const SESSIONLESS_PREFIXES = ["/api/cron/", "/api/csp-report"];
+const SESSIONLESS_PREFIXES = ["/api/cron/", "/api/csp-report", "/api/inbound/"];
 
 export async function proxy(request: NextRequest) {
   if (isMockMode()) return NextResponse.next();

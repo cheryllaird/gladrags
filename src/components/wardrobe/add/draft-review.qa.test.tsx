@@ -52,6 +52,8 @@ function saved(tags: ItemTags): WardrobeItem {
     cutoutUrl: DRAFT.cutoutUrl,
     tags,
     tagsEdited: false,
+    needsReview: false,
+    needsPhoto: false,
     createdAt: "2026-10-25T10:00:00.000Z",
   };
 }

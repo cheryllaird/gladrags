@@ -6,7 +6,7 @@
  * Providers return the model's raw output. They never validate it: callers
  * use callWithValidation() with a schema from src/contracts/model-output.ts.
  */
-import type { ItemTags, OutfitRequest, RefineRequest } from "@/contracts";
+import type { GapDescription, ItemTags, OutfitRequest, RefineRequest, ShopId } from "@/contracts";
 
 export type ImageMimeType = "image/jpeg" | "image/png" | "image/webp";
 
@@ -34,8 +34,12 @@ export interface ModelCall {
 // ---------------------------------------------------------------------------
 
 export interface TaggingInput {
-  /** The cut-out (or original if background removal failed). */
-  image: ImageInput;
+  /**
+   * The item's image (the original; a cut-out where one exists). Null only
+   * for an order-email line with no usable picture: the model then tags from
+   * `productHints` alone, which must include a title.
+   */
+  image: ImageInput | null;
   /** What a product page said, when the item came from a link. */
   productHints?: {
     title?: string | null;
@@ -90,4 +94,41 @@ export interface RankingProvider {
   shortlist(input: ShortlistInput): Promise<ModelCall>;
   /** Pass 2, with thumbnails. Output should validate against RankingFinalOutputSchema. */
   pickFinal(input: FinalPickInput): Promise<ModelCall>;
+}
+
+// ---------------------------------------------------------------------------
+// Order emails and shop search (milestone 5)
+// ---------------------------------------------------------------------------
+
+export interface OrderEmailInput {
+  /** The email's subject, cleaned (single line). */
+  subject: string | null;
+  /**
+   * The email as text: the plain-text body, or the HTML converted to text
+   * with product and image links kept, cut to EMAIL_PROMPT_TEXT_MAX
+   * characters. Never attachments. The prompt must
+   * treat it as data, not instructions.
+   */
+  text: string;
+}
+
+/** Reads the clothing and shoe lines out of an order email. Built by link-import. */
+export interface OrderEmailProvider {
+  readonly name: string;
+  /** Output should validate against OrderEmailModelOutputSchema. */
+  extractOrder(input: OrderEmailInput): Promise<ModelCall>;
+}
+
+export interface ShopSearchInput {
+  /** The outfit's gaps to find, one per category. */
+  gaps: Pick<GapDescription, "category" | "subcategory" | "colours" | "description">[];
+  /** The user's favourite shops, with the website domains to search. */
+  shops: { id: ShopId; name: string; domains: readonly string[] }[];
+}
+
+/** Gemini with Google Search grounding, for "Find in my shops". Built by outfit-engine. */
+export interface ShopSearchProvider {
+  readonly name: string;
+  /** Output should validate against ShopSearchModelOutputSchema. */
+  searchGaps(input: ShopSearchInput): Promise<ModelCall>;
 }

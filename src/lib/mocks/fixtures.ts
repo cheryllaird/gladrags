@@ -2,7 +2,7 @@
  * Mock wardrobe for mock mode and tests: a small mixed menswear/womenswear
  * wardrobe with every category. Images are placeholder SVGs in public/mock.
  */
-import type { ItemTags, WardrobeItem } from "@/contracts";
+import type { GapDescription, ItemTags, WardrobeItem } from "@/contracts";
 
 const CREATED_AT = "2026-10-21T09:00:00.000Z";
 
@@ -22,6 +22,8 @@ function mockItem(
     cutoutUrl: hasCutout ? `/mock/items/${slug}.svg` : null,
     tags,
     tagsEdited: false,
+    needsReview: false,
+    needsPhoto: false,
     createdAt: CREATED_AT,
   };
 }
@@ -89,6 +91,9 @@ export const MOCK_ITEMS: readonly WardrobeItem[] = [
   }),
 ];
 
+/** The placeholder original of an email item without a picture (needsPhoto), in mock mode. */
+export const MOCK_NO_PICTURE_IMAGE_URL = "/mock/items/no-picture.svg";
+
 /** Shown for any photo uploaded in mock mode. */
 export const MOCK_UPLOAD_IMAGE_URL = "/mock/items/uploaded.svg";
 
@@ -113,4 +118,56 @@ export const MOCK_OUTFIT_COPY: readonly { name: string; reason: string }[] = [
   { name: "Tonal neutrals", reason: "Mock suggestion: neutrals in similar shades keep it put together" },
   { name: "Bit of contrast", reason: "Mock suggestion: a light top against a darker base keeps it crisp" },
   { name: "Layered up", reason: "Mock suggestion: the outer layer adds structure and warmth" },
+];
+
+/** The mock user's forwarding token (mock mode only; never a real address). */
+export const MOCK_FORWARDING_TOKEN = "0123456789abcdef0123456789abcdef";
+
+const id = (n: number) => `1a000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+
+/**
+ * Canned outfits with a shoes gap, as if the wardrobe had no shoes (mock
+ * mode, until the outfit engine makes gaps). See mockGapOutfits.
+ */
+export const MOCK_GAP_OUTFITS: readonly { name: string; reason: string; itemIds: readonly string[]; gaps: readonly GapDescription[] }[] = [
+  {
+    name: "Easy weekend",
+    reason: "Mock suggestion: white trainers would keep this crisp and relaxed",
+    itemIds: [id(1), id(4)],
+    gaps: [{ category: "shoes", subcategory: "trainers", colours: ["white"], description: "White leather trainers" }],
+  },
+  {
+    name: "Garden party",
+    reason: "Mock suggestion: tan sandals let the green print do the talking",
+    itemIds: [id(7)],
+    gaps: [{ category: "shoes", subcategory: "sandals", colours: ["tan"], description: "Tan block-heel sandals" }],
+  },
+  {
+    name: "Smart and easy",
+    reason: "Mock suggestion: brown loafers warm up the navy and tan",
+    itemIds: [id(2), id(5), id(8)],
+    gaps: [{ category: "shoes", subcategory: "loafers", colours: ["brown"], description: "Brown suede loafers" }],
+  },
+];
+
+/** What the mock order email "contains": two items, the second without a usable picture. */
+export const MOCK_EMAIL_LINE_ITEMS: readonly { tags: ItemTags; productUrl: string | null; hasPicture: boolean }[] = [
+  {
+    productUrl: "https://www.marksandspencer.com/mock-product/pure-cotton-polo",
+    hasPicture: true,
+    tags: {
+      category: "top", subcategory: "polo", colours: ["navy"], pattern: "plain", formality: 2,
+      seasons: ["spring", "summer"], warmth: "light", occasions: ["casual", "smart_casual"],
+      fabric: "cotton", description: "Navy pure cotton polo shirt",
+    },
+  },
+  {
+    productUrl: null,
+    hasPicture: false,
+    tags: {
+      category: "bottom", subcategory: "chinos", colours: ["olive"], pattern: "plain", formality: 2,
+      seasons: ["spring", "summer", "autumn"], warmth: "medium", occasions: ["casual", "smart_casual"],
+      fabric: null, description: "Khaki slim chinos",
+    },
+  },
 ];

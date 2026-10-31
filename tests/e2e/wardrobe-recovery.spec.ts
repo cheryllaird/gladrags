@@ -396,6 +396,8 @@ test.describe("link flow retries", () => {
         json: {
           itemsToday: { used: 3, limit: 40 },
           outfitRequestsToday: { used: 0, limit: 25 },
+          emailsToday: { used: 0, limit: 10 },
+          shopSearchesToday: { used: 0, limit: 10 },
           dailyResetAt: "2030-01-01T00:00:00.000Z",
           aiPaused: linkSent,
         },

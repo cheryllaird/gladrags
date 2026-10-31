@@ -18,7 +18,9 @@ import {
 } from "./item";
 import { LinkProductSchema } from "./api";
 import { FeedbackKindSchema } from "./feedback";
-import { OutfitStatusSchema, StoredOutfitRequestSchema } from "./outfit";
+import { OutfitGapsSchema, OutfitStatusSchema, StoredOutfitRequestSchema } from "./outfit";
+import { FavouriteShopIdsSchema } from "./shops";
+import { EmailImportErrorSchema, EmailImportStatusSchema, ForwardingTokenSchema } from "./email";
 import { PresetStyleIdSchema } from "./styles";
 import { UsageEventKindSchema } from "./usage";
 
@@ -51,6 +53,9 @@ export const ItemRowSchema = z.object({
   fabric: z.string().nullable(),
   description: z.string(),
   tags_edited: z.boolean(),
+  /** Added in milestone 5. Defaults keep rows read with an older column list valid. */
+  needs_review: z.boolean().default(false),
+  needs_photo: z.boolean().default(false),
   created_at: DbTimestampSchema,
 });
 export type ItemRow = z.infer<typeof ItemRowSchema>;
@@ -62,6 +67,8 @@ export const OutfitRowSchema = z.object({
   name: z.string(),
   reason: z.string(),
   item_ids: z.array(IdSchema),
+  /** Added in milestone 5 (jsonb, default []). */
+  gaps: OutfitGapsSchema.default([]),
   status: OutfitStatusSchema,
   parent_outfit_id: IdSchema.nullable(),
   created_at: DbTimestampSchema,
@@ -100,3 +107,34 @@ export const UsageEventRowSchema = z.object({
   created_at: DbTimestampSchema,
 });
 export type UsageEventRow = z.infer<typeof UsageEventRowSchema>;
+
+/**
+ * One row per user (created with the profile): favourite shops and the
+ * forwarding token. Users can read their own row and change only
+ * favourite_shop_ids; the token is reset through reset_forwarding_token().
+ */
+export const UserSettingsRowSchema = z.object({
+  user_id: IdSchema,
+  favourite_shop_ids: FavouriteShopIdsSchema,
+  forwarding_token: ForwardingTokenSchema,
+  updated_at: DbTimestampSchema,
+});
+export type UserSettingsRow = z.infer<typeof UserSettingsRowSchema>;
+
+/** One forwarded email and what came of it. Never holds the email itself. */
+export const EmailImportRowSchema = z.object({
+  id: IdSchema,
+  user_id: IdSchema,
+  /** SHA-256 (hex) of the provider's message ID, to ignore a redelivered webhook. */
+  message_hash: z.string().regex(/^[0-9a-f]{64}$/),
+  received_at: DbTimestampSchema,
+  shop_name: z.string().nullable(),
+  /** YYYY-MM-DD */
+  order_date: z.string().nullable(),
+  status: EmailImportStatusSchema,
+  item_count: z.int().min(0),
+  skipped_count: z.int().min(0),
+  error: EmailImportErrorSchema.nullable(),
+  created_at: DbTimestampSchema,
+});
+export type EmailImportRow = z.infer<typeof EmailImportRowSchema>;

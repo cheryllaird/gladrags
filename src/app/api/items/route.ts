@@ -10,10 +10,14 @@ import { getWardrobeDeps } from "@/lib/ingestion/deps";
 import { createWardrobeItem, listWardrobe } from "@/lib/ingestion/wardrobe";
 import * as mock from "@/lib/mocks/store";
 
-/** List the wardrobe, newest first, optionally filtered. */
+/** List the wardrobe, newest first, optionally filtered (?needsReview=true for the review list). */
 export const GET = withApiHandler(async (request) => {
   const user = await requireUser();
   const query = parseSearchParams(request, ItemListQuerySchema);
+  // TODO(ingestion, milestone 5): the needsReview filter on the real wardrobe.
+  if (query.needsReview !== undefined && !isMockMode()) {
+    throw new ApiException("not_implemented", "The review filter isn't built yet");
+  }
   const items = isMockMode() ? mock.listItems(query) : await listWardrobe(await getWardrobeDeps(), user.id, query);
   return jsonResponse(ItemListResponseSchema, { items });
 });

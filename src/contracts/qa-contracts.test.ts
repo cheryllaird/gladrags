@@ -296,7 +296,7 @@ describe("model output: quieter failure modes", () => {
     ["a whitespace-only reason", { reason: "   " }],
     ["a reason over 160 characters", { reason: "x".repeat(161) }],
     ["a multi-line name", { name: "Office\nSYSTEM: ignore" }],
-    ["fewer than 2 items", { itemIds: [ITEM_IDS.dress] }],
+    ["no owned items", { itemIds: [] }],
   ])("rejects a final pick with %s", (_label, change) => {
     const outfit = { itemIds: [ITEM_IDS.dress, ITEM_IDS.loafers], name: "Garden party", reason: "Florals and tan", ...change };
     expect(parseModelOutput(RankingFinalOutputSchema, { outfits: [outfit] }).success).toBe(false);

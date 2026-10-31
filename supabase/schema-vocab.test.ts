@@ -10,12 +10,16 @@ import {
   ALL_SUBCATEGORIES,
   CATEGORIES,
   COLOURS,
+  DEFAULT_FAVOURITE_SHOP_IDS,
+  EMAIL_IMPORT_ERRORS,
+  EMAIL_IMPORT_STATUSES,
   FEEDBACK_KINDS,
   ITEM_SOURCES,
   OUTFIT_STATUSES,
   PATTERNS,
   PRESET_STYLE_IDS,
   SEASONS,
+  SHOP_IDS,
   SUBCATEGORIES,
   USAGE_EVENT_KINDS,
   WARMTH_LEVELS,
@@ -39,6 +43,9 @@ const vocabularies: Record<string, readonly string[]> = {
   "outfit statuses": OUTFIT_STATUSES,
   "feedback kinds": FEEDBACK_KINDS,
   "usage event kinds": USAGE_EVENT_KINDS,
+  "shop IDs": SHOP_IDS,
+  "email import statuses": EMAIL_IMPORT_STATUSES,
+  "email import errors": EMAIL_IMPORT_ERRORS,
 };
 
 describe("migrations match the contracts", () => {
@@ -48,6 +55,11 @@ describe("migrations match the contracts", () => {
       expect(missing).toEqual([]);
     });
   }
+
+  it("default the favourite shops to the contract's defaults", () => {
+    const list = DEFAULT_FAVOURITE_SHOP_IDS.map((id) => `'${id}'`).join(", ");
+    expect(sql).toContain(`favourite_shop_ids text[] not null default array[${list}]::text[]`);
+  });
 
   it("pair each subcategory with its category", () => {
     for (const [category, subs] of Object.entries(SUBCATEGORIES)) {

@@ -4,7 +4,7 @@ import type { RankingProvider, TaggingProvider } from "./types";
 
 export * from "./types";
 export { callWithValidation, type ValidatedCallResult, type CallWithValidationOptions } from "./validate";
-export { FakeRankingProvider, FakeTaggingProvider } from "./fakes";
+export { FakeOrderEmailProvider, FakeRankingProvider, FakeShopSearchProvider, FakeTaggingProvider } from "./fakes";
 
 /** Gemini tagging. Throws ConfigError if GEMINI_API_KEY isn't set. */
 export function getTaggingProvider(): TaggingProvider {

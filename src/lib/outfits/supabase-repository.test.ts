@@ -6,7 +6,7 @@ import { SupabaseOutfitRepository } from "./supabase-repository";
 
 const ALICE = "0c000000-0000-4000-8000-00000000000a";
 const BOB = "0c000000-0000-4000-8000-00000000000b";
-const REQUEST: StoredOutfitRequest = { style: { kind: "preset", presetId: "work" }, guidance: null, anchorItemId: null };
+const REQUEST: StoredOutfitRequest = { style: { kind: "preset", presetId: "work" }, guidance: null, anchorItemId: null, includeShopItems: false };
 
 function itemRow(n: number, userId: string, category: Parameters<typeof entry>[1], withCutout = true): Record<string, unknown> {
   return toItemRow(entry(n, category), userId, { withCutout });

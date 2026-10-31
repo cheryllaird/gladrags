@@ -38,6 +38,16 @@ for migration in "$ROOT"/supabase/migrations/*.sql; do
   psql "$TEST_URL" -q -v ON_ERROR_STOP=1 -f "$migration" >/dev/null
 done
 
+# From migration 7 on, migrations must be safe to run twice (Cheryl applies
+# them by hand in the Supabase SQL editor). Prove it by running them again.
+for migration in "$ROOT"/supabase/migrations/*.sql; do
+  number="$(basename "$migration" | cut -c9-14)"
+  if [ "$((10#$number))" -ge 7 ]; then
+    echo "Re-applying $(basename "$migration") (must be idempotent)..."
+    psql "$TEST_URL" -q -v ON_ERROR_STOP=1 -f "$migration" >/dev/null
+  fi
+done
+
 echo "Running checks..."
 psql "$TEST_URL" -q -v ON_ERROR_STOP=1 -f "$ROOT/supabase/tests/rls.test.sql"
 

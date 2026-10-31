@@ -116,6 +116,7 @@ export class OutfitService {
       style: request.style,
       guidance: request.guidance ?? null,
       anchorItemId: request.anchorItemId ?? null,
+      includeShopItems: request.includeShopItems ?? false,
     };
     return this.run(userId, stored, null, {
       items,
@@ -147,6 +148,7 @@ export class OutfitService {
       style: parent.request.style,
       guidance: refine.kind === "guidance" ? combineGuidance(parent.request.guidance, refine.text) : parent.request.guidance,
       anchorItemId,
+      includeShopItems: parent.request.includeShopItems,
     };
     return this.run(userId, stored, parent.id, {
       items,
@@ -225,6 +227,6 @@ export class OutfitService {
       userId,
       result.outfits.map((o) => ({ request: stored, name: o.name, reason: o.reason, itemIds: o.itemIds, parentOutfitId })),
     );
-    return { status: "ok", outfits };
+    return { status: "ok", outfits, missingCategories: [] };
   }
 }

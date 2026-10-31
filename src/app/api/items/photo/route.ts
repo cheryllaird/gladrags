@@ -4,7 +4,8 @@
 // In mock mode (GLADRAGS_MOCK_MODE=true) it validates the upload and the
 // caps, then returns a mock draft, so the UI can be built without Supabase
 // or Gemini. The mock markers in the file name trigger the error states.
-import { ItemDraftResponseSchema } from "@/contracts";
+import { BatchAddResponseSchema, ItemDraftResponseSchema } from "@/contracts";
+import { ApiException } from "@/lib/api/errors";
 import { jsonResponse, withApiHandler } from "@/lib/api/http";
 import { parsePhotoUpload, type PhotoUpload } from "@/lib/api/upload";
 import { requireUser, type SessionUser } from "@/lib/auth/session";
@@ -25,6 +26,8 @@ export const POST = withApiHandler(async (request) => {
   const user = await requireUser();
   const upload = await parsePhotoUpload(request);
   if (isMockMode()) return mockPhotoDraft(user, upload);
+  // TODO(ingestion, milestone 5): batch add (save as "to review").
+  if (upload.saveForReview) throw new ApiException("not_implemented", "Adding several photos at once isn't built yet");
 
   const draft = await addItemFromPhoto(getPhotoIngestionDeps(), user.id, upload);
   return jsonResponse(ItemDraftResponseSchema, { draft });
@@ -40,5 +43,12 @@ async function mockPhotoDraft(user: SessionUser, upload: PhotoUpload) {
     hasCutout: upload.cutout !== null,
     taggingFails: hasMarker([upload.original.name], MOCK_MARKERS.noTags),
   });
+  if (upload.saveForReview) {
+    // A batch add: saved straight away as "to review", unless tagging failed.
+    const response = draft.suggestedTags
+      ? { status: "saved" as const, item: mock.saveDraftForReview({ ...draft, suggestedTags: draft.suggestedTags }) }
+      : { status: "draft" as const, draft };
+    return jsonResponse(BatchAddResponseSchema, response);
+  }
   return jsonResponse(ItemDraftResponseSchema, { draft });
 }

@@ -44,6 +44,18 @@ export class CapReachedError extends Error {
           `You've tried ${this.limit} links today, the daily limit while we're testing. You can still add items by photo, or try again tomorrow.`,
           { cap },
         );
+      case "emails_per_day":
+        return new ApiException(
+          "daily_cap_reached",
+          `You've forwarded ${this.limit} order emails today, the daily limit while we're testing. Try again tomorrow.`,
+          { cap },
+        );
+      case "shop_searches_per_day":
+        return new ApiException(
+          "daily_cap_reached",
+          `You've searched your shops ${this.limit} times today, the daily limit while we're testing. Try again tomorrow.`,
+          { cap },
+        );
       case "monthly_ai_spend":
         return new ApiException(
           "ai_paused",
