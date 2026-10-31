@@ -195,7 +195,7 @@ Two private buckets, `originals` and `cutouts`. Object names are `<user id>/<ran
 
 The spec lists subcategories as "t-shirt" and so on. In code they're lower-case IDs with underscores (`t_shirt`), and the UI shows friendly labels.
 
-Every text field that can reach a model prompt (tags, guidance, custom styles, scraped product data, gap descriptions, and what the model reads from order emails) is a single line with a length limit. That stops anyone adding new lines that look like separate prompt sections. It does **not** stop prompt injection on its own: "Ignore previous instructions" fits on one line. The prompts themselves must treat user and scraped text as data, and the outputs are checked against these schemas, which limits what a successful injection could do.
+Every text field that can reach a model prompt (tags, guidance, custom styles, scraped product data, gap descriptions, and what the model reads from order emails) is a single line (no CR or LF, and **(M5)** no Unicode line separators U+2028, U+2029 or NEL U+0085) with a length limit. That stops anyone adding new lines that look like separate prompt sections. It does **not** stop prompt injection on its own: "Ignore previous instructions" fits on one line. The prompts themselves must treat user and scraped text as data, and the outputs are checked against these schemas, which limits what a successful injection could do.
 
 ---
 
@@ -243,7 +243,7 @@ A gap is a slot the wardrobe doesn't fill. The model describes the item that wou
 | description | One line, up to 120 characters, e.g. "White leather trainers". Shown on the collage placeholder and used for the shop search. |
 | shopResults | What "Find in my shops" last found: up to 3 products. Empty until searched. |
 | searchedAt | When it was last searched, or empty |
-| shopProduct | The product the user picked from shopResults, or empty. The collage shows its image in the slot. |
+| shopProduct | The product the user picked from shopResults, or empty. Its picture appears on the product card only; the collage keeps the dashed placeholder, labelled with the product's name (decision 6, section 11). |
 
 A **shop product** is `{ shopId, title, url, priceText, imageUrl }`. The server fills it from the product page itself (title, price as the page shows it, e.g. "£35", and image), after checking the page exists, never from what the model said. The `url` must be on that shop's own website.
 
@@ -439,7 +439,7 @@ Android can "share" a product page straight to the installed app; it opens `/add
 | `POST /api/outfits/:id/shop-search` | **(M5)** Nothing. "Find in my shops". *Stub (outfit-engine).* | `{ outfit }` with each gap's `shopResults` filled |
 | `PUT /api/outfits/:id/gaps/:category` | **(M5)** `{ productUrl }` (one of that gap's `shopResults`), or `{ productUrl: null }` to clear. *Stub (outfit-engine).* | `{ outfit }` with the gap's `shopProduct` set |
 
-An **Outfit** is `{ id, request, name, reason, itemIds, items (full WardrobeItems, same order), gaps, status, parentOutfitId, createdAt }`. The collage uses `items`, and **(M5)** draws each gap in its slot as a dashed placeholder with its description, or the chosen product's image. `gaps` is empty for a complete outfit (and for every outfit saved before milestone 5).
+An **Outfit** is `{ id, request, name, reason, itemIds, items (full WardrobeItems, same order), gaps, status, parentOutfitId, createdAt }`. The collage uses `items`, and **(M5)** draws each gap in its slot as a dashed placeholder with its description, or with the chosen product's name. Shop pictures appear on the product cards only, never on the collage (decision 6, section 11). `gaps` is empty for a complete outfit (and for every outfit saved before milestone 5).
 
 **Find in my shops (M5).** Runs only when the user taps it, on an outfit with gaps (`bad_request` otherwise):
 1. Checks the daily shop search cap (**10 a day**, cap kind `shop_searches_per_day`) and the AI pause, and counts one search for the whole outfit, whatever its number of gaps.
@@ -471,7 +471,7 @@ An **Outfit** is `{ id, request, name, reason, itemIds, items (full WardrobeItem
 2. Finds the user from the token in a recipient address. Unknown token: answers `{ received: true }` and records nothing, so the address can't be probed.
 3. Skips a redelivered email (same message ID hash for that user).
 4. **Accepts it only if** it was forwarded from the user's own sign-in address, the service doesn't mark it as spam, and it passes authentication: DMARC passes, or (where the sender's domain has no DMARC policy) both SPF and DKIM pass. The shared `judgeInboundEmail(email, userEmail)` holds this rule. A refused email is recorded as `failed` with `sender_not_allowed` or `failed_checks`, and nothing else happens.
-5. Counts one forwarded email (**10 a day**, cap kind `emails_per_day`), then has the model read the line items (section 6). Only the email's text goes to the model (HTML is converted to text, keeping product and image links).
+5. Counts one forwarded email (**10 a day**, cap kind `emails_per_day`), then has the model read the line items (section 6). Only the email's text goes to the model (HTML is converted to text, keeping product and image links), cut to `EMAIL_PROMPT_TEXT_MAX` (60,000 characters, section 7).
 6. For each clothing or shoe line: fetches the image (the email's image link, else the product page through the add-by-link route), stores it, tags it, counts an item against the daily item cap, and saves it with source `email` and "to review". A line without a usable picture is saved with a placeholder picture and `needsPhoto`. When the item cap runs out, the rest are counted in `skippedCount` with `daily_cap_reached`.
 7. Updates the `email_imports` row (shop name, order date, counts, status) and drops the email. Nothing of it is logged.
 
@@ -502,7 +502,7 @@ The model's output is never trusted. Each reply is checked against a schema. If 
 - **(M5) Gaps in both passes:** `gaps` is optional (missing means none, so replies from before gaps still parse). Each gap is `{ category, subcategory?, colours, description }` in the item vocabularies: colours from the fixed palette, a subcategory that belongs to the category, a one-line description of up to 120 characters. At most 3, never two in one slot. `itemIds` may now hold a single item (a dress, say, with a shoes gap).
 - After parsing, `checkRankedOutfits` throws out any outfit that uses an item ID the model wasn't given, (when the request has an anchor item) leaves the anchor out, breaks the composition rule counting owned items and gaps together, has no owned item, or **(M5)** has a gap that isn't allowed (section 4, "Gaps"). The engine passes it the gap rules: which categories its (filtered) wardrobe has, and `includeShopItems`; the anchor's category comes from the anchor item. Without gap rules, any gap is refused.
 - **(M5) Shop search (Gemini with Google Search grounding):** `{ gaps: [{ category, candidates: [{ url, title }] }] }`, one entry per gap. A candidate whose link isn't a valid http(s) URL is dropped rather than failing the reply, and at most 8 per gap are kept. Nothing here is shown as it is: the server keeps only links on the user's favourite shops and fetches each page to confirm it and read the real title, price and image.
-- **(M5) Order email:** `{ shopName, orderDate, items: [{ name, brand, colour, size, productUrl, imageUrl }] }`. Only clothes and shoes should be listed. `items` may be empty. Free text is flattened to one line and length-limited (name 200, brand 80, colour 60, size 30, shop name 80 characters). An unreadable date or an invalid link reads as empty rather than failing the reply; a line without a name fails it. At most 20 lines are used. The colour is as the email says it ("Khaki"); tagging maps it to the palette.
+- **(M5) Order email:** `{ shopName, orderDate, items: [{ name, brand, colour, size, productUrl, imageUrl }] }`. Only clothes and shoes should be listed. `items` may be empty. Free text is flattened to one line and length-limited (name 200, brand 80, colour 60, size 30, shop name 80 characters). An unreadable date or an invalid link reads as empty rather than failing the reply. A line that doesn't parse (no name, say) is dropped, so one bad line never fails the email; then the first 20 good lines are used. The colour is as the email says it ("Khaki"); tagging maps it to the palette.
 
 **One retry covers both kinds of failure.** Some mistakes only show up with context: an invented item ID, a broken composition, a missing anchor. `callWithValidation` takes an optional `check` for these. It runs after the schema passes, and a failure there uses the same single retry, so there are never more than two calls. The pattern for ranking:
 
@@ -540,6 +540,8 @@ The tests include recorded bad replies: an invented "accessory" category, a colo
 | Day and month boundaries | UK time (handles British Summer Time) | same |
 
 Before starting work, every route that uses AI asks the usage guard whether it's allowed (`assertCanStart`, a quick check that counts nothing). The item cap is counted where tagging runs: in add-by-photo, in add-by-link step 2, and **(M5)** for each line of an order email (an email counts once against the email cap and once per item against the item cap). Step 1 only checks it, and counts a link fetch instead. **(M5)** A shop search counts once per outfit searched, not per gap. Saving a cut-out or adding a photo later uses no AI and counts nothing.
+
+**(M5) Reading an email is bounded too.** The email's text is cut to `EMAIL_PROMPT_TEXT_MAX` (**60,000 characters**, about 15,000 tokens) before the model sees it, so one long email can't run up the bill. Order confirmations are far shorter.
 
 **(M5) The shop search estimate is a guess until measured.** Google charges for Search grounding per search query on top of tokens (roughly 1p to 3p a query at list prices, and one call can make several queries), and it's the most expensive call by far. 3p a search means the £5 month covers about 160 searches if nothing else ran. It runs only when the user taps "Find in my shops", has its own daily cap, and its estimate should be replaced with the measured cost in the first tester week. Grounding has a small free allowance on the paid tier. Once the month's total reaches £5, AI features pause (`ai_paused`) until the 1st, but browsing the wardrobe and saved outfits still works. Real per-call costs should replace the estimates after the first tester week.
 

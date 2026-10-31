@@ -144,8 +144,10 @@ export const CalendarDateSchema = z.iso.date();
 
 /**
  * What the model reads from a forwarded order email. `items` may be empty
- * (no clothes or shoes in the order). Lines past MAX_EMAIL_LINE_ITEMS are
- * dropped. An unreadable shop name or order date reads as null.
+ * (no clothes or shoes in the order). A line that doesn't parse (no name,
+ * say) is dropped, like a bad shop search candidate, so one bad line never
+ * fails the email; then the first MAX_EMAIL_LINE_ITEMS good lines are kept.
+ * An unreadable shop name or order date reads as null.
  */
 export const OrderEmailModelOutputSchema = z.object({
   shopName: scrapedText(80),
@@ -153,7 +155,13 @@ export const OrderEmailModelOutputSchema = z.object({
     const v = emptyToNull(value);
     return CalendarDateSchema.safeParse(v).success ? v : null;
   }, CalendarDateSchema.nullable()),
-  items: z.array(EmailLineItemSchema).transform((items) => items.slice(0, MAX_EMAIL_LINE_ITEMS)),
+  items: z.array(z.unknown()).transform((values) =>
+    values
+      .map((value) => EmailLineItemSchema.safeParse(value))
+      .filter((r) => r.success)
+      .map((r) => r.data)
+      .slice(0, MAX_EMAIL_LINE_ITEMS),
+  ),
 });
 export type OrderEmailModelOutput = z.infer<typeof OrderEmailModelOutputSchema>;
 

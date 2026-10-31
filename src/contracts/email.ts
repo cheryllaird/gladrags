@@ -56,6 +56,13 @@ export function tokenFromAddress(address: string, config: ForwardingAddressConfi
 // The inbound email, normalised
 // ---------------------------------------------------------------------------
 
+/**
+ * Most characters of email text sent to the model (about 15k tokens). The
+ * text (the plain body, or the HTML converted to text) is cut to this
+ * before the prompt is built, which bounds the cost of reading one email.
+ */
+export const EMAIL_PROMPT_TEXT_MAX = 60_000;
+
 /** Most characters of text or HTML body kept from an email; the rest is cut off. */
 export const INBOUND_EMAIL_LIMITS = { text: 100_000, html: 500_000, subject: 300, address: 320 } as const;
 

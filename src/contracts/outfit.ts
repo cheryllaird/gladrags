@@ -130,7 +130,9 @@ export const OutfitGapSchema = z
     searchedAt: TimestampSchema.nullable().default(null),
     /**
      * The product the user picked (one of shopResults when they picked it),
-     * or null. The collage shows its image in the slot.
+     * or null. Its picture appears on the product card only; the collage
+     * keeps the dashed placeholder, labelled with the product's name
+     * (decision: shop pictures stay off the collage).
      */
     shopProduct: ShopProductSchema.nullable().default(null),
   })
@@ -173,10 +175,13 @@ export const OutfitSchema = z
     parentOutfitId: IdSchema.nullable(),
     createdAt: TimestampSchema,
   })
-  .refine((o) => o.itemIds.length + o.gaps.length <= OUTFIT_SLOT_COUNT.max, {
-    path: ["gaps"],
-    error: `An outfit has at most ${OUTFIT_SLOT_COUNT.max} pieces`,
-  });
+  .refine(
+    (o) => {
+      const pieces = o.itemIds.length + o.gaps.length;
+      return pieces >= OUTFIT_SLOT_COUNT.min && pieces <= OUTFIT_SLOT_COUNT.max;
+    },
+    { path: ["gaps"], error: `An outfit has ${OUTFIT_SLOT_COUNT.min} to ${OUTFIT_SLOT_COUNT.max} pieces` },
+  );
 export type Outfit = z.infer<typeof OutfitSchema>;
 export type OutfitInput = z.input<typeof OutfitSchema>;
 

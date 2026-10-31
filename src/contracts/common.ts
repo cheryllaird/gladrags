@@ -16,8 +16,9 @@ export const TimestampSchema = z.iso.datetime({ offset: true });
 
 /**
  * A short, single-line piece of user text (guidance, swap notes, reasons).
- * Trimmed, and newlines are not allowed so it can't smuggle extra prompt
- * sections into model requests.
+ * Trimmed, and line breaks (CR, LF, and Unicode's U+2028, U+2029 and NEL
+ * U+0085) are not allowed so it can't smuggle extra prompt sections into
+ * model requests.
  */
 export function singleLineText(max: number) {
   return z
@@ -25,7 +26,7 @@ export function singleLineText(max: number) {
     .trim()
     .min(1, { error: "Can't be empty" })
     .max(max, { error: `Must be ${max} characters or fewer` })
-    .regex(/^[^\r\n]*$/, { error: "Must be a single line" });
+    .regex(/^[^\r\n\u2028\u2029\u0085]*$/, { error: "Must be a single line" });
 }
 
 /** For optional text: "", whitespace-only and missing all become null. */
@@ -53,7 +54,7 @@ function dropLoneSurrogates(text: string): string {
 export function scrapedText(max: number) {
   return z.preprocess((value) => {
     if (typeof value !== "string") return emptyToNull(value);
-    const flat = dropLoneSurrogates(value.replace(/\s+/g, " ").trim().slice(0, max)).trim();
+    const flat = dropLoneSurrogates(value.replace(/[\s\u0085]+/g, " ").trim().slice(0, max)).trim();
     return flat === "" ? null : flat;
   }, singleLineText(max).nullable());
 }

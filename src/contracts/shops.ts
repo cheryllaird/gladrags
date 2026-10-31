@@ -92,7 +92,7 @@ export const ShopProductSchema = z
      * servers (an absolute path such as /mock/... in mock mode). See
      * CONTRACTS.md about showing it (Content Security Policy, collages).
      */
-    imageUrl: z.preprocess(emptyToNull, z.union([SourceUrlSchema, z.string().regex(/^\/(?!\/)\S+$/)]).nullable()),
+    imageUrl: z.preprocess(emptyToNull, z.union([SourceUrlSchema, z.string().regex(/^\/(?![\/\\])\S+$/)]).nullable()),
   })
   .refine((p) => shopForUrl(p.url, [p.shopId]) !== null, {
     path: ["url"],

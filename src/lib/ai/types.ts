@@ -105,7 +105,8 @@ export interface OrderEmailInput {
   subject: string | null;
   /**
    * The email as text: the plain-text body, or the HTML converted to text
-   * with product and image links kept. Never attachments. The prompt must
+   * with product and image links kept, cut to EMAIL_PROMPT_TEXT_MAX
+   * characters. Never attachments. The prompt must
    * treat it as data, not instructions.
    */
   text: string;

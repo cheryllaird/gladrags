@@ -399,8 +399,12 @@ describe("order email model output", () => {
     expect(parsed.items[0]!.name).toBe("Item 0");
   });
 
+  it("drops a line with no name instead of failing the email", () => {
+    const parsed = OrderEmailModelOutputSchema.parse({ shopName: "Next", orderDate: null, items: [{ ...line, name: "" }, line, "junk"] });
+    expect(parsed.items).toEqual([line]);
+  });
+
   it.each([
-    ["a line with no name", { shopName: "Next", orderDate: null, items: [{ ...line, name: "" }] }],
     ["items that aren't a list", { shopName: "Next", orderDate: null, items: "a polo" }],
     ["no items key", { shopName: "Next", orderDate: null }],
     ["truncated JSON", '{"shopName": "Next", "items": [{"name": "Polo"'],
