@@ -420,16 +420,43 @@ describe("forwarding addresses and inbound emails", () => {
   it("normalises addresses and verdicts, and reads odd verdicts as unknown", () => {
     expect(email.from).toBe("cheryl@example.com");
     expect(email.auth.spf).toBe("pass");
-    expect(InboundEmailSchema.parse({ ...email, auth: { spf: "temperror", dkim: 7, dmarc: "pass" } }).auth).toEqual({ spf: "unknown", dkim: "unknown", dmarc: "pass" });
+    expect(InboundEmailSchema.parse({ ...email, auth: { spf: "temperror", dkim: 7, dmarc: "pass" } }).auth).toMatchObject({ spf: "unknown", dkim: "unknown", dmarc: "pass" });
   });
 
   it("accepts only the user's own address, passing authentication, not spam", () => {
     expect(judgeInboundEmail(email, "cheryl@example.com")).toEqual({ accepted: true });
     expect(judgeInboundEmail(email, "someone@else.example")).toEqual({ accepted: false, error: "sender_not_allowed" });
     expect(judgeInboundEmail({ ...email, spam: { isSpam: true, score: 9 } }, "cheryl@example.com")).toEqual({ accepted: false, error: "failed_checks" });
-    expect(judgeInboundEmail({ ...email, auth: { spf: "pass", dkim: "pass", dmarc: "fail" } }, "cheryl@example.com").accepted).toBe(false);
-    expect(judgeInboundEmail({ ...email, auth: { spf: "pass", dkim: "pass", dmarc: "none" } }, "cheryl@example.com").accepted).toBe(true);
-    expect(judgeInboundEmail({ ...email, auth: { spf: "fail", dkim: "pass", dmarc: "none" } }, "cheryl@example.com").accepted).toBe(false);
+  });
+
+  const USER = "cheryl@example.com";
+  const auth = (a: Record<string, unknown>) => InboundEmailSchema.parse({ ...email, auth: a });
+  it.each<[string, Record<string, unknown>, boolean]>([
+    ["DMARC pass", { spf: "fail", dkim: "fail", dmarc: "pass" }, true],
+    ["DMARC fail", { spf: "pass", spfDomain: "example.com", dkim: "pass", dkimDomains: ["example.com"], dmarc: "fail" }, false],
+    ["no DMARC policy, aligned DKIM", { spf: "fail", dkim: "pass", dkimDomains: ["example.com"], dmarc: "none" }, true],
+    ["no DMARC policy, DKIM from a parent domain", { dkim: "pass", dkimDomains: ["example.com"], dmarc: "none" }, true],
+    ["no DMARC policy, aligned SPF", { spf: "pass", spfDomain: "EXAMPLE.com.", dkim: "fail", dmarc: "none" }, true],
+    ["no DMARC policy, DKIM from another domain", { spf: "fail", dkim: "pass", dkimDomains: ["mailer.example.net"], dmarc: "none" }, false],
+    ["no DMARC policy, SPF for another domain", { spf: "pass", spfDomain: "bounce.example.net", dkim: "none", dmarc: "none" }, false],
+    ["no DMARC policy, passes but no domains reported", { spf: "pass", dkim: "pass", dmarc: "none" }, false],
+    ["no DMARC policy, DKIM domain listed but DKIM failed", { dkim: "fail", dkimDomains: ["example.com"], dmarc: "none" }, false],
+    ["DMARC not reported", { spf: "pass", spfDomain: "example.com", dkim: "pass", dkimDomains: ["example.com"] }, false],
+    ["DMARC temperror", { spf: "pass", spfDomain: "example.com", dkim: "pass", dkimDomains: ["example.com"], dmarc: "temperror" }, false],
+    ["DMARC permerror", { spf: "pass", spfDomain: "example.com", dkim: "pass", dkimDomains: ["example.com"], dmarc: "permerror" }, false],
+    ["a lookalike parent domain", { dkim: "pass", dkimDomains: ["ample.com"], dmarc: "none" }, false],
+  ])("%s: accepted %s", (_label, a, accepted) => {
+    const verdict = judgeInboundEmail(auth(a), USER);
+    expect(verdict.accepted).toBe(accepted);
+  });
+
+  it("a mail server's domain is a parent of the From domain only on a dot boundary", () => {
+    const sub = InboundEmailSchema.parse({ ...email, from: "cheryl@mail.example.com", auth: { dkim: "pass", dkimDomains: ["example.com"], dmarc: "none" } });
+    expect(judgeInboundEmail(sub, "cheryl@mail.example.com").accepted).toBe(true);
+  });
+
+  it("drops reported domains that aren't domains", () => {
+    expect(auth({ spfDomain: "not a domain", dkimDomains: ["example.com", "x y", 7] }).auth).toMatchObject({ spfDomain: null, dkimDomains: ["example.com"] });
   });
 
   it("email imports and settings have the shapes the UI expects", () => {

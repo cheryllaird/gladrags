@@ -370,8 +370,9 @@ describe("the normalised inbound email", () => {
   });
 
   it("reads missing or odd verdicts as unknown, but needs the auth and spam objects", () => {
-    expect(email({ auth: {} }).auth).toEqual({ spf: "unknown", dkim: "unknown", dmarc: "unknown" });
-    expect(email({ auth: { spf: " pass", dkim: ["pass"], dmarc: null } }).auth).toEqual({ spf: "unknown", dkim: "unknown", dmarc: "unknown" });
+    const none = { spfDomain: null, dkimDomains: [] };
+    expect(email({ auth: {} }).auth).toEqual({ spf: "unknown", dkim: "unknown", dmarc: "unknown", ...none });
+    expect(email({ auth: { spf: " pass", dkim: ["pass"], dmarc: null } }).auth).toEqual({ spf: "unknown", dkim: "unknown", dmarc: "unknown", ...none });
     expect(InboundEmailSchema.safeParse(rawEmail({ auth: undefined })).success).toBe(false);
     expect(InboundEmailSchema.safeParse(rawEmail({ spam: undefined })).success).toBe(false);
     expect(email({ spam: { isSpam: null, score: null } }).spam).toEqual({ isSpam: null, score: null });
@@ -417,31 +418,31 @@ describe("judgeInboundEmail", () => {
     expect(judgeInboundEmail(email({ spam: { isSpam: null, score: null } }), USER)).toEqual({ accepted: true });
   });
 
+  // Fixed (orchestrator decision B): DMARC pass, or DMARC none plus a
+  // passing DKIM or SPF domain aligned with the From domain. Unknown and odd
+  // verdicts (temperror, permerror, a stray space) are refused.
+  const aligned = { spfDomain: "example.com", dkimDomains: ["example.com"] };
   it.each([
     [{ spf: "pass", dkim: "pass", dmarc: "pass" }, true],
     [{ spf: "fail", dkim: "fail", dmarc: "pass" }, true], // DMARC pass is enough
-    [{ spf: "pass", dkim: "pass", dmarc: "fail" }, false],
-    [{ spf: "pass", dkim: "pass", dmarc: "softfail" }, false],
-    [{ spf: "pass", dkim: "pass", dmarc: "neutral" }, false],
-    [{ spf: "pass", dkim: "pass", dmarc: "none" }, true],
-    [{ spf: "pass", dkim: "pass", dmarc: "unknown" }, true],
-    [{ spf: "pass", dkim: "pass" }, true], // DMARC not reported: reads as unknown
-    [{ spf: "pass", dkim: "fail", dmarc: "none" }, false],
-    [{ spf: "softfail", dkim: "pass", dmarc: "none" }, false],
-    [{ spf: "pass", dkim: "none", dmarc: "none" }, false],
-    [{ spf: "pass", dmarc: "none" }, false], // DKIM not reported
+    [{ spf: "pass", dkim: "pass", dmarc: "fail", ...aligned }, false],
+    [{ spf: "pass", dkim: "pass", dmarc: "softfail", ...aligned }, false],
+    [{ spf: "pass", dkim: "pass", dmarc: "neutral", ...aligned }, false],
+    [{ spf: "pass", dkim: "pass", dmarc: "none", ...aligned }, true],
+    [{ spf: "pass", dkim: "pass", dmarc: "none" }, false], // no domains reported: nothing aligned
+    [{ spf: "pass", dkim: "pass", dmarc: "unknown", ...aligned }, false],
+    [{ spf: "pass", dkim: "pass", ...aligned }, false], // DMARC not reported: reads as unknown
+    [{ spf: "pass", dkim: "fail", dmarc: "none", ...aligned }, true], // aligned SPF alone
+    [{ spf: "softfail", dkim: "pass", dmarc: "none", ...aligned }, true], // aligned DKIM alone
+    [{ spf: "softfail", dkim: "fail", dmarc: "none", ...aligned }, false],
+    [{ spf: "pass", dkim: "none", dmarc: "none", spfDomain: "evil.example" }, false], // SPF for another domain
+    [{ dkim: "pass", dmarc: "none", dkimDomains: ["mail.example.com"] }, false], // a subdomain of From isn't aligned
     [{ dmarc: "none" }, false],
     [{}, false],
-    [{ spf: "PASS", dkim: "Pass", dmarc: "NONE" }, true],
-    // An unrecognised DMARC verdict (a stray space, "temperror", "permerror",
-    // "bestguesspass") reads as unknown, which the rule treats like "no
-    // DMARC policy": SPF and DKIM passing is then enough. Reported to the
-    // orchestrator (unknown is conflated with none; SPF/DKIM alignment with
-    // the From domain isn't checked). Pinned as the current behaviour.
-    [{ spf: "pass", dkim: "pass", dmarc: "pass " }, true],
-    [{ spf: "pass", dkim: "pass", dmarc: "temperror" }, true],
-    [{ spf: "pass", dkim: "pass", dmarc: "permerror" }, true],
-    [{ spf: "fail", dkim: "pass", dmarc: "temperror" }, false],
+    [{ spf: "PASS", dkim: "Pass", dmarc: "NONE", ...aligned }, true],
+    [{ spf: "pass", dkim: "pass", dmarc: "pass ", ...aligned }, false],
+    [{ spf: "pass", dkim: "pass", dmarc: "temperror", ...aligned }, false],
+    [{ spf: "pass", dkim: "pass", dmarc: "permerror", ...aligned }, false],
   ])("auth %j: accepted %s", (auth, accepted) => {
     const verdict = judgeInboundEmail(email({ auth }), USER);
     expect(verdict.accepted).toBe(accepted);
@@ -491,11 +492,8 @@ describe("email imports", () => {
     expect(EmailImportSchema.parse({ ...done, shopName: "" }).shopName).toBeNull();
   });
 
-  // BUG (low): CONTRACTS.md says `error` is "Required when failed", and the
-  // database enforces it (email_imports_failed_has_error), but the API
-  // schema doesn't, so a stub or builder can send a failed import with no
-  // reason for the UI to show.
-  it.fails("refuses a failed import without an error code, as the database does", () => {
+  // Fixed (was BUG, low): the API schema now matches the database's email_imports_failed_has_error.
+  it("refuses a failed import without an error code, as the database does", () => {
     expect(EmailImportSchema.safeParse({ ...done, status: "failed", error: null }).success).toBe(false);
   });
 

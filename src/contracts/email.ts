@@ -73,6 +73,14 @@ export const AuthVerdictSchema = z.preprocess(
 );
 export type AuthVerdict = z.infer<typeof AuthVerdictSchema>;
 
+/** A domain name, lower-cased, without a trailing dot. */
+const DomainSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .transform((d) => d.replace(/\.$/, ""))
+  .pipe(z.string().regex(/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]{2,63}$/));
+
 const AddressSchema = z.string().trim().toLowerCase().pipe(z.email().max(INBOUND_EMAIL_LIMITS.address));
 
 function cutTo(max: number) {
@@ -92,7 +100,11 @@ function cutTo(max: number) {
 export const InboundEmailSchema = z.object({
   /** The provider's message ID, for spotting a redelivered webhook. Stored only as a hash. */
   messageId: z.string().min(1).max(998),
-  /** The sender (the user forwarding it): bare address, lower-cased. */
+  /**
+   * The sender: the address in the email's header From (what DMARC checks),
+   * not the envelope sender. A bare address, lower-cased; the adapter strips
+   * any display name.
+   */
   from: AddressSchema,
   /** Every recipient address (To and Cc, plus the envelope recipient). One should hold a forwarding token. */
   to: z.array(AddressSchema).min(1).max(50),
@@ -103,10 +115,36 @@ export const InboundEmailSchema = z.object({
   html: cutTo(INBOUND_EMAIL_LIMITS.html),
   /** When the provider received it. */
   receivedAt: TimestampSchema,
-  /** The provider's checks of the forwarding hop (the user's mail server to the provider). */
+  /**
+   * The provider's checks of the forwarding hop (the user's mail server to
+   * the provider), with the domains each check authenticated.
+   */
   auth: z.object({
     spf: AuthVerdictSchema,
+    /**
+     * The domain SPF checked (the envelope sender's, MAIL FROM), or null if
+     * not reported. Something that isn't a domain reads as null (fails safe).
+     */
+    spfDomain: z.preprocess((v) => {
+      const parsed = DomainSchema.safeParse(v);
+      return parsed.success ? parsed.data : null;
+    }, DomainSchema.nullable()),
     dkim: AuthVerdictSchema,
+    /**
+     * The signing domains (d=) of the DKIM signatures that passed. Empty if
+     * none passed or none were reported; entries that aren't domains are
+     * dropped (fails safe).
+     */
+    dkimDomains: z.preprocess(
+      (v) =>
+        Array.isArray(v)
+          ? v.flatMap((d) => {
+              const parsed = DomainSchema.safeParse(d);
+              return parsed.success ? [parsed.data] : [];
+            }).slice(0, 20)
+          : [],
+      z.array(DomainSchema),
+    ),
     dmarc: AuthVerdictSchema,
   }),
   /** The provider's spam verdict; null if it doesn't give one. */
@@ -119,19 +157,39 @@ export type InboundEmailVerdict =
   | { accepted: false; error: Extract<EmailImportError, "sender_not_allowed" | "failed_checks"> };
 
 /**
+ * True if `authenticated` (a domain SPF or DKIM vouched for) is aligned with
+ * the From domain: the same domain, or the From domain is a subdomain of it
+ * (DMARC's relaxed alignment).
+ */
+export function isAlignedDomain(fromDomain: string, authenticated: string): boolean {
+  const from = fromDomain.toLowerCase().replace(/\.$/, "");
+  const auth = authenticated.toLowerCase().replace(/\.$/, "");
+  return from === auth || from.endsWith(`.${auth}`);
+}
+
+/**
  * The spec's acceptance rule, in one place: an email is accepted only if
- * it was forwarded from the user's own sign-in address and passes the
- * service's spam and authentication checks.
+ * it was forwarded from the user's own sign-in address (the header From)
+ * and passes the service's spam and authentication checks.
  *
- * Authentication: DMARC must pass; or, where the sender's domain publishes
- * no DMARC policy (`none`/`unknown`), both SPF and DKIM must pass. Anything
- * the service marks as spam is refused.
+ * Authentication:
+ * - DMARC `pass` is enough (DMARC itself checks alignment with From).
+ * - DMARC `none` (the From domain publishes no policy): a passing DKIM
+ *   signature from an aligned domain, or a passing SPF check for an aligned
+ *   domain, is needed.
+ * - Anything else is refused: DMARC `fail`, `softfail`, `neutral`, and
+ *   `unknown` (not reported, or an odd value such as temperror/permerror).
+ *
+ * Anything the service marks as spam is refused.
  */
 export function judgeInboundEmail(email: InboundEmail, userEmail: string): InboundEmailVerdict {
   if (email.from !== userEmail.trim().toLowerCase()) return { accepted: false, error: "sender_not_allowed" };
   if (email.spam.isSpam === true) return { accepted: false, error: "failed_checks" };
-  const { spf, dkim, dmarc } = email.auth;
-  const authenticated = dmarc === "pass" || ((dmarc === "none" || dmarc === "unknown") && spf === "pass" && dkim === "pass");
+  const { spf, spfDomain, dkim, dkimDomains, dmarc } = email.auth;
+  const fromDomain = email.from.slice(email.from.lastIndexOf("@") + 1);
+  const alignedDkim = dkim === "pass" && dkimDomains.some((d) => isAlignedDomain(fromDomain, d));
+  const alignedSpf = spf === "pass" && spfDomain !== null && isAlignedDomain(fromDomain, spfDomain);
+  const authenticated = dmarc === "pass" || (dmarc === "none" && (alignedDkim || alignedSpf));
   return authenticated ? { accepted: true } : { accepted: false, error: "failed_checks" };
 }
 
@@ -182,6 +240,10 @@ export const EmailImportSchema = z.object({
   itemCount: z.int().min(0),
   /** Clothing or shoe lines found but not added (cap reached, or adding one failed). */
   skippedCount: z.int().min(0),
+  /** Required when `failed`; set when `done` with skipped lines; otherwise null. */
   error: EmailImportErrorSchema.nullable(),
+}).refine((i) => i.status !== "failed" || i.error !== null, {
+  path: ["error"],
+  error: "A failed import needs an error code",
 });
 export type EmailImport = z.infer<typeof EmailImportSchema>;
