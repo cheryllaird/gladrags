@@ -205,7 +205,10 @@ export interface RankedOutfitCheck<T extends { itemIds: string[] }> {
  * - A **required-slot gap**: a slot the outfit's structure needs (top and
  *   bottom, or a dress or jumpsuit, plus shoes) that the wardrobe can't
  *   fill, i.e. its category is in missingCategoriesForOutfits(
- *   fillableCategories, anchorCategory). When the wardrobe has no separates
+ *   fillableCategories, structure), where the structure is the outfit's own
+ *   owned top, bottom or dress (else the anchor's category). So an owned
+ *   top with a bottom gap is allowed when the wardrobe has no bottoms, even
+ *   if it has a dress (orchestrator, 2026-10-31). When the wardrobe has no separates
  *   and no dress (both top and bottom missing), a single dress gap may stand
  *   in for them. Always allowed.
  * - Any other gap is a **shop-item gap**: a slot the wardrobe could fill,
@@ -279,15 +282,18 @@ export function checkRankedOutfits<T extends { itemIds: string[]; gaps?: readonl
     }
     if (gapRules) {
       const anchorCategory = anchorItemId ? known.get(anchorItemId) : undefined;
-      const missing = new Set(missingCategoriesForOutfits(gapRules.fillableCategories, anchorCategory));
+      const ownedBody = outfit.itemIds
+        .map((id) => known.get(id)!)
+        .find((c) => c === "top" || c === "bottom" || c === "dress_jumpsuit");
+      const missing = new Set(missingCategoriesForOutfits(gapRules.fillableCategories, ownedBody ?? anchorCategory));
       const shopGaps = gapCategories.filter((c) => !isRequiredSlotGap(c, missing));
       const allowed = gapRules.includeShopItems ? MAX_SHOP_ITEM_GAPS : 0;
       if (shopGaps.length > allowed) {
         result.rejected.push({
           outfit,
           problem: gapRules.includeShopItems
-            ? `At most ${MAX_SHOP_ITEM_GAPS} gap the wardrobe could fill (${shopGaps.join(", ")})`
-            : `Gap(s) the wardrobe could fill: ${shopGaps.join(", ")}`,
+            ? `At most ${MAX_SHOP_ITEM_GAPS} shop-item gap (${shopGaps.join(", ")})`
+            : `Shop-item gap(s) not allowed without "Include items from my shops": ${shopGaps.join(", ")}`,
         });
         continue;
       }

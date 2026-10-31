@@ -268,12 +268,15 @@ describe("checkRankedOutfits with gaps", () => {
     expect(checkRankedOutfits([twoShop], known, rules(true)).valid).toHaveLength(0);
   });
 
-  it("missing slots are judged around the anchor", () => {
-    // A top anchor with a dress in the wardrobe but no bottoms: the bottom slot is required.
+  it("missing slots are judged around the outfit's own top, bottom or dress", () => {
+    // Tops, a dress and shoes, no bottoms: an owned top makes the bottom slot required,
+    // with or without an anchor (tops still get outfits in a wardrobe with no bottoms).
     const rules = { gaps: { fillableCategories: new Set<Category>(["top", "dress_jumpsuit", "shoes"]), includeShopItems: false } };
     expect(checkRankedOutfits([{ itemIds: [ID(1), ID(10)], gaps: [{ category: "bottom" as const }] }], known, { anchorItemId: ID(1), ...rules }).valid).toHaveLength(1);
-    // Without the anchor, the dress fills the body, so a bottom gap is a shop item.
-    expect(checkRankedOutfits([{ itemIds: [ID(1), ID(10)], gaps: [{ category: "bottom" as const }] }], known, rules).valid).toHaveLength(0);
+    expect(checkRankedOutfits([{ itemIds: [ID(1), ID(10)], gaps: [{ category: "bottom" as const }] }], known, rules).valid).toHaveLength(1);
+    // With no owned top, bottom or dress, the dress fills the body, so top and bottom gaps are shop items.
+    const { rejected } = checkRankedOutfits([{ itemIds: [ID(10)], gaps: [{ category: "top" as const }, { category: "bottom" as const }] }], known, rules);
+    expect(rejected[0]?.problem).toMatch(/Shop-item gap/);
   });
 
   it("refuses an outfit made only of gaps", () => {
