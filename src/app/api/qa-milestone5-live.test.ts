@@ -4,6 +4,11 @@
  * serve the shared in-memory mock data to real users) until its builder
  * ships it; signed-in routes must still answer 401 to a signed-out caller
  * first; and the inbound webhook alone works without a session.
+ *
+ * Built since (link-import, C3): settings, the forwarding address, the
+ * email imports list, batch link step 2 and the inbound webhook. They stay
+ * in the sign-in and cross-site checks below; their real behaviour is
+ * tested in src/app/api/email-routes.test.ts.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { API_ERROR_STATUS, ApiErrorSchema, type ApiErrorCode } from "@/contracts";
@@ -80,12 +85,20 @@ const EMAIL = {
   spam: { isSpam: false, score: 0 },
 };
 
-/** Every new signed-in route or option, as a request it would otherwise accept. */
-const CASES: [string, () => Promise<Response>][] = [
+/** Signed-in routes and options built since the stubs (link-import, C3). */
+const BUILT: [string, () => Promise<Response>][] = [
   ["GET /api/settings", () => settings.GET(json("/api/settings", "GET"))],
   ["PUT /api/settings", () => settings.PUT(json("/api/settings", "PUT", { favouriteShopIds: ["zara"] }))],
   ["POST /api/settings/forwarding-address", () => forwardingAddress.POST(json("/api/settings/forwarding-address", "POST"))],
   ["GET /api/email-imports", () => emailImports.GET(json("/api/email-imports", "GET"))],
+  [
+    "POST /api/items/link/cutout { saveForReview: true }",
+    () => itemLinkCutout.POST(form("/api/items/link/cutout", "POST", { meta: JSON.stringify({ originalImageKey: IMAGE_KEY, saveForReview: true }) })),
+  ],
+];
+
+/** Every new signed-in route or option still a stub, as a request it would otherwise accept. */
+const CASES: [string, () => Promise<Response>][] = [
   ["POST /api/items/reviewed", () => itemsReviewed.POST(json("/api/items/reviewed", "POST", { itemIds: [ID] }))],
   ["PUT /api/items/:id/cutout", () => itemCutout.PUT(form(`/api/items/${ID}/cutout`, "PUT", { cutout: png() }), ctx(ID))],
   ["PUT /api/items/:id/photo", () => itemPhotoReplace.PUT(form(`/api/items/${ID}/photo`, "PUT", { original: jpeg() }), ctx(ID))],
@@ -98,10 +111,6 @@ const CASES: [string, () => Promise<Response>][] = [
   ["GET /api/items?needsReview=false", () => items.GET(json("/api/items?needsReview=false", "GET"))],
   ["PATCH /api/items/:id { reviewed: true }", () => itemById.PATCH(json(`/api/items/${ID}`, "PATCH", { reviewed: true }), ctx(ID))],
   ["POST /api/items/photo saveForReview=true", () => itemPhoto.POST(form("/api/items/photo", "POST", { original: jpeg(), saveForReview: "true" }))],
-  [
-    "POST /api/items/link/cutout { saveForReview: true }",
-    () => itemLinkCutout.POST(form("/api/items/link/cutout", "POST", { meta: JSON.stringify({ originalImageKey: IMAGE_KEY, saveForReview: true }) })),
-  ],
 ];
 
 beforeEach(() => {
@@ -121,12 +130,12 @@ describe("outside mock mode", () => {
     await expectError(await call(), "not_implemented");
   });
 
-  it.each(CASES)("%s answers 401 to a signed-out caller", async (_name, call) => {
+  it.each([...CASES, ...BUILT])("%s answers 401 to a signed-out caller", async (_name, call) => {
     session.signedIn = false;
     await expectError(await call(), "unauthorized");
   });
 
-  it.each(CASES.filter(([name]) => !name.startsWith("GET")))("%s refuses a cross-site request before anything else", async (_name, call) => {
+  it.each([...CASES, ...BUILT].filter(([name]) => !name.startsWith("GET")))("%s refuses a cross-site request before anything else", async (_name, call) => {
     // Rebuild the request with a foreign Origin by wrapping fetch's Request.
     const original = globalThis.Request;
     class CrossSiteRequest extends original {
@@ -151,8 +160,10 @@ describe("the inbound webhook outside mock mode", () => {
 
   it("needs no session: it never asks for the signed-in user", async () => {
     session.signedIn = false;
+    vi.stubEnv("INBOUND_EMAIL_PROVIDER", "postmark");
     vi.stubEnv("INBOUND_EMAIL_WEBHOOK_SECRET", "s".repeat(32));
-    await expectError(await post(), "not_implemented");
+    // Unsigned, so refused by the webhook's own check, not by sign-in.
+    await expectError(await post(), "unauthorized");
     expect(session.calls).toBe(0);
   });
 
@@ -162,9 +173,10 @@ describe("the inbound webhook outside mock mode", () => {
   });
 
   it("never serves mock data, even for a perfect mock-mode email", async () => {
+    vi.stubEnv("INBOUND_EMAIL_PROVIDER", "postmark");
     vi.stubEnv("INBOUND_EMAIL_WEBHOOK_SECRET", "s".repeat(64));
     const res = await post();
-    expect(res.status).toBe(501);
+    expect(res.status).toBe(401);
     expect(await res.text()).not.toContain("received");
   });
 

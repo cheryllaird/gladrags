@@ -21,6 +21,7 @@ import { UsageGuard } from "@/lib/usage/guard";
 import { InMemoryUsageStore } from "@/lib/usage/store";
 import { TEST_LIMITS } from "@/test/ingestion-deps";
 import { InMemoryLinkImportRepository } from "./repository";
+import { InMemoryReviewItemStore } from "./review-items";
 import type { NetworkDeps, ResolvedAddress } from "./safe-fetch";
 
 export function fixture(name: string): string {
@@ -119,11 +120,13 @@ export function makeLinkDeps(network: NetworkDeps, { taggerOutputs = [] as unkno
       return image;
     },
   };
+  const items = new InMemoryItemRepository(clock);
   return {
     images: new SharpImageProcessor(),
     storage,
     imageStore,
-    items: new InMemoryItemRepository(clock),
+    items,
+    reviewItems: new InMemoryReviewItemStore(items, clock),
     linkImports: new InMemoryLinkImportRepository(clock),
     tagger: fakeTagger as TaggingProvider,
     fakeTagger,

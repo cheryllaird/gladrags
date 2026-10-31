@@ -136,8 +136,9 @@ export async function downloadProductImage(
   images: ServerImageProcessor,
   imageUrls: readonly string[],
   network: NetworkDeps,
+  budgetMs: number = IMAGE_PHASE_BUDGET_MS,
 ): Promise<ImageInput | null> {
-  const giveUpAt = Date.now() + IMAGE_PHASE_BUDGET_MS;
+  const giveUpAt = Date.now() + budgetMs;
   for (const url of imageUrls.slice(0, MAX_IMAGE_ATTEMPTS)) {
     const remaining = giveUpAt - Date.now();
     if (remaining <= 0) break;

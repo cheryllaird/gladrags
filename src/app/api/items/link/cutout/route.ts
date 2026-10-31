@@ -1,6 +1,8 @@
 // Add by link, step 2 of 2 (owner: link-import, using ingestion's checks
-// and tagging). Since milestone 5 no cut-out is sent; the path keeps its name. See docs/CONTRACTS.md section 5 and
-// src/lib/link-import/finish-link.ts for the steps.
+// and tagging). Since milestone 5 no cut-out is sent (the stored original
+// is tagged); the path keeps its name. With `saveForReview` in the meta
+// (several links at once) the item is saved straight away as "to review".
+// See docs/CONTRACTS.md section 5 and src/lib/link-import/finish-link.ts.
 //
 // The client's meta is only the step-1 image key; the source URL and
 // product hints come from what the server stored in step 1. The cut-out is
@@ -16,7 +18,7 @@ import { parseLinkCutoutUpload, type LinkCutoutUpload } from "@/lib/api/upload";
 import { requireUser, type SessionUser } from "@/lib/auth/session";
 import { isMockMode } from "@/lib/env";
 import { getLinkCutoutDeps } from "@/lib/link-import/deps";
-import { finishLinkImport } from "@/lib/link-import/finish-link";
+import { finishLinkImport, finishLinkImportForReview } from "@/lib/link-import/finish-link";
 import { MOCK_MARKERS, hasMarker, throwIfCapMarker } from "@/lib/mocks/markers";
 import * as mock from "@/lib/mocks/store";
 import { getUsageGuard } from "@/lib/usage";
@@ -28,10 +30,11 @@ export const POST = withApiHandler(async (request) => {
   const user = await requireUser();
   const upload = await parseLinkCutoutUpload(request);
   if (isMockMode()) return mockLinkCutout(user, upload);
-  // TODO(link-import, milestone 5): batch add (save as "to review").
-  if (upload.meta.saveForReview) throw new ApiException("not_implemented", "Adding several links at once isn't built yet");
 
-  const draft = await finishLinkImport(getLinkCutoutDeps(), user.id, upload);
+  const deps = await getLinkCutoutDeps();
+  // A batch add (several links): saved straight away as "to review".
+  if (upload.meta.saveForReview) return jsonResponse(BatchAddResponseSchema, await finishLinkImportForReview(deps, user.id, upload));
+  const draft = await finishLinkImport(deps, user.id, upload);
   return jsonResponse(ItemDraftResponseSchema, { draft });
 });
 

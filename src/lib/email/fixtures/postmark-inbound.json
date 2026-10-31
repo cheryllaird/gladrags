@@ -1,0 +1,56 @@
+{
+  "FromName": "Sam Tester",
+  "MessageStream": "inbound",
+  "From": "sam.tester@mail.example",
+  "FromFull": { "Email": "sam.tester@mail.example", "Name": "Sam Tester", "MailboxHash": "" },
+  "To": "\"GladRags\" <4f1c2a9be0d34e7a8b5c6d7e8f901234+0f1e2d3c4b5a69788796a5b4c3d2e1f0@inbound.postmark.example>",
+  "ToFull": [
+    {
+      "Email": "4f1c2a9be0d34e7a8b5c6d7e8f901234+0f1e2d3c4b5a69788796a5b4c3d2e1f0@inbound.postmark.example",
+      "Name": "GladRags",
+      "MailboxHash": "0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+    }
+  ],
+  "Cc": "",
+  "CcFull": [],
+  "Bcc": "",
+  "BccFull": [],
+  "OriginalRecipient": "4f1c2a9be0d34e7a8b5c6d7e8f901234+0f1e2d3c4b5a69788796a5b4c3d2e1f0@inbound.postmark.example",
+  "Subject": "Fwd: Thanks for your order 4471-2290",
+  "MessageID": "9c3b6f2a-1d4e-4b7a-8e2f-5a6b7c8d9e01",
+  "ReplyTo": "",
+  "MailboxHash": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+  "Date": "Thu, 30 Oct 2026 10:00:00 +0000",
+  "TextBody": "",
+  "HtmlBody": "",
+  "StrippedTextReply": "",
+  "Tag": "",
+  "Headers": [
+    { "Name": "Return-Path", "Value": "<sam.tester@mail.example>" },
+    {
+      "Name": "Received",
+      "Value": "by p-pm-inboundg01a-aws-euwest1a.inbound.postmark.example (Postfix, from userid 996) id 4C0F240012A; Thu, 30 Oct 2026 10:00:02 +0000 (UTC)"
+    },
+    { "Name": "X-Spam-Checker-Version", "Value": "SpamAssassin 3.4.6 (2021-04-09) on p-pm-inboundg01a-aws-euwest1a" },
+    { "Name": "X-Spam-Status", "Value": "No" },
+    { "Name": "X-Spam-Score", "Value": "-0.1" },
+    { "Name": "X-Spam-Tests", "Value": "DKIM_SIGNED,DKIM_VALID,DKIM_VALID_AU,HTML_MESSAGE,RCVD_IN_DNSWL_NONE,SPF_HELO_NONE,SPF_PASS" },
+    {
+      "Name": "Received-SPF",
+      "Value": "pass (mail.example: Sender is authorized to use 'sam.tester@mail.example' in 'mfrom' identity (mechanism 'include:_spf.mail.example' matched)) receiver=p-pm-inboundg01a-aws-euwest1a; identity=mailfrom; envelope-from=\"sam.tester@mail.example\"; helo=mx1.mail.example; client-ip=203.0.113.25"
+    },
+    {
+      "Name": "Received",
+      "Value": "from mx1.mail.example (mx1.mail.example [203.0.113.25]) by p-pm-inboundg01a-aws-euwest1a.inbound.postmark.example (Postfix) with ESMTPS id 1A2B3C4D5E for <4f1c2a9be0d34e7a8b5c6d7e8f901234+0f1e2d3c4b5a69788796a5b4c3d2e1f0@inbound.postmark.example>; Thu, 30 Oct 2026 10:00:01 +0000 (UTC)"
+    },
+    {
+      "Name": "DKIM-Signature",
+      "Value": "v=1; a=rsa-sha256; c=relaxed/relaxed; d=mail.example; s=20260101; t=1793354400; h=to:subject:message-id:date:from:mime-version:from:to:cc:subject:date:message-id:reply-to; bh=abc=; b=def="
+    },
+    { "Name": "MIME-Version", "Value": "1.0" },
+    { "Name": "Message-ID", "Value": "<CAF0example0000000000000000000000@mail.example>" }
+  ],
+  "Attachments": [
+    { "Name": "invoice.pdf", "Content": "JVBERi0xLjQK", "ContentType": "application/pdf", "ContentLength": 9 }
+  ]
+}

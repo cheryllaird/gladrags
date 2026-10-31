@@ -1,0 +1,28 @@
+---------- Forwarded message ---------
+From: Lookwell <hello@lookwell.example>
+Date: Thu, 30 Oct 2026 at 12:01
+Subject: Your Lookwell order is confirmed
+To: sam.tester@mail.example
+
+
+Hi Sam,
+
+Thanks for shopping with Lookwell! Here's what you ordered on 30 October 2026.
+
+ORDER 88120034
+
+Black Leather Look Chelsea Boots
+Size: 6
+Colour: Black
+£34.99
+https://www.lookwell.example/uk/womens/footwear/boots/black-leather-look-chelsea-boots/p/811222001
+
+Light Blue Ripped Mom Jeans
+Size: 10 Regular
+£27.99
+https://www.lookwell.example/uk/womens/clothing/jeans/light-blue-ripped-mom-jeans/p/799001234
+
+Delivery: Standard £3.99
+Total: £66.97
+
+Delivering to: Sam Tester, 1 Example Street, Exampletown EX1 2MP

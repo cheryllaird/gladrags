@@ -16,23 +16,28 @@
  *    stored in step 1 as untrusted hints, return the draft.
  */
 import "server-only";
-import { STORAGE_BUCKETS, UPLOAD_FIELDS, imageKeyBelongsTo, type ItemDraft } from "@/contracts";
+import { STORAGE_BUCKETS, UPLOAD_FIELDS, imageKeyBelongsTo, type BatchAddResponse, type ItemDraft } from "@/contracts";
 import type { ImageInput } from "@/lib/ai/types";
 import { ApiException } from "@/lib/api/errors";
 import type { LinkCutoutUpload } from "@/lib/api/upload";
 import { SIGNED_URL_TTL_SECONDS } from "@/lib/images/server";
 import { CUTOUT_RULES, checkUploadedCutout, cleanImage } from "@/lib/ingestion/images";
+import { DuplicateImageKeyError } from "@/lib/ingestion/items-repository";
 import { newImageKey, type ImageStorage } from "@/lib/ingestion/storage";
 import { suggestTags, type TaggingDeps } from "@/lib/ingestion/tagging";
+import { toWardrobeItems } from "@/lib/ingestion/wardrobe";
 import type { ImageStore } from "@/lib/outfits/thumbnails";
 import { isAiPausedError } from "@/lib/usage/errors";
 import type { LinkImportRepository, OpenLinkImport } from "./repository";
+import type { ReviewItemStore } from "./review-items";
 
 export interface LinkCutoutDeps extends TaggingDeps {
   storage: ImageStorage;
   /** Reads the stored step-1 image back (admin client). */
   imageStore: ImageStore;
   linkImports: LinkImportRepository;
+  /** Saves batch-added items as "to review" (the signed-in user's client). */
+  reviewItems: ReviewItemStore;
 }
 
 function importGone(): ApiException {
@@ -122,4 +127,41 @@ export async function finishLinkImport(deps: LinkCutoutDeps, userId: string, upl
     }
     throw error;
   }
+}
+
+/**
+ * Step 2 of a batch add (several links pasted at once; `saveForReview` in
+ * the meta). Same steps as finishLinkImport, then the item is saved
+ * straight away with its suggested tags and marked "to review". If tagging
+ * failed twice there are no tags to save, so the draft comes back for the
+ * review list to show (CONTRACTS.md section 5, "Several links at once").
+ *
+ * Caps for a batch: the phone runs the links one after another. Step 1
+ * checks the item cap before fetching anything (and counts a link fetch),
+ * and this step counts the item, so once today's items are used up the
+ * next link's step 1 answers 429 items_per_day without fetching, and the
+ * phone stops there.
+ */
+export async function finishLinkImportForReview(deps: LinkCutoutDeps, userId: string, upload: LinkCutoutUpload): Promise<BatchAddResponse> {
+  const draft = await finishLinkImport(deps, userId, upload);
+  const tags = draft.suggestedTags;
+  if (!tags) return { status: "draft", draft };
+
+  let row;
+  try {
+    row = await deps.reviewItems.create(userId, {
+      source: "link",
+      sourceUrl: draft.sourceUrl,
+      originalImageKey: draft.originalImageKey,
+      cutoutImageKey: draft.cutoutImageKey,
+      tags,
+      needsPhoto: false,
+    });
+  } catch (error) {
+    if (error instanceof DuplicateImageKeyError) throw new ApiException("bad_request", "That item has already been saved");
+    throw error;
+  }
+  const [item] = await toWardrobeItems(deps.storage, [row]);
+  if (!item) throw new Error("Couldn't sign the new item's image URL");
+  return { status: "saved", item };
 }
