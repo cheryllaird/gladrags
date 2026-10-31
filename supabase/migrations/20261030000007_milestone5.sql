@@ -72,9 +72,24 @@ create table if not exists public.user_settings (
   updated_at timestamptz not null default now()
 );
 
+-- True if no value appears twice in the array. A check constraint can't
+-- hold a subquery, so it calls this (immutable) function.
+create or replace function public.text_array_has_no_duplicates(p_values text[])
+returns boolean
+language sql
+immutable
+set search_path = ''
+as $$
+  select count(*) = count(distinct v) from unnest(p_values) as v;
+$$;
+
+-- One-dimensional, 1 to 12 shops from the list, no duplicates (the same
+-- rules as FavouriteShopIdsSchema, so the app can always read the row back).
 alter table public.user_settings drop constraint if exists user_settings_favourite_shops_check;
 alter table public.user_settings add constraint user_settings_favourite_shops_check check (
-  cardinality(favourite_shop_ids) between 1 and 12
+  array_ndims(favourite_shop_ids) = 1
+  and cardinality(favourite_shop_ids) between 1 and 12
+  and public.text_array_has_no_duplicates(favourite_shop_ids)
   and favourite_shop_ids <@ array[
     'next', 'marks_and_spencer', 'new_look', 'john_lewis', 'river_island', 'zara',
     'hm', 'uniqlo', 'asos', 'mango', 'matalan', 'fatface'

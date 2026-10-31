@@ -857,18 +857,14 @@ select pg_temp.expect_error(
 select pg_temp.expect_error(
   $$delete from public.usage_events where kind in ('email_import', 'shop_search')$$,
   'QA: C deleting their email and shop search counts');
--- Known gap (reported to the orchestrator, low): the database allows
--- duplicate shop IDs and a two-dimensional array, which FavouriteShopIdsSchema
--- (and so UserSettingsRowSchema) refuses. A user writing their own row
--- through the Supabase API can make their own settings unreadable by the
--- app (500 on GET /api/settings). Pinned as allowed; flip to expect_error
--- once the constraint checks for duplicates and one dimension.
-select pg_temp.expect_rows(
-  'update public.user_settings set favourite_shop_ids = array[''next'', ''next''] where user_id = ''5c000000-0000-4000-8000-00000000000c''', 1,
-  'QA KNOWN GAP: duplicate favourite shops are accepted by the database');
-select pg_temp.expect_rows(
-  'update public.user_settings set favourite_shop_ids = ''{{next,zara}}''::text[] where user_id = ''5c000000-0000-4000-8000-00000000000c''', 1,
-  'QA KNOWN GAP: a two-dimensional shop list is accepted by the database');
+-- Fixed (was a QA known gap): duplicates and a two-dimensional array are
+-- refused, as FavouriteShopIdsSchema refuses them.
+select pg_temp.expect_error(
+  'update public.user_settings set favourite_shop_ids = array[''next'', ''next''] where user_id = ''5c000000-0000-4000-8000-00000000000c''',
+  'QA: duplicate favourite shops');
+select pg_temp.expect_error(
+  'update public.user_settings set favourite_shop_ids = ''{{next,zara}}''::text[] where user_id = ''5c000000-0000-4000-8000-00000000000c''',
+  'QA: a two-dimensional shop list');
 select pg_temp.expect_rows(
   'update public.user_settings set favourite_shop_ids = array[''next''] where user_id = ''5c000000-0000-4000-8000-00000000000c''', 1,
   'QA: C puts a valid list back');
