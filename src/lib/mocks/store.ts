@@ -61,6 +61,8 @@ interface MockState {
   settings: { favouriteShopIds: ShopId[]; forwardingToken: string };
   /** email_imports rows, newest first. */
   emailImports: EmailImport[];
+  /** Message IDs of emails already handled (the real table keeps a hash). */
+  deliveredEmailIds: Set<string>;
 }
 
 export interface MockOutfitFeedback {
@@ -79,6 +81,7 @@ function freshState(): MockState {
     feedback: [],
     settings: { favouriteShopIds: [...DEFAULT_FAVOURITE_SHOP_IDS], forwardingToken: MOCK_FORWARDING_TOKEN },
     emailImports: [],
+    deliveredEmailIds: new Set(),
   };
 }
 
@@ -411,6 +414,14 @@ export function resetForwardingToken(): string {
   const token = crypto.randomUUID().replaceAll("-", "");
   state().settings.forwardingToken = token;
   return token;
+}
+
+/** Record an email's message ID; false if it was already handled (a redelivery). */
+export function markEmailDelivered(messageId: string): boolean {
+  const seen = state().deliveredEmailIds;
+  if (seen.has(messageId)) return false;
+  seen.add(messageId);
+  return true;
 }
 
 export function listEmailImports(limit: number): EmailImport[] {

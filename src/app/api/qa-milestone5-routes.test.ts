@@ -245,11 +245,11 @@ describe("order email webhook: input and caps", () => {
     expect(added.filter((i) => i.needsPhoto)).toHaveLength(1);
   });
 
-  // BUG (low, mock only): CONTRACTS.md step 3 skips a redelivered email
+  // Fixed (was BUG, low, mock only): CONTRACTS.md step 3 skips a redelivered email
   // (same message ID for the user). The mock webhook imports it again, so
   // the UI agents never see the de-duplicated behaviour (and the e2e for
   // C7 would count twice). The real webhook is C3's.
-  it.fails("a redelivered email (same message ID) is imported once", async () => {
+  it("a redelivered email (same message ID) is imported once", async () => {
     const once = { messageId: "<same@mail.example>" };
     await inbound(once);
     await inbound(once);
@@ -297,11 +297,11 @@ describe("settings", () => {
     await expectError(await settings.GET(get("/api/settings")), "server_misconfigured");
   });
 
-  // BUG (low): INBOUND_EMAIL_PREFIX's check (/^[a-z0-9._+-]{0,40}$/) allows
+  // Fixed (was BUG, low): INBOUND_EMAIL_PREFIX's check (/^[a-z0-9._+-]{0,40}$/) allows
   // a leading dot or two dots in a row, which make an invalid address. The
   // settings response then fails its own schema: 500 internal instead of a
   // server_misconfigured that names the variable.
-  it.fails("a prefix that can't make a valid address is a configuration error", async () => {
+  it("a prefix that can't make a valid address is a configuration error", async () => {
     vi.stubEnv("INBOUND_EMAIL_PREFIX", "a..b+");
     await expectError(await settings.GET(get("/api/settings")), "server_misconfigured");
   });
@@ -420,14 +420,14 @@ describe("gap outfits in mock mode", () => {
     }
   });
 
-  // BUG (low, mock only): "Include items from my shops" returns
+  // Fixed (was BUG, low, mock only): "Include items from my shops" returns
   // missingCategories: ["shoes"], although the mock wardrobe has three pairs
   // of shoes. CONTRACTS.md: missingCategories is "empty when the wardrobe
   // has everything"; a shop-item gap isn't a missing category. Building
   // against this, the outfit UI would tell a user with shoes to add shoes.
   // (The mock-gaps marker documents ["shoes"] on purpose; this is about
   // includeShopItems.)
-  it.fails("includeShopItems on a wardrobe with shoes reports no missing categories", async () => {
+  it("includeShopItems on a wardrobe with shoes reports no missing categories", async () => {
     const res = await outfits.POST(json("/api/outfits", "POST", { style: { kind: "preset", presetId: "casual" }, includeShopItems: true }));
     const body = OutfitGenerationResponseSchema.parse(await res.json());
     expect(body.status === "ok" && body.missingCategories).toEqual([]);

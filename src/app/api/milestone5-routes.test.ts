@@ -192,10 +192,10 @@ describe("item images after adding", () => {
 });
 
 describe("outfits with gaps and shop search", () => {
-  it("includeShopItems gives outfits with gaps and the categories to add", async () => {
+  it("includeShopItems gives outfits with a shop-item gap and nothing missing", async () => {
     const res = await outfits.POST(json("/api/outfits", "POST", { style: { kind: "preset", presetId: "casual" }, includeShopItems: true }));
     const body = OutfitGenerationResponseSchema.parse(await res.json());
-    expect(body).toMatchObject({ status: "ok", missingCategories: ["shoes"] });
+    expect(body).toMatchObject({ status: "ok", missingCategories: [] });
     if (body.status !== "ok") return;
     for (const outfit of body.outfits) {
       expect(outfit.gaps.map((g) => g.category)).toEqual(["shoes"]);
@@ -297,12 +297,26 @@ describe("order email webhook (mock)", () => {
   });
 
   it("an email from another address, or failing checks, is recorded as failed and adds nothing", async () => {
-    await inboundEmail.POST(inbound({ from: "stranger@example.com" }));
-    await inboundEmail.POST(inbound({ auth: { spf: "fail", dkim: "fail", dmarc: "fail" } }));
+    await inboundEmail.POST(inbound({ messageId: "<a@mail.example>", from: "stranger@example.com" }));
+    await inboundEmail.POST(inbound({ messageId: "<b@mail.example>", auth: { spf: "fail", dkim: "fail", dmarc: "fail" } }));
     const list = EmailImportListResponseSchema.parse(await (await emailImports.GET(get("/api/email-imports"))).json());
     expect(list.imports.map((i) => i.error)).toEqual(["failed_checks", "sender_not_allowed"]);
     const review = ItemListResponseSchema.parse(await (await items.GET(new Request(`${BASE}/api/items?needsReview=true`))).json());
     expect(review.items).toEqual([]);
+  });
+
+  it("a redelivered email is handled once", async () => {
+    await inboundEmail.POST(inbound());
+    expect(await (await inboundEmail.POST(inbound())).json()).toEqual({ received: true });
+    expect(EmailImportListResponseSchema.parse(await (await emailImports.GET(get("/api/email-imports"))).json()).imports).toHaveLength(1);
+  });
+
+  it("refuses a body over the limit, by Content-Length or by what arrives", async () => {
+    const big = "x".repeat(2 * 1024 * 1024 + 1);
+    const declared = new Request(`${BASE}/api/inbound/email`, { method: "POST", headers: { "content-length": String(big.length) }, body: "{}" });
+    await expectError(await inboundEmail.POST(declared), 400, "bad_request");
+    const streamed = new Request(`${BASE}/api/inbound/email`, { method: "POST", body: big });
+    await expectError(await inboundEmail.POST(streamed), 400, "bad_request");
   });
 
   it("an email to an unknown address is answered but ignored; a malformed body is refused", async () => {

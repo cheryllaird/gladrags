@@ -37,11 +37,14 @@ const InboundEmailEnvSchema = z.object({
     .toLowerCase()
     .regex(/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/)
     .optional(),
+  // The start of an email local part: letters, digits and . _ + -, not
+  // starting with a dot or holding two dots in a row (the token follows,
+  // so a trailing dot is fine).
   INBOUND_EMAIL_PREFIX: z
     .string()
     .trim()
     .toLowerCase()
-    .regex(/^[a-z0-9._+-]{0,40}$/)
+    .regex(/^(?!\.)(?!.*\.\.)[a-z0-9._+-]{0,40}$/)
     .optional(),
 });
 

@@ -43,7 +43,11 @@ export const POST = withApiHandler(async (request) => {
         includeShopItems: body.includeShopItems ?? false,
       });
       if (outfits.length > 0) {
-        return jsonResponse(OutfitGenerationResponseSchema, { status: "ok", outfits, missingCategories: ["shoes"] });
+        // The marker plays a wardrobe without shoes (a required-slot gap);
+        // includeShopItems plays a shop-item gap on a wardrobe that has
+        // shoes, so nothing is missing.
+        const missingCategories = hasMarker(texts, MOCK_MARKERS.gaps) ? (["shoes"] as const) : [];
+        return jsonResponse(OutfitGenerationResponseSchema, { status: "ok", outfits, missingCategories: [...missingCategories] });
       }
     }
   }

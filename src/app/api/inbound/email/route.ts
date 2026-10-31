@@ -11,17 +11,21 @@
 // Nothing here may act on a browser session, so CSRF doesn't apply.
 //
 // The real version (link-import):
-// 1. Refuse bodies over INBOUND_WEBHOOK_MAX_BYTES; verify the signature
+// 1. Refuse bodies over INBOUND_WEBHOOK_MAX_BYTES without buffering them:
+//    a Content-Length over the limit is refused before reading, and the
+//    body stream is read with a running byte count that stops at the limit
+//    (Content-Length can be missing or wrong). Then verify the signature
 //    (401 unauthorized if it fails); parse with the provider adapter into
 //    InboundEmailSchema (400 if it can't).
 // 2. Find the user from the token in a recipient address (tokenFromAddress
 //    with getForwardingAddressConfig(); look it up with the admin client).
 //    Unknown token: answer { received: true } and record nothing.
-// 3. Skip a redelivery (same user and message_hash).
+// 3. Skip a redelivery (same user and message_hash, a SHA-256 of messageId).
 // 4. judgeInboundEmail(email, user's sign-in address). Refused: record a
 //    failed email_imports row with its error code, nothing else.
 // 5. reserveAction(user, "email_import"), then extract line items with the
-//    model (OrderEmailModelOutputSchema, metered as "email_extraction"),
+//    model (OrderEmailModelOutputSchema, metered as "email_extraction"; the
+//    text cut to EMAIL_PROMPT_TEXT_MAX first),
 //    then for each line: fetch the image (the email's image link, else the
 //    product page via the add-by-link fetcher), store it, tag it, count an
 //    item_ingest, and save it with source "email" and needs_review = true
@@ -33,7 +37,8 @@
 //
 // Mock mode: the body is InboundEmailSchema JSON, with no signature. An
 // email to the mock user's forwarding address from mock.user@gladrags.test
-// with passing checks adds two "to review" items (one needing a photo).
+// with passing checks adds two "to review" items (one needing a photo). A
+// redelivery (same messageId) is skipped, as the real one must.
 import { InboundEmailSchema, InboundEmailWebhookResponseSchema, INBOUND_WEBHOOK_MAX_BYTES, judgeInboundEmail, tokenFromAddress } from "@/contracts";
 import { ApiException } from "@/lib/api/errors";
 import { jsonResponse, withApiHandler } from "@/lib/api/http";
@@ -49,16 +54,45 @@ export const maxDuration = 60;
 
 const received = () => jsonResponse(InboundEmailWebhookResponseSchema, { received: true });
 
+const tooLarge = () => new ApiException("bad_request", "That email is too large");
+
+/**
+ * The body as text, refusing more than `maxBytes` without buffering it all:
+ * checks Content-Length first, then counts bytes as the stream arrives.
+ */
+async function readBodyCapped(request: Request, maxBytes: number): Promise<string> {
+  const declared = Number(request.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > maxBytes) throw tooLarge();
+  if (!request.body) return "";
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      throw tooLarge();
+    }
+    chunks.push(value);
+  }
+  const body = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(body);
+}
+
 export const POST = withApiHandler(async (request) => {
   if (!isMockMode()) {
     getInboundWebhookSecret(); // 500 server_misconfigured until the secret is set
     throw new ApiException("not_implemented", "Order email import isn't built yet");
   }
 
-  const raw = await request.text();
-  if (new TextEncoder().encode(raw).byteLength > INBOUND_WEBHOOK_MAX_BYTES) {
-    throw new ApiException("bad_request", "That email is too large");
-  }
+  const raw = await readBodyCapped(request, INBOUND_WEBHOOK_MAX_BYTES);
   let json: unknown;
   try {
     json = JSON.parse(raw);
@@ -72,6 +106,7 @@ export const POST = withApiHandler(async (request) => {
   const config = getForwardingAddressConfig();
   const token = config ? email.to.map((address) => tokenFromAddress(address, config)).find((t) => t !== null) : null;
   if (!token || token !== mock.getSettings().forwardingToken) return received();
+  if (!mock.markEmailDelivered(email.messageId)) return received();
 
   const verdict = judgeInboundEmail(email, MOCK_USER.email);
   if (!verdict.accepted) {
