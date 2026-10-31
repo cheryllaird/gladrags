@@ -251,6 +251,31 @@ describe("checkRankedOutfits with gaps", () => {
     expect(checkRankedOutfits([outfit], known, { anchorItemId: ID(7), gaps: rules }).valid).toHaveLength(1);
   });
 
+  it("a dress gap stands in for missing separates, but not when separates exist", () => {
+    const off = (...cats: Category[]) => ({ gaps: { fillableCategories: new Set<Category>(cats), includeShopItems: false } });
+    const outfit = { itemIds: [ID(10)], gaps: [{ category: "dress_jumpsuit" as const }] };
+    expect(checkRankedOutfits([outfit], known, off("shoes")).valid).toHaveLength(1);
+    expect(checkRankedOutfits([outfit], known, off("top", "shoes")).valid).toHaveLength(0);
+    expect(checkRankedOutfits([outfit], known, off("top", "bottom", "shoes")).valid).toHaveLength(0);
+  });
+
+  it("an outerwear gap is a shop-item gap even when the wardrobe has no outerwear", () => {
+    const rules = (includeShopItems: boolean) => ({ gaps: { fillableCategories: new Set<Category>(["top", "bottom", "shoes"]), includeShopItems } });
+    const outfit = { itemIds: [ID(1), ID(4), ID(10)], gaps: [outerGap] };
+    expect(checkRankedOutfits([outfit], known, rules(false)).valid).toHaveLength(0);
+    expect(checkRankedOutfits([outfit], known, rules(true)).valid).toHaveLength(1);
+    const twoShop = { itemIds: [ID(1), ID(4)], gaps: [shoesGap, outerGap] };
+    expect(checkRankedOutfits([twoShop], known, rules(true)).valid).toHaveLength(0);
+  });
+
+  it("missing slots are judged around the anchor", () => {
+    // A top anchor with a dress in the wardrobe but no bottoms: the bottom slot is required.
+    const rules = { gaps: { fillableCategories: new Set<Category>(["top", "dress_jumpsuit", "shoes"]), includeShopItems: false } };
+    expect(checkRankedOutfits([{ itemIds: [ID(1), ID(10)], gaps: [{ category: "bottom" as const }] }], known, { anchorItemId: ID(1), ...rules }).valid).toHaveLength(1);
+    // Without the anchor, the dress fills the body, so a bottom gap is a shop item.
+    expect(checkRankedOutfits([{ itemIds: [ID(1), ID(10)], gaps: [{ category: "bottom" as const }] }], known, rules).valid).toHaveLength(0);
+  });
+
   it("refuses an outfit made only of gaps", () => {
     const rules = { fillableCategories: new Set<Category>(), includeShopItems: false };
     const { rejected } = checkRankedOutfits([{ itemIds: [], gaps: [{ category: "dress_jumpsuit" as const }, shoesGap] }], known, { gaps: rules });

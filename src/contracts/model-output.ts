@@ -9,6 +9,7 @@ import {
   OUTFIT_REASON_MAX_LENGTH,
   OutfitItemIdsSchema,
   checkComposition,
+  missingCategoriesForOutfits,
 } from "./outfit";
 
 /**
@@ -189,15 +190,36 @@ export interface RankedOutfitCheck<T extends { itemIds: string[] }> {
   rejected: { outfit: T; problem: string }[];
 }
 
+/**
+ * How gaps are judged (orchestrator decision A: gaps are about slots, not
+ * categories). Each gap is one of two kinds:
+ *
+ * - A **required-slot gap**: a slot the outfit's structure needs (top and
+ *   bottom, or a dress or jumpsuit, plus shoes) that the wardrobe can't
+ *   fill, i.e. its category is in missingCategoriesForOutfits(
+ *   fillableCategories, anchorCategory). When the wardrobe has no separates
+ *   and no dress (both top and bottom missing), a single dress gap may stand
+ *   in for them. Always allowed.
+ * - Any other gap is a **shop-item gap**: a slot the wardrobe could fill,
+ *   and every outerwear gap (outerwear is optional, so never required).
+ *   Allowed only with includeShopItems, and at most MAX_SHOP_ITEM_GAPS per
+ *   outfit.
+ *
+ * Example refused: a wardrobe with tops, bottoms and shoes, an outfit of
+ * owned shoes plus a dress gap, shop items off (the separates fill the body).
+ */
 export interface GapRules {
-  /**
-   * Categories the (filtered) wardrobe could fill for this request. A gap in
-   * one of these is a "shop item" gap; a gap in any other category is a
-   * missing category, which is always allowed.
-   */
+  /** Categories the (filtered) wardrobe has items in for this request. */
   fillableCategories: ReadonlySet<Category>;
-  /** The request's includeShopItems: allows MAX_SHOP_ITEM_GAPS shop item gap per outfit. */
+  /** The request's includeShopItems. */
   includeShopItems: boolean;
+}
+
+/** Whether a gap in `category` is a required-slot gap (see GapRules). */
+export function isRequiredSlotGap(category: Category, missing: ReadonlySet<Category>): boolean {
+  if (category === "outerwear") return false;
+  if (missing.has(category)) return true;
+  return category === "dress_jumpsuit" && missing.has("top") && missing.has("bottom");
 }
 
 export interface CheckRankedOutfitsOptions {
@@ -214,8 +236,8 @@ export interface CheckRankedOutfitsOptions {
  * Spec pipeline step 4: split ranked outfits into valid ones and ones with an
  * unknown item ID, a missing anchor item, a broken composition rule (owned
  * items and gaps together, at least one owned item), or a gap that isn't
- * allowed (one the wardrobe could fill, unless the user asked for shop
- * items, and then at most one). `known` maps every item ID the model was
+ * allowed (see GapRules: a shop-item gap without includeShopItems, or more
+ * than MAX_SHOP_ITEM_GAPS of them). `known` maps every item ID the model was
  * allowed to use to its category.
  */
 export function checkRankedOutfits<T extends { itemIds: string[]; gaps?: readonly { category: Category }[] }>(
@@ -248,7 +270,9 @@ export function checkRankedOutfits<T extends { itemIds: string[]; gaps?: readonl
       continue;
     }
     if (gapRules) {
-      const shopGaps = gapCategories.filter((c) => gapRules.fillableCategories.has(c));
+      const anchorCategory = anchorItemId ? known.get(anchorItemId) : undefined;
+      const missing = new Set(missingCategoriesForOutfits(gapRules.fillableCategories, anchorCategory));
+      const shopGaps = gapCategories.filter((c) => !isRequiredSlotGap(c, missing));
       const allowed = gapRules.includeShopItems ? MAX_SHOP_ITEM_GAPS : 0;
       if (shopGaps.length > allowed) {
         result.rejected.push({

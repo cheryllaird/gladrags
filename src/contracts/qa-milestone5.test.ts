@@ -685,25 +685,15 @@ describe("checkRankedOutfits with gaps", () => {
     expect(rejected.map((r) => r.outfit)).toEqual([outfits[1]]);
   });
 
-  // BUG (medium, contract): "missing" is judged per category, not per slot.
-  // A wardrobe with tops, bottoms and shoes but no dresses can complete
-  // every outfit, yet the model may answer with owned shoes plus a dress
-  // gap, and it is accepted without "Include items from my shops". The spec
-  // (Pipeline step 4) says to reject "a gap where the wardrobe has a
-  // suitable item and the user didn't ask for shop items"; the body slot
-  // has a suitable item (the separates).
-  it.fails("refuses a dress gap when the wardrobe's separates fill the body slot and shop items are off", () => {
+  // Fixed (was BUG, medium): gaps are judged per slot (orchestrator decision A).
+  it("refuses a dress gap when the wardrobe's separates fill the body slot and shop items are off", () => {
     const rules = { fillableCategories: fillable("top", "bottom", "shoes"), includeShopItems: false };
     const { valid } = checkRankedOutfits([{ itemIds: [ID(3)], gaps: [gap("dress_jumpsuit")] }], known, { gaps: rules });
     expect(valid).toHaveLength(0);
   });
 
-  // BUG (medium, contract): the same rule lets an outerwear gap through on
-  // every outfit when the wardrobe has no outerwear, although outerwear is
-  // optional, so it is never "a category the outfit needs" (spec, Gaps and
-  // shop suggestions) and missingCategoriesForOutfits never lists it. The
-  // result is unrequested shop suggestions on complete outfits.
-  it.fails("refuses an optional outerwear gap on a complete outfit when shop items are off", () => {
+  // Fixed (was BUG, medium): outerwear gaps are always shop-item gaps.
+  it("refuses an optional outerwear gap on a complete outfit when shop items are off", () => {
     const rules = { fillableCategories: fillable("top", "bottom", "shoes"), includeShopItems: false };
     const { valid } = checkRankedOutfits([{ itemIds: [ID(1), ID(2), ID(3)], gaps: [gap("outerwear")] }], known, { gaps: rules });
     expect(valid).toHaveLength(0);
