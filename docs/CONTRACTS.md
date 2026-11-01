@@ -349,14 +349,14 @@ The session cookie is `httpOnly` and `SameSite=Lax` (section 9), and on top of t
 | `PATCH /api/items/:id` | `{ tags }` (all of them), **(M5)** or `{ reviewed: true }` to confirm the suggested tags as they are, or both. *Stub for `reviewed` alone.* | `{ item }`. Sending `tags` sets `tagsEdited: true`. **(M5)** Every PATCH clears `needsReview`. |
 | `POST /api/items/reviewed` | **(M5)** `{ itemIds }` (1 to 100): "Confirm all" in the review list. IDs that aren't the user's are ignored. *Stub (ingestion).* | `{ updated }`: how many were the user's |
 | `DELETE /api/items/:id` | | `{ deleted: true }`. Also deletes its images and the outfits that used it. |
-| `PUT /api/items/:id/cutout` | **(M5)** Multipart, file `cutout` (below). *Stub (ingestion).* | `{ item }` with its `cutoutUrl` |
-| `PUT /api/items/:id/photo` | **(M5)** Multipart, file `original` (below). *Stub (ingestion).* | `{ item }` with `needsPhoto: false` |
+| `PUT /api/items/:id/cutout` | **(M5)** Multipart, file `cutout` (below). Built (ingestion). | `{ item }` with its `cutoutUrl` |
+| `PUT /api/items/:id/photo` | **(M5)** Multipart, file `original` (below). Built (ingestion). | `{ item }` with `needsPhoto: false` |
 
 A **WardrobeItem** is `{ id, source, sourceUrl, originalUrl, cutoutUrl (or null), tags, tagsEdited, needsReview, needsPhoto, createdAt }`. `source` is `photo`, `link` or **(M5)** `email`. **(M5)** The wardrobe grid and item screens show `originalUrl`. Collages show `cutoutUrl` if there is one, otherwise `originalUrl`; the helper `collageImageUrl(item)` does this (`displayImageUrl` is the same helper under its old name).
 
 **Cut-out for an existing item (M5).** The first time a collage needs an item without a cut-out, the phone cuts it out from `originalUrl` and sends it with `PUT /api/items/:id/cutout`, file `cutout`: PNG with transparency, ≤ 1600 px, ≤ 2.5 MB. The server applies the same checks as the old add-time cut-out (real type from the bytes, transparency, no wider or taller than the item's original, EXIF stripped), stores it, and returns the item. A newer cut-out replaces an older one (two phones can race), and the old file is deleted. No AI, so no cap. If removal fails on the phone, it sends nothing and the collage uses the original.
 
-**Adding a photo later (M5).** For an email item saved without a picture (`needsPhoto`), `PUT /api/items/:id/photo`, file `original`, checked like add-by-photo, replaces the placeholder, removes any cut-out, clears `needsPhoto` and marks the item "to review" so the user can check the tags against the photo. The tags aren't re-run (no AI, no cap). **[Decision]**
+**Adding a photo later (M5).** For an email item saved without a picture (`needsPhoto`), `PUT /api/items/:id/photo`, file `original`, checked like add-by-photo, replaces the placeholder, removes any cut-out, clears `needsPhoto` and marks the item "to review" so the user can check the tags against the photo. The tags aren't re-run (no AI, no cap). It also works on any item the user owns, as a "change photo": it replaces the photo, drops the cut-out and marks the item to review; tags are kept. **[Decision]**
 
 ### Add by photo (built; owner: ingestion)
 On the phone:
