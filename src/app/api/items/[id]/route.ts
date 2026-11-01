@@ -3,12 +3,12 @@
 // src/lib/ingestion/wardrobe.ts. In mock mode these use the in-memory mock
 // wardrobe instead.
 import { DeletedResponseSchema, IdParamsSchema, ItemResponseSchema, UpdateItemRequestSchema } from "@/contracts";
-import { ApiException, notFound } from "@/lib/api/errors";
+import { notFound } from "@/lib/api/errors";
 import { jsonResponse, parseJsonBody, parseRouteParams, withApiHandler } from "@/lib/api/http";
 import { requireUser } from "@/lib/auth/session";
 import { isMockMode } from "@/lib/env";
 import { getWardrobeDeps } from "@/lib/ingestion/deps";
-import { deleteWardrobeItem, getWardrobeItem, updateWardrobeItemTags } from "@/lib/ingestion/wardrobe";
+import { deleteWardrobeItem, getWardrobeItem, updateWardrobeItem } from "@/lib/ingestion/wardrobe";
 import * as mock from "@/lib/mocks/store";
 
 interface Context {
@@ -40,10 +40,7 @@ export const PATCH = withApiHandler(async (request, { params }: Context) => {
     if (!item) throw notFound("That item");
     return jsonResponse(ItemResponseSchema, { item });
   }
-  // TODO(ingestion, milestone 5): clear needs_review on every PATCH, and
-  // support { reviewed: true } on its own.
-  if (!body.tags) throw new ApiException("not_implemented", "Confirming an item's tags isn't built yet");
-  const item = await updateWardrobeItemTags(await getWardrobeDeps(), user.id, id, body.tags);
+  const item = await updateWardrobeItem(await getWardrobeDeps(), user.id, id, body);
   return jsonResponse(ItemResponseSchema, { item });
 });
 

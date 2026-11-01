@@ -14,17 +14,61 @@ import {
   type CreateItemRequest,
   type ItemListQuery,
   type ItemRow,
+  type ItemSource,
   type ItemTags,
 } from "@/contracts";
-import { createItemRequestToRow, tagsToItemColumns } from "@/lib/db/mappers";
+import { tagsToItemColumns } from "@/lib/db/mappers";
+
+/**
+ * A new item row. A reviewed draft (POST /api/items) is a CreateItemRequest
+ * and is never "to review"; the server saves batch-added items with
+ * needsReview, and (order emails) items without a picture with needsPhoto.
+ */
+export type NewItem = Omit<CreateItemRequest, "source"> & {
+  source: ItemSource;
+  needsReview?: boolean;
+  needsPhoto?: boolean;
+};
+
+/** Columns for an items insert. */
+function newItemToRow(userId: string, item: NewItem) {
+  return {
+    user_id: userId,
+    source: item.source,
+    source_url: item.sourceUrl,
+    original_image_key: item.originalImageKey,
+    cutout_image_key: item.cutoutImageKey,
+    tags_edited: item.tagsEdited,
+    ...tagsToItemColumns(item.tags),
+    needs_review: item.needsReview ?? false,
+    needs_photo: item.needsPhoto ?? false,
+  };
+}
 
 export interface ItemRepository {
   /** The user's items, newest first, filtered as the query says. */
   list(userId: string, query: ItemListQuery): Promise<ItemRow[]>;
   get(userId: string, id: string): Promise<ItemRow | null>;
-  create(userId: string, request: CreateItemRequest): Promise<ItemRow>;
-  /** Replace all the tags and set tags_edited. Null if there's no such item. */
+  /** Insert an item. Throws DuplicateImageKeyError if another item uses one of its images. */
+  create(userId: string, item: NewItem): Promise<ItemRow>;
+  /** Replace all the tags, set tags_edited and clear needs_review. Null if there's no such item. */
   updateTags(userId: string, id: string, tags: ItemTags): Promise<ItemRow | null>;
+  /** Clear needs_review on one item ("the tags are right"). Null if there's no such item. */
+  markReviewed(userId: string, id: string): Promise<ItemRow | null>;
+  /** Clear needs_review on several items. Returns how many of the IDs were the user's items. */
+  markManyReviewed(userId: string, ids: readonly string[]): Promise<number>;
+  /**
+   * Point the item at a new cut-out, only if its original is still
+   * `madeFromOriginalKey` (the picture the cut-out was made from and
+   * measured against). Null if there's no such item, or its photo has
+   * changed since.
+   */
+  setCutoutKey(userId: string, id: string, cutoutKey: string, madeFromOriginalKey: string): Promise<ItemRow | null>;
+  /**
+   * Give the item a new original: drops its cut-out (cut from the old
+   * picture), clears needs_photo and marks it "to review". Null if there's no such item.
+   */
+  replaceOriginal(userId: string, id: string, originalKey: string): Promise<ItemRow | null>;
   /** Delete and return the row (for its image keys). Null if there's no such item. */
   delete(userId: string, id: string): Promise<ItemRow | null>;
   /** Which of these image keys an existing item of this user already uses. */
@@ -41,7 +85,7 @@ export interface ImageReferences {
 }
 
 const ITEM_COLUMNS =
-  "id, user_id, source, source_url, original_image_key, cutout_image_key, category, subcategory, colours, pattern, formality, seasons, warmth, occasions, fabric, description, tags_edited, created_at";
+  "id, user_id, source, source_url, original_image_key, cutout_image_key, category, subcategory, colours, pattern, formality, seasons, warmth, occasions, fabric, description, tags_edited, needs_review, needs_photo, created_at";
 
 /**
  * Make search text safe for an ILIKE pattern: %, _ and the escape character
@@ -86,6 +130,7 @@ export class SupabaseItemRepository implements ItemRepository {
     if (query.colour) request = request.contains("colours", [query.colour]);
     if (query.occasion) request = request.contains("occasions", [query.occasion]);
     if (query.q) request = request.ilike("description", `%${escapeLikePattern(query.q)}%`);
+    if (query.needsReview !== undefined) request = request.eq("needs_review", query.needsReview);
     const { data, error } = await request.order("created_at", { ascending: false });
     if (error) throw new Error(`Couldn't list items: ${error.message}`);
     return parseRows(data);
@@ -102,10 +147,10 @@ export class SupabaseItemRepository implements ItemRepository {
     return parseRow(data);
   }
 
-  async create(userId: string, request: CreateItemRequest): Promise<ItemRow> {
+  async create(userId: string, item: NewItem): Promise<ItemRow> {
     const { data, error } = await this.db
       .from("items")
-      .insert(createItemRequestToRow(userId, request))
+      .insert(newItemToRow(userId, item))
       .select(ITEM_COLUMNS)
       .single();
     if (error?.code === UNIQUE_VIOLATION) throw new DuplicateImageKeyError();
@@ -114,13 +159,49 @@ export class SupabaseItemRepository implements ItemRepository {
   }
 
   async updateTags(userId: string, id: string, tags: ItemTags): Promise<ItemRow | null> {
+    return this.updateOne(userId, id, { ...tagsToItemColumns(tags), tags_edited: true, needs_review: false });
+  }
+
+  async markReviewed(userId: string, id: string): Promise<ItemRow | null> {
+    return this.updateOne(userId, id, { needs_review: false });
+  }
+
+  async markManyReviewed(userId: string, ids: readonly string[]): Promise<number> {
+    if (ids.length === 0) return 0;
     const { data, error } = await this.db
       .from("items")
-      .update({ ...tagsToItemColumns(tags), tags_edited: true })
+      .update({ needs_review: false })
       .eq("user_id", userId)
-      .eq("id", id)
-      .select(ITEM_COLUMNS)
-      .maybeSingle();
+      .in("id", [...ids])
+      .select("id");
+    if (error) throw new Error(`Couldn't mark the items reviewed: ${error.message}`);
+    return (data ?? []).length;
+  }
+
+  async setCutoutKey(userId: string, id: string, cutoutKey: string, madeFromOriginalKey: string): Promise<ItemRow | null> {
+    return this.updateOne(userId, id, { cutout_image_key: cutoutKey }, { original_image_key: madeFromOriginalKey });
+  }
+
+  async replaceOriginal(userId: string, id: string, originalKey: string): Promise<ItemRow | null> {
+    return this.updateOne(userId, id, {
+      original_image_key: originalKey,
+      cutout_image_key: null,
+      needs_photo: false,
+      needs_review: true,
+    });
+  }
+
+  /** Update one of the user's items, optionally only while other columns still hold the given values. */
+  private async updateOne(
+    userId: string,
+    id: string,
+    columns: Record<string, unknown>,
+    unlessChanged: Record<string, string> = {},
+  ): Promise<ItemRow | null> {
+    let request = this.db.from("items").update(columns).eq("user_id", userId).eq("id", id);
+    for (const [column, value] of Object.entries(unlessChanged)) request = request.eq(column, value);
+    const { data, error } = await request.select(ITEM_COLUMNS).maybeSingle();
+    if (error?.code === UNIQUE_VIOLATION) throw new DuplicateImageKeyError();
     if (error) throw new Error(`Couldn't update the item: ${error.message}`);
     return parseRow(data);
   }
@@ -205,6 +286,7 @@ export class InMemoryItemRepository implements ItemRepository, ImageReferences {
       .filter((row) => !query.colour || row.colours.includes(query.colour))
       .filter((row) => !query.occasion || row.occasions.includes(query.occasion))
       .filter((row) => !q || row.description.toLowerCase().includes(q))
+      .filter((row) => query.needsReview === undefined || row.needs_review === query.needsReview)
       .sort((a, b) => b.created_at.localeCompare(a.created_at))
       .map((row) => structuredClone(row));
   }
@@ -214,18 +296,23 @@ export class InMemoryItemRepository implements ItemRepository, ImageReferences {
     return row && row.user_id === userId ? structuredClone(row) : null;
   }
 
-  async create(userId: string, request: CreateItemRequest): Promise<ItemRow> {
-    // Like the database's unique indexes on the image keys.
-    const keys = [request.originalImageKey, request.cutoutImageKey].filter((key): key is string => key !== null);
+  /** Like the database's unique indexes on the image keys. */
+  private assertKeysFree(keys: readonly (string | null)[], exceptId?: string): void {
+    const wanted = keys.filter((key): key is string => key !== null);
     for (const row of this.rows.values()) {
-      if (keys.some((key) => key === row.original_image_key || key === row.cutout_image_key)) throw new DuplicateImageKeyError();
+      if (row.id === exceptId) continue;
+      if (wanted.some((key) => key === row.original_image_key || key === row.cutout_image_key)) throw new DuplicateImageKeyError();
     }
+  }
+
+  async create(userId: string, item: NewItem): Promise<ItemRow> {
+    this.assertKeysFree([item.originalImageKey, item.cutoutImageKey]);
     // Keep creation order stable even within one millisecond.
     const createdAt = new Date(this.now().getTime() + this.tick++).toISOString();
     const row = ItemRowSchema.parse({
       id: crypto.randomUUID(),
       created_at: createdAt,
-      ...createItemRequestToRow(userId, request),
+      ...newItemToRow(userId, item),
     });
     this.rows.set(row.id, row);
     return structuredClone(row);
@@ -234,7 +321,38 @@ export class InMemoryItemRepository implements ItemRepository, ImageReferences {
   async updateTags(userId: string, id: string, tags: ItemTags): Promise<ItemRow | null> {
     const row = this.rows.get(id);
     if (!row || row.user_id !== userId) return null;
-    Object.assign(row, tagsToItemColumns(tags), { tags_edited: true });
+    Object.assign(row, tagsToItemColumns(tags), { tags_edited: true, needs_review: false });
+    return structuredClone(row);
+  }
+
+  async markReviewed(userId: string, id: string): Promise<ItemRow | null> {
+    const row = this.rows.get(id);
+    if (!row || row.user_id !== userId) return null;
+    row.needs_review = false;
+    return structuredClone(row);
+  }
+
+  async markManyReviewed(userId: string, ids: readonly string[]): Promise<number> {
+    let updated = 0;
+    for (const id of new Set(ids)) {
+      if (await this.markReviewed(userId, id)) updated++;
+    }
+    return updated;
+  }
+
+  async setCutoutKey(userId: string, id: string, cutoutKey: string, madeFromOriginalKey: string): Promise<ItemRow | null> {
+    const row = this.rows.get(id);
+    if (!row || row.user_id !== userId || row.original_image_key !== madeFromOriginalKey) return null;
+    this.assertKeysFree([cutoutKey], id);
+    row.cutout_image_key = cutoutKey;
+    return structuredClone(row);
+  }
+
+  async replaceOriginal(userId: string, id: string, originalKey: string): Promise<ItemRow | null> {
+    const row = this.rows.get(id);
+    if (!row || row.user_id !== userId) return null;
+    this.assertKeysFree([originalKey], id);
+    Object.assign(row, { original_image_key: originalKey, cutout_image_key: null, needs_photo: false, needs_review: true });
     return structuredClone(row);
   }
 

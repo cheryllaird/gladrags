@@ -1,19 +1,19 @@
 // "Confirm all" in the review list: mark several items reviewed at once
-// (owner: ingestion; route contract from foundations, milestone 5). See
-// docs/CONTRACTS.md section 5.
+// (owner: ingestion). See docs/CONTRACTS.md section 5. Item IDs that
+// aren't the user's are ignored; `updated` counts the ones that were.
 //
-// Stub: serves mock data in mock mode only. The real version is one update
-// of the user's own rows (`needs_review = false where user_id = ... and
-// id in (...)`), returning how many matched.
+// In mock mode it updates the in-memory mock wardrobe instead.
 import { MarkItemsReviewedRequestSchema, MarkItemsReviewedResponseSchema } from "@/contracts";
 import { jsonResponse, parseJsonBody, withApiHandler } from "@/lib/api/http";
-import { assertMockModeForStub } from "@/lib/api/stub";
 import { requireUser } from "@/lib/auth/session";
+import { isMockMode } from "@/lib/env";
+import { getWardrobeDeps } from "@/lib/ingestion/deps";
+import { markWardrobeItemsReviewed } from "@/lib/ingestion/wardrobe";
 import * as mock from "@/lib/mocks/store";
 
 export const POST = withApiHandler(async (request) => {
-  await requireUser();
+  const user = await requireUser();
   const { itemIds } = await parseJsonBody(request, MarkItemsReviewedRequestSchema);
-  assertMockModeForStub("Confirming several items");
-  return jsonResponse(MarkItemsReviewedResponseSchema, { updated: mock.markItemsReviewed(itemIds) });
+  const updated = isMockMode() ? mock.markItemsReviewed(itemIds) : await markWardrobeItemsReviewed(await getWardrobeDeps(), user.id, itemIds);
+  return jsonResponse(MarkItemsReviewedResponseSchema, { updated });
 });

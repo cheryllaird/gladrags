@@ -2,22 +2,30 @@
  * POST /api/items/photo, the real version (spec: "Add by photo", steps 3–4;
  * CONTRACTS.md section 5).
  *
- * The phone has already resized the photo and tried to cut the item out.
- * Here the server checks the caps, checks both images, strips EXIF, stores
- * them in the private buckets, tags the cut-out (or the original) and
- * returns a draft for the user to review. Nothing is saved to the items
- * table until the user confirms (POST /api/items).
+ * The phone has already resized the photo. Since milestone 5 it doesn't
+ * cut the item out first (collages do that later), so normally only the
+ * original arrives; an older client may still send a cut-out. Here the
+ * server checks the caps, checks the image(s), strips EXIF, stores them in
+ * the private buckets and tags the original (or the cut-out, if one came).
+ *
+ * - A single add returns a draft for the user to review. Nothing is saved
+ *   to the items table until the user confirms (POST /api/items).
+ * - A batch add (saveForReview) saves the item straight away, marked "to
+ *   review"; if tagging failed there are no tags to save it with, so it
+ *   comes back as a draft instead (addPhotoForReview).
  */
 import "server-only";
-import { STORAGE_BUCKETS, UPLOAD_FIELDS, type ItemDraft } from "@/contracts";
+import { STORAGE_BUCKETS, UPLOAD_FIELDS, type BatchAddResponse, type ItemDraft } from "@/contracts";
 import type { ImageInput, TaggingProvider } from "@/lib/ai/types";
 import type { PhotoUpload } from "@/lib/api/upload";
 import { SIGNED_URL_TTL_SECONDS, type ServerImageProcessor } from "@/lib/images/server";
 import { isAiPausedError } from "@/lib/usage/errors";
 import type { UsageGuard, UsageReservation } from "@/lib/usage/guard";
 import { CUTOUT_RULES, ORIGINAL_RULES, checkUploadedCutout, checkUploadedImage, cleanImage } from "./images";
+import type { ItemRepository } from "./items-repository";
 import { newImageKey, type ImageBucket, type ImageStorage } from "./storage";
 import { suggestTags } from "./tagging";
+import { saveItemRowForReview, toWardrobeItem } from "./wardrobe";
 
 export interface PhotoIngestionDeps {
   images: ServerImageProcessor;
@@ -48,7 +56,7 @@ export async function addItemFromPhoto(deps: PhotoIngestionDeps, userId: string,
     // Atomic: two uploads at once can't both take the last place today.
     counted = await deps.usage.reserveAction(userId, "item_ingest");
 
-    // 6. Tag the cut-out if there is one, otherwise the original.
+    // 6. Tag the original (or the cut-out, if an older client sent one).
     const suggestedTags = await suggestTags(deps, userId, cleanCutout ?? cleanOriginal);
 
     // 7. The draft, with signed URLs so the phone can show the images.
@@ -78,6 +86,37 @@ export async function addItemFromPhoto(deps: PhotoIngestionDeps, userId: string,
     if (counted && isAiPausedError(error)) await counted.cancel().catch(() => {});
     throw error;
   }
+}
+
+/**
+ * A batch add (several photos, one request each): add the photo as above,
+ * then save it straight away with its suggested tags, marked "to review".
+ * When tagging failed twice there are no tags to save it with, so the
+ * draft comes back for the user to fill in (CONTRACTS.md section 11,
+ * decision 10).
+ */
+export async function addPhotoForReview(
+  deps: PhotoIngestionDeps & { items: ItemRepository },
+  userId: string,
+  upload: PhotoUpload,
+): Promise<BatchAddResponse> {
+  const draft = await addItemFromPhoto(deps, userId, upload);
+  if (!draft.suggestedTags) return { status: "draft", draft };
+  let row;
+  try {
+    row = await saveItemRowForReview(deps.items, userId, {
+      source: draft.source,
+      sourceUrl: draft.sourceUrl,
+      originalImageKey: draft.originalImageKey,
+      cutoutImageKey: draft.cutoutImageKey,
+      tags: draft.suggestedTags,
+    });
+  } catch (error) {
+    // Not saved: don't leave its images behind. The item stays counted, as tagging ran.
+    await removeQuietly(deps.storage, { originalKey: draft.originalImageKey, cutoutKey: draft.cutoutImageKey });
+    throw error;
+  }
+  return { status: "saved", item: await toWardrobeItem(deps.storage, row) };
 }
 
 export interface StoredKeys {
