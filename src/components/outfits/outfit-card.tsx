@@ -5,6 +5,7 @@ import { RefreshCwIcon, ShirtIcon, SlidersHorizontalIcon, Undo2Icon } from "luci
 import {
   GUIDANCE_MAX_LENGTH,
   type Outfit,
+  type OutfitGap,
   type OutfitStatus,
   type UpdateOutfitStatusRequest,
   type WardrobeItem,
@@ -13,9 +14,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import type { ApiFailure } from "./api";
 import { QUICK_REFINEMENTS, styleLabel, subcategoryLabel } from "./copy";
+import { outfitsApi, type ApiFailure } from "./api";
 import { FeedbackBar } from "./feedback-bar";
+import { GapRow, ShopFinder } from "./gap-shop-panel";
 import { OutfitCollage } from "./outfit-collage";
 import { ApiErrorNotice } from "./result-notices";
 
@@ -40,10 +42,28 @@ interface OutfitCardProps {
   refineBusy?: boolean;
   onSwap?: (item: WardrobeItem) => void;
   onRefine?: (guidance: string) => void;
+  /**
+   * The outfit as the server now has it, after "Find in my shops" or
+   * picking a product for a gap. Without it, shop features are hidden.
+   */
+  onOutfitChange?: (outfit: Outfit) => void;
 }
 
 export function OutfitCard(props: OutfitCardProps) {
   const { outfit, status, mode } = props;
+  const [picking, setPicking] = useState(false);
+  const [pickError, setPickError] = useState<ApiFailure | null>(null);
+
+  /** Pick a shop product for a gap, or clear the pick (null). */
+  async function pick(gap: OutfitGap, productUrl: string | null) {
+    if (!props.onOutfitChange) return;
+    setPicking(true);
+    setPickError(null);
+    const result = await outfitsApi.chooseGapProduct(outfit.id, gap.category, productUrl);
+    setPicking(false);
+    if (result.ok) props.onOutfitChange(result.data.outfit);
+    else setPickError(result.error);
+  }
 
   if (status === "rejected" && mode === "results") {
     return (
@@ -88,6 +108,7 @@ export function OutfitCard(props: OutfitCardProps) {
         <OutfitCollage
           name={outfit.name}
           items={outfit.items}
+          gaps={outfit.gaps}
           lazy={props.lazyCollage}
           onReloadPictures={props.onReloadPictures}
         />
@@ -103,10 +124,23 @@ export function OutfitCard(props: OutfitCardProps) {
 
         <ItemList
           items={outfit.items}
+          gaps={outfit.gaps}
           anchorId={anchorId}
           swapDisabled={props.refineBusy ?? false}
           onSwap={mode === "results" ? props.onSwap : undefined}
+          picking={picking}
+          onClearPick={props.onOutfitChange ? (gap) => void pick(gap, null) : undefined}
         />
+
+        {outfit.gaps.length > 0 && props.onOutfitChange && (
+          <ShopFinder
+            outfit={outfit}
+            onOutfitChange={props.onOutfitChange}
+            picking={picking}
+            onPick={(gap, url) => void pick(gap, url)}
+            pickError={pickError}
+          />
+        )}
 
         {mode === "results" && props.onRefine && (
           <TweakForm outfitName={outfit.name} disabled={props.refineBusy ?? false} onRefine={props.onRefine} />
@@ -118,9 +152,12 @@ export function OutfitCard(props: OutfitCardProps) {
 
 function ItemList(props: {
   items: readonly WardrobeItem[];
+  gaps: readonly OutfitGap[];
   anchorId: string | null;
   swapDisabled: boolean;
   onSwap?: (item: WardrobeItem) => void;
+  picking: boolean;
+  onClearPick?: (gap: OutfitGap) => void;
 }) {
   return (
     <ul className="divide-y rounded-lg border" aria-label="Items in this outfit">
@@ -153,6 +190,15 @@ function ItemList(props: {
           </li>
         );
       })}
+      {props.gaps.map((gap) => (
+        <GapRow
+          key={`gap:${gap.category}`}
+          gap={gap}
+          busy={props.picking}
+          onClear={() => props.onClearPick?.(gap)}
+          canClear={props.onClearPick !== undefined}
+        />
+      ))}
     </ul>
   );
 }

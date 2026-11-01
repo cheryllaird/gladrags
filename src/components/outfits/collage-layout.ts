@@ -17,6 +17,10 @@
  * With outerwear the body column moves left to make room, and the outerwear
  * is drawn first so the top overlaps its edge, like a real flat-lay. A dress
  * or jumpsuit takes the top and bottom slots as one tall box.
+ *
+ * A gap (a slot the wardrobe doesn't fill) takes its slot exactly as an
+ * owned item of that category would; only the drawing differs (a dashed
+ * placeholder with the suggested item's description).
  */
 import type { Category } from "@/contracts";
 
@@ -32,13 +36,25 @@ export interface Box {
   height: number;
 }
 
+/** What a gap's placeholder shows. */
+export interface CollageGap {
+  /** The model's description, e.g. "White leather trainers". */
+  description: string;
+  /** Swatch colours (CSS colours), main colour first. */
+  swatches: readonly string[];
+  /** The chosen shop product's name, if the user picked one. Its picture stays off the canvas. */
+  productTitle: string | null;
+}
+
 export interface CollageItem {
   id: string;
   category: Category;
-  /** Cut-out if there is one, otherwise the original (displayImageUrl). */
-  imageUrl: string;
+  /** Cut-out if there is one, otherwise the original (collageImageUrl). Null for a gap. */
+  imageUrl: string | null;
   /** Short text for placeholders and screen readers, e.g. the description. */
   label: string;
+  /** Set when this slot is a gap rather than an owned item. */
+  gap?: CollageGap;
 }
 
 export interface PlacedItem extends CollageItem {
@@ -188,4 +204,36 @@ function roundBox(box: Box): Box {
     width: Math.round(box.width),
     height: Math.round(box.height),
   };
+}
+
+/**
+ * Split `text` into lines no wider than `maxWidth`, as measured by
+ * `measure` (the canvas's measureText in the browser). At most `maxLines`
+ * lines; if the text doesn't fit, the last line ends with "…". A single
+ * word wider than the line is kept whole (the canvas squeezes it).
+ */
+export function wrapText(text: string, maxWidth: number, measure: (s: string) => number, maxLines = 3): string[] {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let line = "";
+  for (const word of words) {
+    const candidate = line ? `${line} ${word}` : word;
+    if (!line || measure(candidate) <= maxWidth) {
+      line = candidate;
+    } else {
+      lines.push(line);
+      line = word;
+    }
+  }
+  if (line) lines.push(line);
+  if (lines.length <= maxLines) return lines;
+
+  const kept = lines.slice(0, maxLines);
+  let last = `${kept[maxLines - 1]}…`;
+  // Drop words from the last line until it fits with the ellipsis.
+  while (measure(last) > maxWidth && last.includes(" ")) {
+    last = `${last.slice(0, last.lastIndexOf(" "))}…`;
+  }
+  kept[maxLines - 1] = last;
+  return kept;
 }

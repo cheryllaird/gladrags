@@ -3,7 +3,7 @@
  * Browser-only. Where things go is decided in collage-layout.ts; this file
  * only paints.
  */
-import { fitContain, opaqueBounds, type Box, type CollageLayout } from "./collage-layout";
+import { fitContain, opaqueBounds, wrapText, type Box, type CollageGap, type CollageLayout } from "./collage-layout";
 
 /** Restyle the collage here. Kept neutral until the look and feel is decided. */
 export const COLLAGE_STYLE = {
@@ -11,6 +11,19 @@ export const COLLAGE_STYLE = {
   placeholderFill: "#e5e5e5",
   placeholderText: "#737373",
   font: "500 32px system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
+  /** Gaps: a dashed outline with the suggested item's description. */
+  gap: {
+    fill: "rgba(255, 255, 255, 0.6)",
+    border: "#a3a3a3",
+    dash: [18, 12],
+    lineWidth: 4,
+    swatchBorder: "#d4d4d4",
+    swatchRadius: 18,
+    text: "#525252",
+    font: "500 30px system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
+    smallFont: "400 24px system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
+    lineHeight: 38,
+  },
   shadow: { color: "rgba(0, 0, 0, 0.14)", blur: 18, offsetY: 8 },
 } as const;
 
@@ -31,7 +44,10 @@ export function loadImage(url: string): Promise<HTMLImageElement> {
 }
 
 export interface DrawResult {
-  /** Items drawn as a labelled placeholder: their image didn't load, or was fully transparent. */
+  /**
+   * Items drawn as a labelled placeholder: their image didn't load, or was
+   * fully transparent. Gaps are not counted: their placeholder is intended.
+   */
   placeholders: string[];
 }
 
@@ -39,6 +55,7 @@ export interface DrawResult {
  * Paint the collage. `images` maps item ID to its loaded image. An item
  * with no image (it failed to load), or whose image has nothing visible in
  * it (a cut-out that kept nothing), gets a labelled placeholder instead.
+ * A gap gets a dashed placeholder with its description and colours.
  */
 export function drawCollage(
   ctx: CanvasRenderingContext2D,
@@ -52,6 +69,10 @@ export function drawCollage(
   ctx.fillRect(0, 0, layout.width, layout.height);
 
   for (const placed of layout.placed) {
+    if (placed.gap) {
+      drawGap(ctx, placed.box, placed.gap);
+      continue;
+    }
     const img = images.get(placed.id);
     const source = img ? visibleRect(img) : null;
     if (img && source) {
@@ -74,6 +95,11 @@ function drawImage(ctx: CanvasRenderingContext2D, img: HTMLImageElement, source:
   ctx.shadowOffsetY = COLLAGE_STYLE.shadow.offsetY;
   ctx.drawImage(img, source.x, source.y, source.width, source.height, fitted.x, fitted.y, fitted.width, fitted.height);
   ctx.restore();
+}
+
+/** True if the image has something visible in it (not a fully transparent cut-out). */
+export function hasVisibleContent(img: HTMLImageElement): boolean {
+  return visibleRect(img) !== null;
 }
 
 /** Longest side of the copy scanned for transparency: plenty for finding edges, and fast. */
@@ -133,6 +159,76 @@ function drawPlaceholder(ctx: CanvasRenderingContext2D, box: Box, label: string)
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillText(label, box.x + box.width / 2, box.y + box.height / 2, box.width - inset * 4);
+  ctx.restore();
+}
+
+/**
+ * A gap: a dashed rounded outline in the slot, colour swatches, then the
+ * suggested item's description, and the chosen shop product's name below
+ * (never its picture: shop pictures stay off the canvas so it can be saved).
+ */
+function drawGap(ctx: CanvasRenderingContext2D, box: Box, gap: CollageGap) {
+  const style = COLLAGE_STYLE.gap;
+  const inset = 16;
+  const inner = { x: box.x + inset, y: box.y + inset, width: box.width - inset * 2, height: box.height - inset * 2 };
+  const textWidth = inner.width - 32;
+  ctx.save();
+
+  ctx.fillStyle = style.fill;
+  ctx.strokeStyle = style.border;
+  ctx.lineWidth = style.lineWidth;
+  ctx.setLineDash([...style.dash]);
+  ctx.beginPath();
+  ctx.roundRect(inner.x, inner.y, inner.width, inner.height, 24);
+  ctx.fill();
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.font = style.font;
+  const lines = wrapText(gap.description, textWidth, (s) => ctx.measureText(s).width, 3);
+  ctx.font = style.smallFont;
+  const productLines = gap.productTitle ? wrapText(gap.productTitle, textWidth, (s) => ctx.measureText(s).width, 2) : [];
+
+  // Centre the block: swatch row, description, product name.
+  const swatchSize = gap.swatches.length > 0 ? style.swatchRadius * 2 : 0;
+  const swatchGap = swatchSize ? 16 : 0;
+  const productGap = productLines.length ? 12 : 0;
+  const blockHeight = swatchSize + swatchGap + lines.length * style.lineHeight + productGap + productLines.length * style.lineHeight;
+  let y = inner.y + Math.max(0, (inner.height - blockHeight) / 2);
+  const cx = inner.x + inner.width / 2;
+
+  if (swatchSize) {
+    const r = style.swatchRadius;
+    const spacing = r * 2 + 10;
+    const startX = cx - ((gap.swatches.length - 1) * spacing) / 2;
+    gap.swatches.forEach((colour, i) => {
+      ctx.beginPath();
+      ctx.arc(startX + i * spacing, y + r, r, 0, Math.PI * 2);
+      ctx.fillStyle = colour;
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = style.swatchBorder;
+      ctx.stroke();
+    });
+    y += swatchSize + swatchGap;
+  }
+
+  ctx.fillStyle = style.text;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.font = style.font;
+  for (const line of lines) {
+    ctx.fillText(line, cx, y + style.lineHeight / 2, textWidth);
+    y += style.lineHeight;
+  }
+  if (productLines.length) {
+    y += productGap;
+    ctx.font = style.smallFont;
+    for (const line of productLines) {
+      ctx.fillText(line, cx, y + style.lineHeight / 2, textWidth);
+      y += style.lineHeight;
+    }
+  }
   ctx.restore();
 }
 

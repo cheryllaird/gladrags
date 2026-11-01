@@ -66,9 +66,42 @@ export interface ErrorCopy {
   retryable: boolean;
 }
 
+/**
+ * What the user was doing when the error came back: asking for outfits
+ * (and refining them), or "Find in my shops", which has its own daily cap.
+ */
+export type ErrorContext = "outfits" | "shop_search";
+
 /** A friendly title and message for an API error. */
-export function describeApiError(error: ApiFailure): ErrorCopy {
+export function describeApiError(error: ApiFailure, context: ErrorContext = "outfits"): ErrorCopy {
   const resets = error.cap ? formatResetTime(error.cap.resetsAt) : null;
+  if (context === "shop_search") {
+    if (error.code === "ai_paused") {
+      return {
+        title: "Shop search is paused for now",
+        message: `GladRags has used this month's AI budget, so finding items in your shops is paused${
+          resets ? ` until ${resets}` : " until next month"
+        }. Your outfits and wardrobe still work.`,
+        retryable: false,
+      };
+    }
+    if (error.code === "daily_cap_reached") {
+      return {
+        title: "That's today's shop searches used up",
+        message: `You've reached today's limit${error.cap ? ` of ${error.cap.limit} shop searches` : ""}. It resets ${
+          resets ? `at ${resets}` : "at midnight"
+        }.`,
+        retryable: false,
+      };
+    }
+    if (error.code === "ai_failed") {
+      return {
+        title: "We couldn't search your shops",
+        message: "Something went wrong while searching. Please try again in a moment.",
+        retryable: true,
+      };
+    }
+  }
   switch (error.code) {
     case "ai_paused":
       return {
