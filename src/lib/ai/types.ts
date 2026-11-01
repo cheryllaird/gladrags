@@ -6,7 +6,7 @@
  * Providers return the model's raw output. They never validate it: callers
  * use callWithValidation() with a schema from src/contracts/model-output.ts.
  */
-import type { GapDescription, ItemTags, OutfitRequest, RefineRequest, ShopId } from "@/contracts";
+import type { Category, GapDescription, ItemTags, OutfitRequest, RefineRequest, ShopId } from "@/contracts";
 
 export type ImageMimeType = "image/jpeg" | "image/png" | "image/webp";
 
@@ -65,25 +65,49 @@ export interface RankingItem {
 }
 
 export interface RankingContext {
-  request: Pick<OutfitRequest, "style" | "anchorItemId" | "guidance">;
+  /** `includeShopItems` is true when the user asked for items from their shops; missing means false. */
+  request: Pick<OutfitRequest, "style" | "anchorItemId" | "guidance" | "includeShopItems">;
   /** Pairs of item IDs the user rejected together before ("avoid" hints). */
   avoidPairs: [string, string][];
-  /** Set when refining: the outfit being refined and what the user asked for. */
-  refinement?: { previousItemIds: string[]; feedback: RefineRequest };
+  /**
+   * Set when refining: the outfit being refined (its owned items and any
+   * gaps) and what the user asked for.
+   */
+  refinement?: { previousItemIds: string[]; previousGaps?: GapDescription[]; feedback: RefineRequest };
+}
+
+/**
+ * A valid combination generated in code: owned items, plus the slots left
+ * as gaps (by category) that the model describes. `gaps` is empty for a
+ * complete outfit from the wardrobe.
+ */
+export interface RankingCandidate {
+  itemIds: string[];
+  gaps: Category[];
 }
 
 export interface ShortlistInput extends RankingContext {
   /** The filtered wardrobe. */
   items: RankingItem[];
-  /** Valid combinations generated in code, by item ID. */
-  candidates: string[][];
+  /** Valid combinations generated in code. */
+  candidates: RankingCandidate[];
   /** How many to shortlist ("about 8"). */
   shortlistSize: number;
 }
 
+/** A gap slot in a shortlisted outfit, with pass 1's description when pass 1 ran. */
+export interface ShortlistGap {
+  category: Category;
+  suggestion?: GapDescription;
+}
+
 export interface FinalPickInput extends RankingContext {
-  /** Shortlisted outfits with a small (~256 px) thumbnail of each item's cut-out. */
-  shortlist: { itemIds: string[]; thumbnails: { itemId: string; image: ImageInput }[] }[];
+  /**
+   * Shortlisted outfits with a small (~256 px) thumbnail of each item that
+   * has a picture (its cut-out, or the original when there's no cut-out),
+   * and the outfit's gap slots.
+   */
+  shortlist: { itemIds: string[]; gaps: ShortlistGap[]; thumbnails: { itemId: string; image: ImageInput }[] }[];
   /** How many outfits to return (3–5). */
   count: number;
 }

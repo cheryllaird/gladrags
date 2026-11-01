@@ -45,7 +45,7 @@ export function workShortlistInput(): ShortlistInput {
     request: { style, guidance: "no heels" },
     avoidPairs: [[IDS.shirt, IDS.skirt]],
     items,
-    candidates,
+    candidates: candidates.map((itemIds) => ({ itemIds, gaps: [] })),
     shortlistSize: 8,
   };
 }
@@ -66,7 +66,7 @@ export function anchorInjectionShortlistInput(): ShortlistInput {
     },
     avoidPairs: [],
     items,
-    candidates,
+    candidates: candidates.map((itemIds) => ({ itemIds, gaps: [] })),
     shortlistSize: 8,
   };
 }
@@ -84,7 +84,7 @@ export function workFinalInput(): FinalPickInput {
   return {
     request: { style: { kind: "preset", presetId: "work" }, guidance: "no heels" },
     avoidPairs: [],
-    shortlist: shortlist.map((itemIds) => ({ itemIds, thumbnails: thumbnailsFor(itemIds) })),
+    shortlist: shortlist.map((itemIds) => ({ itemIds, gaps: [], thumbnails: thumbnailsFor(itemIds) })),
     count: 3,
   };
 }
@@ -103,7 +103,7 @@ export function swapFinalInput(): FinalPickInput {
       previousItemIds: [IDS.shirt, IDS.chinos, IDS.loafers],
       feedback: { kind: "swap", itemId: IDS.loafers },
     },
-    shortlist: shortlist.map((itemIds) => ({ itemIds, thumbnails: thumbnailsFor(itemIds) })),
+    shortlist: shortlist.map((itemIds) => ({ itemIds, gaps: [], thumbnails: thumbnailsFor(itemIds) })),
     count: 3,
   };
 }

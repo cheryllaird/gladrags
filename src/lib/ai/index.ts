@@ -1,6 +1,7 @@
 import { createGeminiRankingProvider } from "./gemini-ranking";
+import { createGeminiShopSearchProvider } from "./gemini-shop-search";
 import { createGeminiTaggingProvider } from "./gemini-tagging";
-import type { RankingProvider, TaggingProvider } from "./types";
+import type { RankingProvider, ShopSearchProvider, TaggingProvider } from "./types";
 
 export * from "./types";
 export { callWithValidation, type ValidatedCallResult, type CallWithValidationOptions } from "./validate";
@@ -14,4 +15,9 @@ export function getTaggingProvider(): TaggingProvider {
 /** Gemini ranking (both passes). Throws ConfigError if GEMINI_API_KEY isn't set. */
 export function getRankingProvider(): RankingProvider {
   return createGeminiRankingProvider();
+}
+
+/** Gemini with Google Search grounding, for "Find in my shops". Throws ConfigError if GEMINI_API_KEY isn't set. */
+export function getShopSearchProvider(): ShopSearchProvider {
+  return createGeminiShopSearchProvider();
 }

@@ -16,22 +16,36 @@
  * Prompt injection: the style text, guidance and item descriptions come
  * from the user. They go into the prompt only inside one JSON data object,
  * and the system instruction says to treat every string in it as data.
- * The output can only be item references, a name and a reason, all
+ * The output can only be item references, gap descriptions (category,
+ * colours from the palette, one line of text), a name and a reason, all
  * validated, so a successful injection could at worst pick or describe
  * outfits oddly.
+ *
+ * Gaps (milestone 5): a candidate may leave slots as gaps (the wardrobe
+ * can't fill them, or one shop item was asked for). The model describes
+ * the item for each gap; code decided which slots may be gaps, and
+ * validation refuses any other.
  */
 import "server-only";
 import { GoogleGenAI, ThinkingLevel, type GenerateContentParameters, type GoogleGenAIOptions, type Part } from "@google/genai";
 import { z } from "zod";
 import {
+  ALL_SUBCATEGORIES,
+  COLOURS,
+  DESCRIPTION_MAX_LENGTH,
+  MAX_COLOURS,
+  MAX_GAPS_PER_OUTFIT,
   OUTFIT_NAME_MAX_LENGTH,
   OUTFIT_REASON_MAX_LENGTH,
+  OUTFIT_SLOT_COUNT,
   PRESET_STYLES_BY_ID,
+  type Category,
+  type GapDescription,
   type RefineRequest,
   type StyleChoice,
 } from "@/contracts";
 import { parseEnv } from "@/lib/env";
-import type { FinalPickInput, ModelCall, RankingContext, RankingProvider, ShortlistInput } from "./types";
+import type { FinalPickInput, ModelCall, RankingCandidate, RankingContext, RankingProvider, ShortlistGap, ShortlistInput } from "./types";
 
 export const DEFAULT_GEMINI_MODEL = "gemini-3.8-flash";
 
@@ -119,7 +133,7 @@ const DATA_RULE = [
 
 const OUTFIT_RULES = [
   "Rules:",
-  '- Refer to items only by their ref, such as "I3", and only in "itemIds". Never invent refs, and never write a ref in a name or reason: describe the item instead ("the navy blazer").',
+  '- Refer to items only by their ref, such as "I3", and only in "itemIds". Never invent refs, and never write a ref in a name, reason or gap description: describe the item instead ("the navy blazer").',
   "- An outfit is either one top and one bottom, or one dress_jumpsuit; plus exactly one pair of shoes; plus at most one outerwear. Nothing else counts.",
   '- If "anchor" is set, every outfit must include that item.',
   '- If "refinement" is set, the person is refining "previousOutfit". For kind "swap", keep the items in "keep" and replace "swappedOut", which can\'t be chosen any more. For kind "guidance", follow the new guidance.',
@@ -127,6 +141,24 @@ const OUTFIT_RULES = [
   '- Follow "guidance" where you can ("no heels" means no heels).',
   "- Choose outfits that suit the style or occasion: formality, colours that work together, a balance of patterns, sensible warmth for the season.",
 ].join("\n");
+
+/** Extra rules when some outfits on offer have gaps. */
+function gapRules(includeShopItems: boolean, pass: "shortlist" | "final"): string {
+  return [
+    "Gaps:",
+    `- Some outfits on offer have "gaps": slots the person's wardrobe can't fill${includeShopItems ? ', or one slot to fill with something to buy, because they asked to include items from their shops ("includeShopItems")' : ""}. The pieces in "items" and "gaps" together make the outfit.`,
+    `- For every gap in an outfit you return, add one entry to that outfit's "gaps" describing the item that would complete the look: "category" (the gap's slot, exactly as listed), optionally "subcategory", "colours" (1 to ${MAX_COLOURS} from the allowed list, main colour first) and "description": one short line in British English such as "White leather trainers" (at most ${DESCRIPTION_MAX_LENGTH} characters). Never add a gap the outfit doesn't list, and never leave one out. For an outfit without gaps, return "gaps": [] or leave it out.`,
+    "- Make each gap's item suit the outfit's owned pieces, the style and the season, and keep it plain and easy to find in a high-street shop.",
+    pass === "final"
+      ? '- A gap may come with a "suggestion" from an earlier pass. Keep it or improve it, judging the colours against the photos.'
+      : null,
+    includeShopItems
+      ? "- Prefer complete outfits from the wardrobe, but the person asked for items from their shops, so include at least one outfit with a gap when one is on offer."
+      : "- Prefer complete outfits from the wardrobe. Choose outfits with gaps when they're clearly better, or when there aren't enough complete ones.",
+  ]
+    .filter((line): line is string => line !== null)
+    .join("\n");
+}
 
 /** How the request's style reads in the prompt data. */
 export function styleForPrompt(style: StyleChoice) {
@@ -151,22 +183,28 @@ function refsFor(choosableIds: readonly string[], refinement: RankingContext["re
   return { refs, choosable };
 }
 
+function gapForPrompt(gap: GapDescription) {
+  return { category: gap.category, subcategory: gap.subcategory, colours: gap.colours, description: gap.description };
+}
+
 function refinementForPrompt(refinement: RankingContext["refinement"], refs: ItemRefs) {
   if (!refinement) return null;
   const previousOutfit = refs.refsOf(refinement.previousItemIds);
+  const previousGaps = refinement.previousGaps?.length ? { previousGaps: refinement.previousGaps.map(gapForPrompt) } : {};
   const feedback: RefineRequest = refinement.feedback;
   if (feedback.kind === "swap") {
     const keep = refs.refsOf(refinement.previousItemIds.filter((id) => id !== feedback.itemId));
-    return { kind: "swap", previousOutfit, keep, swappedOut: refs.refsOf([feedback.itemId])[0] ?? null };
+    return { kind: "swap", previousOutfit, ...previousGaps, keep, swappedOut: refs.refsOf([feedback.itemId])[0] ?? null };
   }
-  return { kind: "guidance", previousOutfit, guidance: feedback.text };
+  return { kind: "guidance", previousOutfit, ...previousGaps, guidance: feedback.text };
 }
 
-function contextForPrompt(input: RankingContext, refs: ItemRefs) {
+function contextForPrompt(input: RankingContext, refs: ItemRefs, withGaps: boolean) {
   const anchor = input.request.anchorItemId;
   return {
     style: styleForPrompt(input.request.style),
     guidance: input.request.guidance ?? null,
+    ...(withGaps ? { includeShopItems: input.request.includeShopItems ?? false } : {}),
     anchor: anchor && refs.refsOf([anchor])[0] ? refs.ref(anchor) : null,
     refinement: refinementForPrompt(input.refinement, refs),
     avoidPairs: input.avoidPairs
@@ -187,18 +225,42 @@ export const SUPPORTED_SCHEMA_KEYWORDS = new Set([
   "propertyOrdering",
 ]);
 
+/** JSON schema for one gap description, limited to the gap slots on offer. */
+function gapSchema(categories: readonly Category[]) {
+  return {
+    type: "object",
+    properties: {
+      category: { type: "string", enum: [...categories] },
+      subcategory: { type: "string", enum: [...ALL_SUBCATEGORIES], description: "Must belong to the category" },
+      colours: { type: "array", items: { type: "string", enum: [...COLOURS] }, minItems: 1, maxItems: MAX_COLOURS },
+      description: { type: "string", description: `One line, at most ${DESCRIPTION_MAX_LENGTH} characters` },
+    },
+    required: ["category", "colours", "description"],
+  };
+}
+
 /**
  * JSON schema for Gemini's structured output. Validation is still done
- * with Zod afterwards. The name and reason length limits are only in the
- * descriptions (and the prompt), not `maxLength`: the SDK doesn't list
- * `maxLength` as supported and it couldn't be checked live. Zod enforces
- * the limits, and an over-long pick is dropped on its own.
+ * with Zod afterwards. The name, reason and gap description length limits
+ * are only in the descriptions (and the prompt), not `maxLength`: the SDK
+ * doesn't list `maxLength` as supported and it couldn't be checked live.
+ * Zod enforces the limits, and an over-long pick is dropped on its own.
+ *
+ * `gapCategories` are the gap slots on offer. With none, there's no `gaps`
+ * property and every outfit has at least two items, as before gaps.
  */
-export function outputSchema(refs: string[], maxOutfits: number, named: boolean) {
+export function outputSchema(refs: string[], maxOutfits: number, named: boolean, gapCategories: readonly Category[] = []) {
+  const withGaps = gapCategories.length > 0;
   const outfit: Record<string, unknown> = {
     type: "object",
     properties: {
-      itemIds: { type: "array", items: { type: "string", enum: refs }, minItems: 2, maxItems: 4 },
+      itemIds: {
+        type: "array",
+        items: { type: "string", enum: refs },
+        minItems: withGaps ? OUTFIT_SLOT_COUNT.min - 1 : OUTFIT_SLOT_COUNT.min,
+        maxItems: OUTFIT_SLOT_COUNT.max,
+      },
+      ...(withGaps ? { gaps: { type: "array", items: gapSchema(gapCategories), maxItems: MAX_GAPS_PER_OUTFIT } } : {}),
       ...(named
         ? {
             name: { type: "string", description: `At most ${OUTFIT_NAME_MAX_LENGTH} characters` },
@@ -215,6 +277,18 @@ export function outputSchema(refs: string[], maxOutfits: number, named: boolean)
   };
 }
 
+/** The distinct gap categories across outfits, in slot order. */
+function gapCategoriesOf(outfits: readonly { gaps: readonly (Category | ShortlistGap)[] }[]): Category[] {
+  const found = new Set(outfits.flatMap((o) => o.gaps.map((g) => (typeof g === "string" ? g : g.category))));
+  return (["top", "bottom", "dress_jumpsuit", "shoes", "outerwear"] as const).filter((c) => found.has(c));
+}
+
+/** A candidate as the prompt shows it: a plain list of refs, or with its gap slots. */
+function candidateForPrompt(candidate: RankingCandidate, refs: ItemRefs, withGaps: boolean) {
+  const items = refs.refsOf(candidate.itemIds);
+  return withGaps ? { items, gaps: candidate.gaps } : items;
+}
+
 export interface BuiltPrompt {
   params: Omit<GenerateContentParameters, "model">;
   refs: ItemRefs;
@@ -225,19 +299,27 @@ export function buildShortlistPrompt(input: ShortlistInput): BuiltPrompt {
     input.items.map((i) => i.id),
     input.refinement,
   );
+  const gapCategories = gapCategoriesOf(input.candidates);
+  const withGaps = gapCategories.length > 0;
+  const includeShopItems = input.request.includeShopItems ?? false;
   const systemInstruction = [
     "You are the GladRags outfit stylist. You choose outfits from one person's own wardrobe.",
     DATA_RULE,
     OUTFIT_RULES,
-    '- Choose only outfits listed in "candidates", exactly as listed: each one is already known to be wearable. Anything else is thrown away.',
+    withGaps
+      ? '- Choose only outfits listed in "candidates", exactly as listed (the same "items" and the same "gaps"): each one is already known to be wearable. Anything else is thrown away.'
+      : '- Choose only outfits listed in "candidates", exactly as listed: each one is already known to be wearable. Anything else is thrown away.',
     "- Make the shortlist varied, not near-copies of one outfit.",
-    `Task: return the ${input.shortlistSize} best different outfits, best first, as {"outfits":[{"itemIds":["I1","I4","I9"]}]}.`,
+    ...(withGaps ? [gapRules(includeShopItems, "shortlist")] : []),
+    withGaps
+      ? `Task: return the ${input.shortlistSize} best different outfits, best first, as {"outfits":[{"itemIds":["I1","I4"],"gaps":[{"category":"shoes","subcategory":"trainers","colours":["white"],"description":"White leather trainers"}]}]}.`
+      : `Task: return the ${input.shortlistSize} best different outfits, best first, as {"outfits":[{"itemIds":["I1","I4","I9"]}]}.`,
   ].join("\n\n");
 
   const data = {
-    ...contextForPrompt(input, refs),
+    ...contextForPrompt(input, refs, withGaps),
     items: input.items.map((item) => ({ ref: refs.ref(item.id), ...item.tags })),
-    candidates: input.candidates.map((ids) => refs.refsOf(ids)),
+    candidates: input.candidates.map((c) => candidateForPrompt(c, refs, withGaps)),
   };
 
   return {
@@ -247,7 +329,7 @@ export function buildShortlistPrompt(input: ShortlistInput): BuiltPrompt {
       config: {
         systemInstruction,
         responseMimeType: "application/json",
-        responseJsonSchema: outputSchema(choosable, input.shortlistSize, false),
+        responseJsonSchema: outputSchema(choosable, input.shortlistSize, false, gapCategories),
         thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
       },
     },
@@ -277,21 +359,35 @@ export function buildFinalPickPrompt(input: FinalPickInput): BuiltPrompt {
   const photoRule =
     photoParts.length === 0
       ? null
-      : `- After the JSON there is a small photo of ${allPictured ? "each item" : "some of the items"}, labelled with its ref. Use the photos to judge real shades, textures and proportions.`;
+      : `- After the JSON there is a small photo of ${allPictured ? "each item" : "some of the items"}, labelled with its ref. Use the photos to judge real shades, textures and proportions.${allPictured ? "" : " Judge the others from their place in the outfit."}`;
+  const gapCategories = gapCategoriesOf(input.shortlist);
+  const withGaps = gapCategories.length > 0;
 
   const systemInstruction = [
     "You are the GladRags outfit stylist. You choose outfits from one person's own wardrobe.",
     DATA_RULE,
     OUTFIT_RULES,
-    '- Choose only outfits listed in "shortlist", exactly as listed. Anything else is thrown away.',
+    withGaps
+      ? '- Choose only outfits listed in "shortlist", exactly as listed (the same "items" and the same gap slots). Anything else is thrown away.'
+      : '- Choose only outfits listed in "shortlist", exactly as listed. Anything else is thrown away.',
     ...(photoRule ? [photoRule] : []),
+    ...(withGaps ? [gapRules(input.request.includeShopItems ?? false, "final")] : []),
     `- For each outfit write a "name" of two to four words (at most ${OUTFIT_NAME_MAX_LENGTH} characters) and a "reason": one plain sentence in British English saying why it works (at most ${OUTFIT_REASON_MAX_LENGTH} characters), such as "Navy and tan keep this smart without being stiff".`,
-    `Task: return the ${input.count} best different outfits, best first, as {"outfits":[{"itemIds":["I1","I4","I9"],"name":"…","reason":"…"}]}.`,
+    withGaps
+      ? `Task: return the ${input.count} best different outfits, best first, as {"outfits":[{"itemIds":["I1","I4"],"gaps":[{"category":"shoes","colours":["white"],"description":"…"}],"name":"…","reason":"…"}]}.`
+      : `Task: return the ${input.count} best different outfits, best first, as {"outfits":[{"itemIds":["I1","I4","I9"],"name":"…","reason":"…"}]}.`,
   ].join("\n\n");
 
   const data = {
-    ...contextForPrompt(input, refs),
-    shortlist: input.shortlist.map((o) => refs.refsOf(o.itemIds)),
+    ...contextForPrompt(input, refs, withGaps),
+    shortlist: input.shortlist.map((o) =>
+      withGaps
+        ? {
+            items: refs.refsOf(o.itemIds),
+            gaps: o.gaps.map((g) => (g.suggestion ? { category: g.category, suggestion: gapForPrompt(g.suggestion) } : { category: g.category })),
+          }
+        : refs.refsOf(o.itemIds),
+    ),
   };
 
   return {
@@ -301,7 +397,7 @@ export function buildFinalPickPrompt(input: FinalPickInput): BuiltPrompt {
       config: {
         systemInstruction,
         responseMimeType: "application/json",
-        responseJsonSchema: outputSchema(choosable, input.count, true),
+        responseJsonSchema: outputSchema(choosable, input.count, true, gapCategories),
         thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
       },
     },

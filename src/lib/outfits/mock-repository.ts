@@ -2,9 +2,9 @@
  * OutfitRepository on the in-memory mock store, for mock mode. Mock mode
  * has a single user, so userId is ignored.
  */
-import type { FeedbackKind, Outfit, OutfitStatus } from "@/contracts";
+import type { FeedbackKind, Outfit, OutfitGap, OutfitStatus, ShopId } from "@/contracts";
 import * as mock from "@/lib/mocks/store";
-import { OUTFIT_LIST_LIMIT, type NewOutfit, type OutfitRepository } from "./repository";
+import { OUTFIT_LIST_LIMIT, newGap, type NewOutfit, type OutfitRepository, type RejectedOutfit } from "./repository";
 import type { WardrobeEntry } from "./types";
 
 export class MockOutfitRepository implements OutfitRepository {
@@ -13,7 +13,7 @@ export class MockOutfitRepository implements OutfitRepository {
       id: item.id,
       tags: item.tags,
       // Mock pictures are public placeholder files; thumbnails are placeholders too.
-      image: { bucket: item.cutoutUrl ? "cutouts" : "originals", key: item.cutoutUrl ?? item.originalUrl },
+      image: item.needsPhoto ? null : { bucket: item.cutoutUrl ? "cutouts" : "originals", key: item.cutoutUrl ?? item.originalUrl },
     }));
   }
 
@@ -40,7 +40,7 @@ export class MockOutfitRepository implements OutfitRepository {
         reason: o.reason,
         itemIds: o.itemIds,
         items,
-        gaps: [],
+        gaps: o.gaps.map(newGap),
         status: "suggested",
         parentOutfitId: o.parentOutfitId,
         createdAt,
@@ -52,14 +52,22 @@ export class MockOutfitRepository implements OutfitRepository {
     return mock.setOutfitStatus(outfitId, status);
   }
 
+  async updateGaps(_userId: string, outfitId: string, gaps: readonly OutfitGap[]): Promise<Outfit | null> {
+    return mock.setOutfitGaps(outfitId, gaps);
+  }
+
+  async getFavouriteShopIds(): Promise<ShopId[]> {
+    return mock.getSettings().favouriteShopIds;
+  }
+
   async addFeedback(_userId: string, outfitId: string, kind: FeedbackKind, detail: string | null): Promise<void> {
     mock.addOutfitFeedback({ outfitId, kind, detail, createdAt: new Date().toISOString() });
   }
 
-  async listRejectedItemIds(_userId: string, limit: number): Promise<string[][]> {
+  async listRejectedOutfits(_userId: string, limit: number): Promise<RejectedOutfit[]> {
     return mock
       .listOutfits("rejected")
       .slice(0, limit)
-      .map((o) => o.itemIds);
+      .map((o) => ({ itemIds: o.itemIds, gaps: o.gaps.map((g) => g.category) }));
   }
 }

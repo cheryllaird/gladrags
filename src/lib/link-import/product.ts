@@ -29,7 +29,7 @@ export interface ParsedProductPage {
   sources: ("json-ld" | "open-graph")[];
 }
 
-type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
+export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 type JsonObject = { [key: string]: Json };
 
 function isObject(value: Json | undefined): value is JsonObject {
@@ -86,7 +86,7 @@ const PRODUCT_TYPES = new Set(["product", "productgroup", "individualproduct", "
  * Remove wrappers some sites put around JSON-LD (HTML comments, CDATA) and
  * parse it. Returns null for anything that isn't valid JSON.
  */
-function parseJsonLd(raw: string): Json | null {
+export function parseJsonLd(raw: string): Json | null {
   if (raw.length > MAX_JSON_LD_BYTES) return null;
   const text = raw
     .trim()

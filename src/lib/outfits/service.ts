@@ -2,7 +2,8 @@
  * What the outfit API routes call. Joins the pipeline to storage, the
  * usage caps and feedback:
  *
- * - New request: check caps → load wardrobe → pipeline → save outfits.
+ * - New request: check caps → load wardrobe → pipeline → save outfits
+ *   (with any gaps the model described).
  * - Refine: record the swap or guidance → pipeline with the previous outfit
  *   and feedback → save outfits with parent_outfit_id.
  * - Status: save, like or reject; a rejection is recorded as feedback, and
@@ -16,7 +17,6 @@
 import {
   GUIDANCE_MAX_LENGTH,
   PRESET_STYLES_BY_ID,
-  type Category,
   type Outfit,
   type OutfitGenerationResponse,
   type OutfitRequest,
@@ -45,18 +45,6 @@ export interface OutfitServiceDeps {
   now?: () => Date;
 }
 
-const CATEGORY_NAMES: Record<Category, string> = {
-  top: "a top",
-  bottom: "a bottom",
-  dress_jumpsuit: "a dress or jumpsuit",
-  outerwear: "a jacket or coat",
-  shoes: "shoes",
-};
-
-function joinWithAnd(parts: string[]): string {
-  return parts.length <= 1 ? (parts[0] ?? "") : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
-}
-
 function styleLabel(style: StyleChoice): string {
   return style.kind === "preset" ? PRESET_STYLES_BY_ID[style.presetId].label.toLowerCase() : `"${style.text}"`;
 }
@@ -67,11 +55,8 @@ export function incompleteMessage(
   style: StyleChoice,
   hasAnchor: boolean,
 ): string {
-  if (result.reason === "missing_category") {
-    const add = joinWithAnd(result.missingCategories.map((c) => CATEGORY_NAMES[c]));
-    return hasAnchor
-      ? `To build an outfit around this item, add ${add} to your wardrobe.`
-      : `Add ${add} to your wardrobe to get outfits.`;
+  if (result.reason === "empty_wardrobe") {
+    return "Your wardrobe is empty. Add your first item and we'll suggest outfits around it.";
   }
   return hasAnchor
     ? `Nothing in your wardrobe goes with this item for ${styleLabel(style)} yet. Try another style, or add more items.`
@@ -123,6 +108,7 @@ export class OutfitService {
       style: stored.style,
       guidance: stored.guidance,
       anchorItemId: stored.anchorItemId,
+      includeShopItems: stored.includeShopItems,
       count: request.count,
     });
   }
@@ -150,15 +136,26 @@ export class OutfitService {
       anchorItemId,
       includeShopItems: parent.request.includeShopItems,
     };
+    // Swapping out the wardrobe's only item leaves nothing to build from.
+    if (items.length === 0) {
+      return {
+        status: "incomplete_wardrobe",
+        reason: "nothing_fits",
+        missingCategories: [],
+        message: "There's nothing else in your wardrobe to swap in yet. Add more items to get other outfits.",
+      };
+    }
+    const previousGaps = parent.gaps.map(({ category, subcategory, colours, description }) => ({ category, subcategory, colours, description }));
     return this.run(userId, stored, parent.id, {
       items,
       style: stored.style,
       guidance: stored.guidance,
       anchorItemId,
+      includeShopItems: stored.includeShopItems,
       count: REFINE_COUNT,
       keepItemIds: swappedOut ? parent.itemIds.filter((id) => id !== swappedOut) : undefined,
-      excludeOutfits: [parent.itemIds],
-      refinement: { previousItemIds: parent.itemIds, feedback: refine },
+      excludeOutfits: [{ itemIds: parent.itemIds, gaps: parent.gaps.map((g) => g.category) }],
+      refinement: { previousItemIds: parent.itemIds, previousGaps, feedback: refine },
     });
   }
 
@@ -181,7 +178,7 @@ export class OutfitService {
     input: Omit<PipelineInput, "rejectedOutfits">,
   ): Promise<OutfitGenerationResponse> {
     const { repository, usage, thumbnails } = this.deps;
-    const rejectedOutfits = await repository.listRejectedItemIds(userId, MAX_REJECTED_OUTFITS_FOR_HINTS);
+    const rejectedOutfits = await repository.listRejectedOutfits(userId, MAX_REJECTED_OUTFITS_FOR_HINTS);
     // Each model call reserves its estimated cost before it's made, then
     // records the real cost: one meter per pass.
     const meters = {
@@ -225,8 +222,8 @@ export class OutfitService {
     }
     const outfits = await repository.insertOutfits(
       userId,
-      result.outfits.map((o) => ({ request: stored, name: o.name, reason: o.reason, itemIds: o.itemIds, parentOutfitId })),
+      result.outfits.map((o) => ({ request: stored, name: o.name, reason: o.reason, itemIds: o.itemIds, gaps: o.gaps, parentOutfitId })),
     );
-    return { status: "ok", outfits, missingCategories: [] };
+    return { status: "ok", outfits, missingCategories: result.missingCategories };
   }
 }

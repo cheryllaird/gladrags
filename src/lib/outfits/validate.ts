@@ -7,19 +7,22 @@
  * - fails the contract's per-outfit schema (not UUIDs, an item twice, a
  *   name over 40 or a reason over 160 characters, …);
  * - uses an item ID the model wasn't given (so never one outside the
- *   user's wardrobe), breaks the composition rule, or leaves out the anchor
- *   (all via the shared checkRankedOutfits);
+ *   user's wardrobe), breaks the composition rule (owned items and gaps
+ *   together), leaves out the anchor, or has a gap the request doesn't
+ *   allow (all via the shared checkRankedOutfits and its GapRules);
  * - leaves out another required item (the items kept in a swap);
  * - isn't one of the outfits offered (pass 1: the code-generated
- *   candidates; pass 2: the shortlist), so the formality-spread and
- *   avoid-hint guarantees of candidate generation always hold;
+ *   candidates; pass 2: the shortlist), owned items and gap slots both, so
+ *   the formality-spread and avoid-hint guarantees of candidate generation
+ *   always hold;
  * - repeats an outfit that's excluded (rejected before, or being refined),
  *   or an earlier outfit in the same reply;
- * - shows the model's internal item refs ("I3") in its name or reason.
+ * - shows the model's internal item refs ("I3") in its name, reason or a
+ *   gap's description.
  */
 import { z } from "zod";
-import { checkRankedOutfits, type Category } from "@/contracts";
-import { outfitKey } from "./candidates";
+import { checkRankedOutfits, type Category, type GapRules } from "@/contracts";
+import { shapeKey, type OutfitShape } from "./candidates";
 
 export interface OutfitRules {
   /** Every item ID the model was allowed to use, with its category. */
@@ -27,10 +30,20 @@ export interface OutfitRules {
   anchorItemId?: string | null;
   /** Other items every outfit must include. */
   requiredIds?: readonly string[];
-  /** Exact combinations that mustn't come back. */
-  excludeOutfits?: readonly (readonly string[])[];
-  /** When set, only these exact combinations (in any order) are allowed. */
-  allowedOutfits?: readonly (readonly string[])[];
+  /** Exact combinations (owned items and gap slots) that mustn't come back. */
+  excludeOutfits?: readonly OutfitShape[];
+  /** When set, only these exact combinations (in any order, gap slots included) are allowed. */
+  allowedOutfits?: readonly OutfitShape[];
+  /** How gaps are judged. Left out: any gap is refused. */
+  gaps?: GapRules;
+}
+
+/** What validation needs from one outfit in a reply. */
+export interface CheckableOutfit {
+  itemIds: string[];
+  gaps?: readonly { category: Category; description?: string }[];
+  name?: string;
+  reason?: string;
 }
 
 export interface OutfitCheck<T> {
@@ -41,26 +54,24 @@ export interface OutfitCheck<T> {
 /** An item ref like "I3", as the Gemini prompts call items. */
 const ITEM_REF = /\bI\d+\b/;
 
-export function validateOutfits<T extends { itemIds: string[]; name?: string; reason?: string }>(
-  outfits: readonly T[],
-  rules: OutfitRules,
-): OutfitCheck<T> {
-  const shared = checkRankedOutfits(outfits, rules.known, { anchorItemId: rules.anchorItemId ?? undefined });
+export function validateOutfits<T extends CheckableOutfit>(outfits: readonly T[], rules: OutfitRules): OutfitCheck<T> {
+  const shared = checkRankedOutfits(outfits, rules.known, { anchorItemId: rules.anchorItemId ?? undefined, gaps: rules.gaps });
   const result: OutfitCheck<T> = { valid: [], rejected: [...shared.rejected] };
-  const excluded = new Set((rules.excludeOutfits ?? []).map(outfitKey));
-  const allowed = rules.allowedOutfits ? new Set(rules.allowedOutfits.map(outfitKey)) : null;
+  const excluded = new Set((rules.excludeOutfits ?? []).map(shapeKey));
+  const allowed = rules.allowedOutfits ? new Set(rules.allowedOutfits.map(shapeKey)) : null;
   const seen = new Set<string>();
 
   for (const outfit of shared.valid) {
     const missing = (rules.requiredIds ?? []).filter((id) => !outfit.itemIds.includes(id));
-    const key = outfitKey(outfit.itemIds);
+    const key = shapeKey({ itemIds: outfit.itemIds, gaps: (outfit.gaps ?? []).map((g) => g.category) });
+    const texts = [outfit.name ?? "", outfit.reason ?? "", ...(outfit.gaps ?? []).map((g) => g.description ?? "")];
     let problem: string | null = null;
     if (missing.length > 0) problem = `Doesn't include required item(s): ${missing.join(", ")}`;
     else if (allowed && !allowed.has(key)) problem = "Isn't one of the outfits offered";
     else if (excluded.has(key)) problem = "Repeats an outfit that was rejected or is being refined";
     else if (seen.has(key)) problem = "Repeats an earlier outfit in the same reply";
-    else if (ITEM_REF.test(outfit.name ?? "") || ITEM_REF.test(outfit.reason ?? "")) {
-      problem = "Mentions an item ref in its name or reason";
+    else if (texts.some((text) => ITEM_REF.test(text))) {
+      problem = "Mentions an item ref in its name, reason or a gap's description";
     }
 
     if (problem) {
@@ -109,7 +120,7 @@ export interface ReplyCheck<T> {
  * accepted even if others were bad (they're dropped), so a usable reply is
  * never retried.
  */
-export function checkReply<T extends { itemIds: string[]; name?: string; reason?: string }>(
+export function checkReply<T extends CheckableOutfit>(
   outfits: readonly unknown[],
   schema: z.ZodType<T>,
   rules: OutfitRules,
