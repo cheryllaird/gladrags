@@ -58,7 +58,9 @@ function inlineText(raw: string): string {
  * words and `[image: ALT URL]` for each picture.
  */
 export function htmlToText(html: string): string {
-  const withoutComments = html.replace(/<!--[\s\S]*?-->/g, " ").replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, " ");
+  const withoutComments = html.replace(/<!--[\s\S]*?-->/g, " ").replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, " ")
+    // <!DOCTYPE ...> and <?xml ...?> declarations.
+    .replace(/<[!?][^>]*>/g, " ");
   const withoutHidden = withoutComments.replace(DROPPED_ELEMENTS, " ");
 
   const out: string[] = [];

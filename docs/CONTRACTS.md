@@ -420,7 +420,7 @@ The server:
 4. Claims the import in one database statement. **Each import can be tagged only once**, so replaying step 2 can't run Gemini again; if the claim fails, any stored cut-out is removed.
 5. Counts the item against the daily cap.
 6. Tags the original (or the cut-out), using the product title, brand and colour **it stored in step 1** as hints. It never uses data the phone sends back.
-7. Returns `{ draft }`, exactly as add-by-photo does, or for a batch add `{ status: "saved", item }` / `{ status: "draft", draft }`. *Stub outside mock mode for the batch add.*
+7. Returns `{ draft }`, exactly as add-by-photo does, or for a batch add `{ status: "saved", item }` / `{ status: "draft", draft }`. Built (link-import): the batch add saves with the suggested tags and `needsReview: true`, or returns the draft if tagging failed twice. With no cut-out, the stored original is tagged.
 
 **Several links at once (M5).** The phone splits the pasted text into links and runs both steps for each, one after another, with `saveForReview: true`. Links that need the screenshot fallback are listed at the end.
 
@@ -449,7 +449,7 @@ An **Outfit** is `{ id, request, name, reason, itemIds, items (full WardrobeItem
 
 **Choosing a product.** `PUT /api/outfits/:id/gaps/:category` copies the product from the gap's stored results, so the phone can't plant a link of its own. `not_found` if the outfit has no gap in that slot; `bad_request` if the URL isn't one of its results. "Open in shop" uses the product's `url`. Once bought, "Add to wardrobe" sends that `url` through add-by-link.
 
-### Settings (M5; stub, built by link-import)
+### Settings (M5; built by link-import)
 | Route | Send | Get back |
 | --- | --- | --- |
 | `GET /api/settings` | | `{ favouriteShopIds, forwardingAddress }` |
@@ -458,7 +458,7 @@ An **Outfit** is `{ id, request, name, reason, itemIds, items (full WardrobeItem
 
 `forwardingAddress` is `<prefix><token>@<domain>`, built from `INBOUND_EMAIL_PREFIX` and `INBOUND_EMAIL_DOMAIN` (section 9). It's **null when `INBOUND_EMAIL_DOMAIN` isn't set**, and the UI then says email import isn't set up yet.
 
-### Order emails (M5; stub, built by link-import)
+### Order emails (M5; built by link-import)
 | Route | Send | Get back |
 | --- | --- | --- |
 | `GET /api/email-imports` | | `{ imports }`: the 20 most recent forwarded emails, newest first, each `{ id, receivedAt, shopName, orderDate, status, itemCount, skippedCount, error }` |
@@ -476,6 +476,14 @@ An **Outfit** is `{ id, request, name, reason, itemIds, items (full WardrobeItem
 7. Updates the `email_imports` row (shop name, order date, counts, status) and drops the email. Nothing of it is logged.
 
 It always answers `{ received: true }` once the signature checks out, so the service doesn't resend; only an error on our side (5xx) makes it retry.
+
+**(M5) How it's built (link-import).**
+- **Answer first, then process.** Steps 1 to 5 (checks, token, redelivery, sender rule, email cap) run before the answer and take well under a second. Steps 5 to 7 (the model reading the email, then each line's picture and tags) run after the answer, with Next's `after()`, inside a 240-second budget under the route's `maxDuration` of 300 seconds (the most Vercel allows on Hobby with Fluid compute, the default for new projects). Lines are handled three at a time; a line that would start with under 30 seconds left is skipped (`internal`). **[Decision, link-import]** Why: a big order can take minutes, while email services wait only seconds for an answer and resend when they don't get one. The trade-off: if the function is stopped part-way the email is gone (it's never stored) and isn't retried; the import then reads as `failed` (`internal`) once it's been `processing` for 15 minutes. An error on our side *before* the answer (the database unreachable, say) removes the half-made record and answers 5xx, so the service retries.
+- **Postmark (`INBOUND_EMAIL_PROVIDER=postmark`).** Postmark doesn't sign inbound webhooks; its documented protection is HTTP Basic credentials in the webhook URL. Set the inbound webhook URL to `https://postmark:<INBOUND_EMAIL_WEBHOOK_SECRET>@<site>/api/inbound/email` (use a hex secret, `openssl rand -hex 32`, so it needs no URL-encoding). The password is compared with the secret in constant time; the user name isn't checked. There's no timestamp, so a captured request could be replayed, but it only travels over HTTPS and a replay is skipped as a redelivery. On a Vercel preview behind Vercel Authentication, add `?x-vercel-protection-bypass=<bypass secret>` (Project → Settings → Deployment Protection → Protection Bypass for Automation) to the URL, or Postmark gets Vercel's login page.
+- **What Postmark tells us about authentication.** Postmark checks SPF and adds `Received-SPF` at the top of the headers, plus SpamAssassin's `X-Spam-Status` and `X-Spam-Score`. It doesn't report DKIM or DMARC. The adapter reads only the topmost of each (anything lower down came with the email and could be forged), and reports DMARC as `none` when no DMARC result is given, so `judgeInboundEmail` accepts only an aligned SPF (or DKIM) pass, which is exactly when a real DMARC check would pass. Forwarding from Gmail, Outlook.com or iCloud passes SPF for the user's own domain. `Authentication-Results` headers are ignored unless their authserv-id is listed in `INBOUND_EMAIL_AUTHSERV_ID` (for a service that adds its own, such as Cloudflare). **To check with a real forwarded email once Postmark is set up**: that Postmark's `Received-SPF` is the first one in the payload.
+- **Pictures.** The email's image link, else the product page read like add-by-link (JSON-LD, then Open Graph), all through `safe-fetch` (20 seconds per line at most). No usable picture: a plain placeholder (grey square with a coat hanger), `needsPhoto`, and tags from the line's name, brand and colour alone.
+- A line that isn't added (cap, tagging failed twice, our error) counts in `skippedCount`; its stored picture is deleted and its item count given back. The import's `error` is the most useful reason among the skipped lines (`daily_cap_reached`, then `ai_paused`, `ai_failed`, `internal`). An email with no clothes or shoes, or no text at all, is `failed` with `no_items_found` (shop name and date kept when the model read them). Anything a crash leaves in storage is an image no item uses, which the daily orphaned-image cleanup deletes.
+- A second service (e.g. Cloudflare Email Routing through a Worker that posts JSON with an HMAC and a timestamp) is a new adapter in `src/lib/email/` plus one line in `providers.ts`; see the comment there.
 
 ### Usage and account (built)
 | Route | Get back |
@@ -593,8 +601,9 @@ Environment variables (see `.env.example`):
 | `SIGN_IN_HASH_KEY` | Server only. At least 32 random characters (e.g. `openssl rand -hex 32`). The key for the pseudonymous sign-in attempt hashes. Without a usable one, sign-in answers `500 server_misconfigured` outside mock mode and tests. Changing it only resets the 15-minute limits. Set it in Vercel for Production and Preview. |
 | `INBOUND_EMAIL_DOMAIN` | **(M5)** The domain the inbound email service receives mail for. Forwarding addresses are `<prefix><token>@<this domain>`. Empty: the app shows no address ("email import isn't set up yet"). |
 | `INBOUND_EMAIL_PREFIX` | **(M5)** Optional. Put before the token, for a service with one fixed mailbox and plus-addressing: Postmark's `<hash>@inbound.postmarkapp.com` needs `INBOUND_EMAIL_DOMAIN=inbound.postmarkapp.com` and `INBOUND_EMAIL_PREFIX=<hash>+`. With your own domain (e.g. Cloudflare Email Routing), leave it empty. Letters, digits and `. _ + -`, up to 40, not starting with a dot or with two dots in a row; anything else is `500 server_misconfigured` naming the variable. |
-| `INBOUND_EMAIL_PROVIDER` | **(M5)** Which inbound email service posts to the webhook, e.g. `postmark` |
-| `INBOUND_EMAIL_WEBHOOK_SECRET` | **(M5)** Server only. At least 32 random characters. What the webhook checks the service's signature or credentials against; without it the webhook refuses everything. Set it in Vercel and in the email service's webhook settings. |
+| `INBOUND_EMAIL_PROVIDER` | **(M5)** Which inbound email service posts to the webhook. Only `postmark` has an adapter so far; anything else is `500 server_misconfigured`. |
+| `INBOUND_EMAIL_WEBHOOK_SECRET` | **(M5)** Server only. At least 32 random characters (`openssl rand -hex 32`). What the webhook checks the service's signature or credentials against; without it (or with the `.env.example` placeholder) the webhook refuses everything. Set it in Vercel and in the email service's webhook settings (for Postmark: the password in the webhook URL, section 5). |
+| `INBOUND_EMAIL_AUTHSERV_ID` | **(M5)** Optional, comma-separated. `Authentication-Results` authserv-ids to trust: only the receiving service's own (e.g. `mx.cloudflare.net`). Leave empty for Postmark. |
 
 There's no background-removal key: it runs in the browser.
 
