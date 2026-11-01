@@ -280,14 +280,14 @@ test.describe("cut-out on first collage use", () => {
   const TRAINERS_ID = "1a000000-0000-4000-8000-000000000010";
 
   /** Two outfits that both use the coat, which (in this answer) has no cut-out yet. */
-  async function answerWithCoatOutfits(page: Page) {
+  async function answerWithCoatOutfits(page: Page, coatOverrides: { needsPhoto?: boolean } = {}) {
     const items = await Promise.all(
       [SHIRT_ID, JEANS_ID, TRAINERS_ID, COAT_ID].map(async (id) => {
         const res = await page.request.get(`/api/items/${id}`);
         return ((await res.json()) as { item: { id: string } & Record<string, unknown> }).item;
       }),
     );
-    const coat = { ...items[3]!, cutoutUrl: null, needsPhoto: false };
+    const coat = { ...items[3]!, cutoutUrl: null, needsPhoto: false, ...coatOverrides };
     const [shirt, jeans, trainers] = items;
     const outfit = (n: number) => ({
       id: `2b000000-0000-4000-8000-00000000c0a${n}`,
@@ -343,6 +343,37 @@ test.describe("cut-out on first collage use", () => {
     for (const i of [0, 1]) await expectCollageReadyAndExportable(cards(page).nth(i));
     await page.waitForTimeout(500);
     expect(uploads).toHaveLength(1);
+  });
+
+  test("an item still waiting for a photo (needsPhoto) is drawn as it is, never cut out", async ({ page }) => {
+    await installFakeBackgroundRemover(page);
+    await answerWithCoatOutfits(page, { needsPhoto: true });
+    let uploads = 0;
+    await page.route(`**/api/items/${COAT_ID}/cutout`, (route) => {
+      uploads++;
+      return route.fulfill({ status: 400, json: { error: { code: "bad_request", message: "No" } } });
+    });
+    await page.goto("/outfits");
+    await tapRadio(page, "Casual");
+    await page.getByRole("button", { name: "Get outfits" }).click();
+    for (const i of [0, 1]) await expectCollageReadyAndExportable(cards(page).nth(i));
+    await page.waitForTimeout(500);
+    expect(uploads).toBe(0);
+  });
+
+  test("automated browsers that don't opt in skip cut-outs, so tests don't change the shared mock wardrobe", async ({ page }) => {
+    await answerWithCoatOutfits(page);
+    let uploads = 0;
+    await page.route(`**/api/items/${COAT_ID}/cutout`, (route) => {
+      uploads++;
+      return route.fulfill({ status: 500, json: { error: { code: "internal", message: "No" } } });
+    });
+    await page.goto("/outfits");
+    await tapRadio(page, "Casual");
+    await page.getByRole("button", { name: "Get outfits" }).click();
+    for (const i of [0, 1]) await expectCollageReadyAndExportable(cards(page).nth(i));
+    await page.waitForTimeout(500);
+    expect(uploads).toBe(0);
   });
 
   test("if the upload fails, the collage still shows and nothing is retried", async ({ page }) => {

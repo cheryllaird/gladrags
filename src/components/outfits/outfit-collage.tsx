@@ -5,7 +5,7 @@ import { DownloadIcon, RefreshCwIcon } from "lucide-react";
 import { collageImageUrl, type OutfitGap, type WardrobeItem } from "@/contracts";
 import { Button } from "@/components/ui/button";
 import { canvasToPng, drawCollage, hasVisibleContent, loadImage, saveImageBlob } from "./collage-draw";
-import { collageCutouts } from "./collage-cutouts";
+import { collageCutouts, collageCutoutsEnabled } from "./collage-cutouts";
 import { layoutCollage, type CollageItem } from "./collage-layout";
 import { collageDescription, gapToCollageItem } from "./gap-copy";
 import { needsCutout } from "./cutout-queue";
@@ -169,7 +169,7 @@ export function OutfitCollage({ name, items, gaps = [], lazy = false, onReloadPi
         if (result.status === "fulfilled") images.set(placedItems[i]!.id, result.value);
       });
       await paint(target);
-      if (cancelled) return;
+      if (cancelled || !collageCutoutsEnabled()) return;
 
       // Then cut out the items that still have no cut-out, one at a time
       // (the queue runs them in order), swapping each in as it's ready.
