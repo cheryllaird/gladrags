@@ -5,6 +5,7 @@
 import "server-only";
 import { getTaggingProvider } from "@/lib/ai";
 import { getServerImageProcessor } from "@/lib/images/server";
+import { SupabaseItemRepository } from "@/lib/ingestion/items-repository";
 import { SupabaseImageStorage } from "@/lib/ingestion/storage";
 import { SupabaseImageStore } from "@/lib/outfits/thumbnails";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -13,7 +14,6 @@ import { getUsageGuard } from "@/lib/usage";
 import type { LinkCutoutDeps } from "./finish-link";
 import type { LinkImportDeps } from "./import-link";
 import { SupabaseLinkImportRepository } from "./repository";
-import { SupabaseReviewItemStore } from "./review-items";
 import { systemNetwork } from "./safe-fetch";
 
 /** link_imports is server-only (RLS with no policies), so both steps use the admin client and filter by user ID. */
@@ -38,6 +38,6 @@ export async function getLinkCutoutDeps(): Promise<LinkCutoutDeps> {
     linkImports: new SupabaseLinkImportRepository(admin),
     tagger: getTaggingProvider(),
     usage: getUsageGuard(),
-    reviewItems: new SupabaseReviewItemStore(await createClient()),
+    items: new SupabaseItemRepository(await createClient()),
   };
 }

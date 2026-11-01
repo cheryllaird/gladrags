@@ -22,22 +22,21 @@ import { ApiException } from "@/lib/api/errors";
 import type { LinkCutoutUpload } from "@/lib/api/upload";
 import { SIGNED_URL_TTL_SECONDS } from "@/lib/images/server";
 import { CUTOUT_RULES, checkUploadedCutout, cleanImage } from "@/lib/ingestion/images";
-import { DuplicateImageKeyError } from "@/lib/ingestion/items-repository";
+import { DuplicateImageKeyError, type ItemRepository } from "@/lib/ingestion/items-repository";
 import { newImageKey, type ImageStorage } from "@/lib/ingestion/storage";
 import { suggestTags, type TaggingDeps } from "@/lib/ingestion/tagging";
-import { toWardrobeItems } from "@/lib/ingestion/wardrobe";
+import { saveItemForReview } from "@/lib/ingestion/wardrobe";
 import type { ImageStore } from "@/lib/outfits/thumbnails";
 import { isAiPausedError } from "@/lib/usage/errors";
 import type { LinkImportRepository, OpenLinkImport } from "./repository";
-import type { ReviewItemStore } from "./review-items";
 
 export interface LinkCutoutDeps extends TaggingDeps {
   storage: ImageStorage;
   /** Reads the stored step-1 image back (admin client). */
   imageStore: ImageStore;
   linkImports: LinkImportRepository;
-  /** Saves batch-added items as "to review" (the signed-in user's client). */
-  reviewItems: ReviewItemStore;
+  /** Batch-added items are saved here as "to review" (the signed-in user's client, so RLS applies). */
+  items: ItemRepository;
 }
 
 function importGone(): ApiException {
@@ -147,21 +146,17 @@ export async function finishLinkImportForReview(deps: LinkCutoutDeps, userId: st
   const tags = draft.suggestedTags;
   if (!tags) return { status: "draft", draft };
 
-  let row;
   try {
-    row = await deps.reviewItems.create(userId, {
+    const item = await saveItemForReview(deps, userId, {
       source: "link",
       sourceUrl: draft.sourceUrl,
       originalImageKey: draft.originalImageKey,
       cutoutImageKey: draft.cutoutImageKey,
       tags,
-      needsPhoto: false,
     });
+    return { status: "saved", item };
   } catch (error) {
     if (error instanceof DuplicateImageKeyError) throw new ApiException("bad_request", "That item has already been saved");
     throw error;
   }
-  const [item] = await toWardrobeItems(deps.storage, [row]);
-  if (!item) throw new Error("Couldn't sign the new item's image URL");
-  return { status: "saved", item };
 }

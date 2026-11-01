@@ -5,13 +5,12 @@
 // caps, then returns a mock draft, so the UI can be built without Supabase
 // or Gemini. The mock markers in the file name trigger the error states.
 import { BatchAddResponseSchema, ItemDraftResponseSchema } from "@/contracts";
-import { ApiException } from "@/lib/api/errors";
 import { jsonResponse, withApiHandler } from "@/lib/api/http";
 import { parsePhotoUpload, type PhotoUpload } from "@/lib/api/upload";
 import { requireUser, type SessionUser } from "@/lib/auth/session";
 import { isMockMode } from "@/lib/env";
-import { addItemFromPhoto } from "@/lib/ingestion/add-photo";
-import { getPhotoIngestionDeps } from "@/lib/ingestion/deps";
+import { addItemFromPhoto, addPhotoForReview } from "@/lib/ingestion/add-photo";
+import { getPhotoIngestionDeps, getWardrobeDeps } from "@/lib/ingestion/deps";
 import { MOCK_MARKERS, hasMarker, throwIfCapMarker } from "@/lib/mocks/markers";
 import * as mock from "@/lib/mocks/store";
 import { getUsageGuard } from "@/lib/usage";
@@ -26,8 +25,11 @@ export const POST = withApiHandler(async (request) => {
   const user = await requireUser();
   const upload = await parsePhotoUpload(request);
   if (isMockMode()) return mockPhotoDraft(user, upload);
-  // TODO(ingestion, milestone 5): batch add (save as "to review").
-  if (upload.saveForReview) throw new ApiException("not_implemented", "Adding several photos at once isn't built yet");
+  if (upload.saveForReview) {
+    // A batch add: saved straight away as "to review", or a draft if tagging failed.
+    const deps = { ...getPhotoIngestionDeps(), items: (await getWardrobeDeps()).items };
+    return jsonResponse(BatchAddResponseSchema, await addPhotoForReview(deps, user.id, upload));
+  }
 
   const draft = await addItemFromPhoto(getPhotoIngestionDeps(), user.id, upload);
   return jsonResponse(ItemDraftResponseSchema, { draft });

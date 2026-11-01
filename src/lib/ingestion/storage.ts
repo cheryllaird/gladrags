@@ -12,6 +12,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { STORAGE_BUCKETS, type AcceptedImageType } from "@/contracts";
 import type { ImageInput } from "@/lib/ai/types";
+import { sniffImageType } from "@/lib/images/sniff";
 
 export type ImageBucket = (typeof STORAGE_BUCKETS)[keyof typeof STORAGE_BUCKETS];
 
@@ -26,6 +27,8 @@ export interface ImageStorage {
   /** Delete images. Keys that don't exist are ignored. */
   remove(bucket: ImageBucket, keys: readonly string[]): Promise<void>;
   exists(bucket: ImageBucket, key: string): Promise<boolean>;
+  /** Read a stored image. Throws if it's missing or isn't JPEG, PNG or WebP. */
+  download(bucket: ImageBucket, key: string): Promise<ImageInput>;
   /** Short-lived signed URLs, by key. Keys that can't be signed are left out. */
   signedUrls(bucket: ImageBucket, keys: readonly string[], ttlSeconds: number): Promise<Map<string, string>>;
   /** Top-level folders (one per user ID) in a bucket. */
@@ -83,6 +86,15 @@ export class SupabaseImageStorage implements ImageStorage {
     // exists() reports a missing object as an error with data: false.
     if (error && data !== false) throw new Error(`Couldn't check an image in ${bucket}: ${error.message}`);
     return data === true;
+  }
+
+  async download(bucket: ImageBucket, key: string): Promise<ImageInput> {
+    const { data, error } = await this.admin.storage.from(bucket).download(key);
+    if (error || !data) throw new Error(`Couldn't read an image in ${bucket}: ${error?.message ?? "no data"}`);
+    const bytes = new Uint8Array(await data.arrayBuffer());
+    const mimeType = sniffImageType(bytes);
+    if (!mimeType) throw new Error(`A stored image in ${bucket} isn't JPEG, PNG or WebP`);
+    return { data: bytes, mimeType };
   }
 
   async signedUrls(bucket: ImageBucket, keys: readonly string[], ttlSeconds: number): Promise<Map<string, string>> {
@@ -153,6 +165,12 @@ export class InMemoryImageStorage implements ImageStorage {
 
   async exists(bucket: ImageBucket, key: string): Promise<boolean> {
     return this.objects.has(this.id(bucket, key));
+  }
+
+  async download(bucket: ImageBucket, key: string): Promise<ImageInput> {
+    const image = this.get(bucket, key);
+    if (!image) throw new Error(`Couldn't read an image in ${bucket}: not found`);
+    return image;
   }
 
   async signedUrls(bucket: ImageBucket, keys: readonly string[], ttlSeconds: number): Promise<Map<string, string>> {

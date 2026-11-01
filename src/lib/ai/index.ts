@@ -4,6 +4,7 @@ import { createGeminiTaggingProvider } from "./gemini-tagging";
 import type { OrderEmailProvider, RankingProvider, TaggingProvider } from "./types";
 
 export * from "./types";
+export { canTagFromText } from "./tagging-input";
 export { callWithValidation, type ValidatedCallResult, type CallWithValidationOptions } from "./validate";
 export { FakeOrderEmailProvider, FakeRankingProvider, FakeShopSearchProvider, FakeTaggingProvider } from "./fakes";
 

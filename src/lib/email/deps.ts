@@ -5,8 +5,8 @@
 import "server-only";
 import { getOrderEmailProvider, getTaggingProvider } from "@/lib/ai";
 import { getServerImageProcessor } from "@/lib/images/server";
+import { SupabaseItemRepository } from "@/lib/ingestion/items-repository";
 import { SupabaseImageStorage } from "@/lib/ingestion/storage";
-import { SupabaseReviewItemStore } from "@/lib/link-import/review-items";
 import { systemNetwork } from "@/lib/link-import/safe-fetch";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -29,7 +29,9 @@ export function getEmailProcessingDeps(): EmailProcessingDeps {
     tagger: getTaggingProvider(),
     images: getServerImageProcessor(),
     storage: new SupabaseImageStorage(admin),
-    reviewItems: new SupabaseReviewItemStore(admin),
+    // Admin client: the webhook has no session. The database still checks
+    // the image key sits in the owner's folder.
+    items: new SupabaseItemRepository(admin),
     network: systemNetwork,
     placeholder: placeholderImage,
   };

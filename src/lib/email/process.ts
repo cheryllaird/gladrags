@@ -25,19 +25,18 @@ import "server-only";
 import {
   OrderEmailModelOutputSchema,
   STORAGE_BUCKETS,
-  TaggingModelOutputSchema,
   type EmailImportError,
   type EmailLineItem,
-  type ItemTags,
 } from "@/contracts";
 import { callWithValidation } from "@/lib/ai/validate";
-import type { ImageInput, OrderEmailProvider, TaggingInput, TaggingProvider } from "@/lib/ai/types";
+import type { ImageInput, OrderEmailProvider, TaggingProvider } from "@/lib/ai/types";
 import { describeError } from "@/lib/api/http";
 import type { ServerImageProcessor } from "@/lib/images/server";
 import { newImageKey, type ImageStorage } from "@/lib/ingestion/storage";
-import { suggestTags } from "@/lib/ingestion/tagging";
+import type { ItemRepository } from "@/lib/ingestion/items-repository";
+import { suggestTags, suggestTagsFromText, type TextTaggingHints } from "@/lib/ingestion/tagging";
+import { saveItemRowForReview } from "@/lib/ingestion/wardrobe";
 import { findProductImage, LINE_IMAGE_BUDGET_MS } from "@/lib/link-import/product-image";
-import type { ReviewItemStore } from "@/lib/link-import/review-items";
 import type { NetworkDeps } from "@/lib/link-import/safe-fetch";
 import { CapReachedError, isAiPausedError } from "@/lib/usage/errors";
 import type { UsageGuard, UsageReservation } from "@/lib/usage/guard";
@@ -54,7 +53,7 @@ export interface EmailProcessingDeps {
   /** Admin storage: the webhook has no session. */
   storage: ImageStorage;
   /** Admin client: saves the items as "to review". */
-  reviewItems: ReviewItemStore;
+  items: ItemRepository;
   network: NetworkDeps;
   placeholder: () => Promise<ImageInput>;
   /** Milliseconds, for the time budget. Defaults to Date.now. */
@@ -169,7 +168,7 @@ async function addLine(deps: EmailProcessingDeps, userId: string, line: EmailLin
   try {
     const budget = Math.min(LINE_IMAGE_BUDGET_MS, deadline - clock() - MIN_TIME_FOR_A_LINE_MS / 2);
     const found = budget > 0 ? await findProductImage(deps.images, line, deps.network, budget) : { image: null, product: null };
-    const hints: NonNullable<TaggingInput["productHints"]> = {
+    const hints: TextTaggingHints = {
       title: line.name,
       brand: line.brand ?? found.product?.brand ?? null,
       colour: line.colour ?? found.product?.colour ?? null,
@@ -179,13 +178,13 @@ async function addLine(deps: EmailProcessingDeps, userId: string, line: EmailLin
     storedKey = newImageKey(userId, image.mimeType);
     await deps.storage.upload(STORAGE_BUCKETS.originals, storedKey, image);
 
-    const tags = found.image ? await suggestTags(deps, userId, found.image, hints) : await tagFromText(deps, userId, hints);
+    const tags = found.image ? await suggestTags(deps, userId, found.image, hints) : await suggestTagsFromText(deps, userId, hints);
     if (!tags) {
       await undo();
       return { added: false, reason: "ai_failed" };
     }
 
-    await deps.reviewItems.create(userId, {
+    await saveItemRowForReview(deps.items, userId, {
       source: "email",
       sourceUrl: line.productUrl,
       originalImageKey: storedKey,
@@ -200,26 +199,6 @@ async function addLine(deps: EmailProcessingDeps, userId: string, line: EmailLin
     console.error("Order email: couldn't add a line", describeError(error));
     return { added: false, reason: "internal" };
   }
-}
-
-/**
- * Tags for a line without a usable picture, from its name, brand and
- * colour alone (TaggingInput.image null; CONTRACTS.md section 11,
- * decision 13). Same validation, retry and metering as suggestTags. Null
- * if the model fails twice.
- */
-export async function tagFromText(
-  deps: { tagger: TaggingProvider; usage: UsageGuard },
-  userId: string,
-  hints: NonNullable<TaggingInput["productHints"]>,
-): Promise<ItemTags | null> {
-  const result = await callWithValidation(TaggingModelOutputSchema, () => deps.tagger.tagItem({ image: null, productHints: hints }), {
-    ...deps.usage.meterAiCalls(userId, "tagging", deps.tagger.name),
-    provider: deps.tagger.name,
-  });
-  if (result.ok) return result.data;
-  console.warn("Order email: text-only tagging failed twice", { attempts: result.attempts });
-  return null;
 }
 
 /** Run `work` over the items with at most `limit` at once, keeping the order of results. */
