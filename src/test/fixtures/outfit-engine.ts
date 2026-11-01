@@ -112,3 +112,49 @@ export const finalReplies = {
 export function okResult(outfits: readonly ({ itemIds: string[]; name: string; reason: string } & { gaps?: unknown[] })[], missingCategories: string[] = []) {
   return { status: "ok", outfits: outfits.map((o) => ({ ...o, gaps: o.gaps ?? [] })), missingCategories };
 }
+
+// ---------------------------------------------------------------------------
+// Gaps (milestone 5)
+// ---------------------------------------------------------------------------
+
+/** WARDROBE without shoes: 3 tops, 3 bottoms, a coat and a dress. */
+export const NO_SHOES = WARDROBE.filter((i) => i.tags.category !== "shoes");
+
+export const TRAINERS_GAP = { category: "shoes", subcategory: "trainers", colours: ["white"], description: "White leather trainers" } as const;
+export const BOOTS_GAP = { category: "shoes", subcategory: "boots", colours: ["brown"], description: "Brown Chelsea boots" } as const;
+
+/** Replies for NO_SHOES: every outfit needs its shoes gap described. */
+export const noShoesReplies = {
+  shortlist: {
+    outfits: [
+      { itemIds: [W.top1, W.bottom1], gaps: [TRAINERS_GAP] },
+      { itemIds: [W.top2, W.bottom2, W.coat], gaps: [BOOTS_GAP] },
+      { itemIds: [W.dress], gaps: [BOOTS_GAP] },
+      { itemIds: [W.top3, W.bottom3], gaps: [TRAINERS_GAP] },
+    ],
+  },
+  final: {
+    outfits: [
+      { itemIds: [W.top1, W.bottom1], gaps: [TRAINERS_GAP], name: "Easy weekend", reason: "White trainers keep the navy relaxed" },
+      { itemIds: [W.dress], gaps: [BOOTS_GAP], name: "Dress and boots", reason: "Brown boots ground the dress for autumn" },
+      { itemIds: [W.top2, W.bottom2, W.coat], gaps: [BOOTS_GAP], name: "Coat on", reason: "The coat and boots make it warmer" },
+    ],
+  },
+  /**
+   * A bad final reply: a made-up item ID, a dropped shoes gap, a bottom gap
+   * the wardrobe could fill (shop items off), and one good outfit.
+   */
+  finalBad: {
+    outfits: [
+      { itemIds: [W.top1, INVENTED_ID], gaps: [TRAINERS_GAP], name: "Invented", reason: "Uses an item that isn't there" },
+      { itemIds: [W.dress], name: "No shoes", reason: "Leaves the shoes gap out" },
+      {
+        itemIds: [W.top2],
+        gaps: [{ category: "bottom", subcategory: "jeans", colours: ["blue"], description: "Blue jeans" }, BOOTS_GAP],
+        name: "Buy jeans",
+        reason: "A bottom gap where the wardrobe has bottoms",
+      },
+      { itemIds: [W.top1, W.bottom1], gaps: [TRAINERS_GAP], name: "Easy weekend", reason: "White trainers keep the navy relaxed" },
+    ],
+  },
+};

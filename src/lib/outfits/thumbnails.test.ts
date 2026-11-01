@@ -13,6 +13,20 @@ afterEach(() => {
 });
 
 describe("ResizingThumbnailSource", () => {
+  it("never downloads a picture for an item waiting for a photo (image null): ranking uses its tags", async () => {
+    const items = [entry(1, "top"), { ...entry(2, "shoes"), image: null }];
+    const downloads: string[] = [];
+    const store: ImageStore = {
+      download: async (ref) => {
+        downloads.push(ref.key);
+        return png();
+      },
+    };
+    const thumbs = await new ResizingThumbnailSource(store, async (image) => image).getThumbnails(items);
+    expect([...thumbs.keys()]).toEqual([items[0]!.id]);
+    expect(downloads).toEqual([items[0]!.image!.key]);
+  });
+
   it("downloads each item's picture and shrinks it to ~256 px", async () => {
     const items = [entry(1, "top"), entry(2, "shoes")];
     const downloads: string[] = [];
