@@ -55,7 +55,7 @@ test("item detail", async ({ page }) => {
   await page.getByRole("heading", { name: "Green floral wrap midi dress" }).waitFor();
   await shot(page, "06-item-detail");
   await page.goto("/wardrobe/1a000000-0000-4000-8000-000000000009");
-  await page.getByText("this item has no cut-out").waitFor();
+  await page.getByRole("heading", { name: "Camel wool overcoat" }).waitFor();
   await shot(page, "07-item-detail-no-cutout");
   await page.getByRole("button", { name: "Edit tags" }).click();
   await shot(page, "08-item-edit-tags");

@@ -156,7 +156,6 @@ function jpegInfo(data: Buffer): { width: number; height: number; hasExif: boole
   return null;
 }
 
-const isPng = (data: Buffer) => data.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
 
 /** RGBA of the given points in a JPEG, decoded by the browser. */
 async function pixels(page: Page, jpeg: Buffer, points: [number, number][]): Promise<number[][]> {
@@ -278,7 +277,7 @@ test.describe("photo pipeline: resize to 1600 px and re-encode as JPEG", () => {
   ];
 
   for (const [label, w, h, type, ew, eh] of cases) {
-    test(`${label}: ${w} x ${h} uploads as a ${ew} x ${eh} JPEG with a PNG cut-out`, async ({ page }) => {
+    test(`${label}: ${w} x ${h} uploads as a ${ew} x ${eh} JPEG, with no cut-out`, async ({ page }) => {
       await page.goto("/add");
       const upload = await capturePhotoUpload(page);
       const image = await makeImage(page, w, h, type, "halves");
@@ -289,9 +288,8 @@ test.describe("photo pipeline: resize to 1600 px and re-encode as JPEG", () => {
       expect(original.filename).toBe("item.jpg");
       expect(original.contentType).toBe("image/jpeg");
       expect(jpegInfo(original.data)).toMatchObject({ width: ew, height: eh });
-      const cutout = upload.parts().find((p) => p.name === "cutout")!;
-      expect(cutout.filename).toBe("item.png");
-      expect(isPng(cutout.data)).toBe(true);
+      // Milestone 5: the original only; collages cut items out later.
+      expect(upload.parts().some((p) => p.name === "cutout")).toBe(false);
     });
   }
 
@@ -387,14 +385,12 @@ test.describe("photo pipeline: resize to 1600 px and re-encode as JPEG", () => {
     await expect(group(page, "Type").getByText("Choose a category first.")).toBeVisible();
   });
 
-  test("no cut-out (background removal failed): the review says the original will be used", async ({ page }) => {
-    // The in-browser remover can't be made to fail from a test in mock mode;
-    // this covers the screen's side. The pipeline side is unit-tested.
+  test("the review shows the original image and says nothing about cut-outs", async ({ page }) => {
     await page.goto("/add");
     await capturePhotoUpload(page, draftBody({ cutoutImageKey: null, cutoutUrl: null, originalUrl: "/mock/items/camel-coat.svg" }));
     await choose(page, "shirt.jpg", PHOTO, "image/jpeg");
-    await expect(page.getByText(/original (photo|image) will be used/)).toBeVisible();
     await expect(page.getByRole("img", { name: "The item you're adding" })).toHaveAttribute("src", "/mock/items/camel-coat.svg");
+    await expect(page.getByText(/cut/i)).toHaveCount(0);
   });
 });
 
@@ -427,7 +423,7 @@ test("saving sends tagsEdited false for untouched tags and true once a tag is ch
 // ---------------------------------------------------------------------------
 
 test.describe("add by link", () => {
-  test("step 1 reads the page, then step 2 sends the cut-out with step 1's image key", async ({ page }) => {
+  test("step 1 reads the page, then step 2 sends step 1's image key and no cut-out", async ({ page }) => {
     const calls: string[] = [];
     let step1: { originalImageKey: string; originalUrl: string } | null = null;
     let step2: Part[] = [];
@@ -452,12 +448,12 @@ test.describe("add by link", () => {
     await page.getByRole("button", { name: "Add from link" }).click();
     await expect(page.getByRole("heading", { name: "Check the tags" })).toBeVisible();
 
-    // (The review screen may load the same image again afterwards.)
-    expect(calls.slice(0, 3)).toEqual([`step1 ${link}`, "product image", "step2"]);
+    // The phone no longer downloads the product image to cut it out. (The
+    // review screen loads the image afterwards to show it.)
+    expect(calls.slice(0, 2)).toEqual([`step1 ${link}`, "step2"]);
     const meta = JSON.parse(step2.find((p) => p.name === "meta")!.data.toString("utf8"));
     expect(meta).toEqual({ originalImageKey: step1!.originalImageKey });
-    const cutout = step2.find((p) => p.name === "cutout")!;
-    expect(isPng(cutout.data)).toBe(true);
+    expect(step2.some((p) => p.name === "cutout")).toBe(false);
     // The photo route is not involved.
     expect(calls.some((c) => c.includes("photo"))).toBe(false);
   });
@@ -678,7 +674,9 @@ test.describe("wardrobe filters and search", () => {
   test("unknown filter values in the URL are dropped, not sent", async ({ page }) => {
     const queries: string[] = [];
     page.on("request", (r) => {
-      if (new URL(r.url()).pathname === "/api/items") queries.push(new URL(r.url()).search);
+      // Leave out the review banner's count (?needsReview=true).
+      const url = new URL(r.url());
+      if (url.pathname === "/api/items" && !url.searchParams.has("needsReview")) queries.push(url.search);
     });
     await page.goto("/wardrobe?category=hats&colour=sparkly&occasion=funeral");
     await expect(page.getByRole("link", { name: "Camel wool overcoat" })).toBeVisible();
@@ -977,9 +975,9 @@ test.describe("phone layout at 390 px: no sideways scroll, 44 px targets, nav co
     await checkPhoneLayout(page, "privacy");
   });
 
-  test("item detail with a long description and the no-cut-out note", async ({ page }) => {
+  test("item detail with a long description (an item with no cut-out)", async ({ page }) => {
     await page.goto("/wardrobe/1a000000-0000-4000-8000-000000000009");
-    await expect(page.getByText("this item has no cut-out")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Camel wool overcoat" })).toBeVisible();
     await checkPhoneLayout(page, "item detail (no cut-out)");
   });
 });

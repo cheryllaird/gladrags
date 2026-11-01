@@ -38,7 +38,9 @@ async function signInAgain(page: Page) {
 function countItemsRequests(page: Page): () => number {
   let count = 0;
   page.on("request", (r) => {
-    if (new URL(r.url()).pathname === "/api/items" && r.method() === "GET") count++;
+    // The wardrobe list only: the review banner's count (?needsReview=true) refreshes alongside it.
+    const url = new URL(r.url());
+    if (url.pathname === "/api/items" && !url.searchParams.has("needsReview") && r.method() === "GET") count++;
   });
   return () => count;
 }

@@ -135,7 +135,8 @@ test.describe("journey 1: build the wardrobe", () => {
     expect(savedRes.status()).toBe(201);
     const { item } = ItemResponseSchema.parse(await savedRes.json());
     expect(item).toMatchObject({ source: "photo", sourceUrl: null, tagsEdited: true });
-    expect(item.cutoutUrl).not.toBeNull();
+    // Milestone 5: no cut-out while adding; a collage makes one the first time it needs it.
+    expect(item.cutoutUrl).toBeNull();
     await expect(page.getByText("Saved to your wardrobe")).toBeVisible();
 
     // It's in the wardrobe grid, and its detail shows the edited tag.
@@ -352,7 +353,7 @@ test.describe("journey 5: save and rate", () => {
 });
 
 test.describe("add by link, end to end", () => {
-  test("a readable product page: link, cut-out, tags, save; the item keeps its link", async ({ page, request }) => {
+  test("a readable product page: link, tags, save; the item keeps its link", async ({ page, request }) => {
     const link = `https://shop.example.com/products/journey-${Date.now()}`;
     await openApp(page);
     await nav(page).getByRole("link", { name: "Add" }).click();
