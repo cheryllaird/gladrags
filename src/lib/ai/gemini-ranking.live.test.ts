@@ -14,6 +14,8 @@ import { GoogleGenAI, type GenerateContentParameters } from "@google/genai";
 import { describe, it } from "vitest";
 import {
   anchorInjectionShortlistInput,
+  noShoesShortlistInput,
+  shopItemsFinalInput,
   swapFinalInput,
   workFinalInput,
   workShortlistInput,
@@ -50,6 +52,9 @@ describe.skipIf(process.env.GEMINI_RECORD !== "1")("record Gemini ranking replie
     ["anchor-injection-shortlist", (p: GeminiRankingProvider) => p.shortlist(anchorInjectionShortlistInput())],
     ["work-final", (p: GeminiRankingProvider) => p.pickFinal(workFinalInput())],
     ["swap-final", (p: GeminiRankingProvider) => p.pickFinal(swapFinalInput())],
+    // Gaps (milestone 5). The "-bad" fixtures are hand-made and aren't re-recorded.
+    ["no-shoes-shortlist", (p: GeminiRankingProvider) => p.shortlist(noShoesShortlistInput())],
+    ["shop-items-final", (p: GeminiRankingProvider) => p.pickFinal(shopItemsFinalInput())],
   ] as const;
 
   it.each(cases)("%s", async (name, run) => {

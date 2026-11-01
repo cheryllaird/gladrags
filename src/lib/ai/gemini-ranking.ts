@@ -107,7 +107,13 @@ export function mapRefsToIds(text: string | undefined, refs: ItemRefs): unknown 
   if (text === undefined) return undefined;
   let value: unknown;
   try {
-    value = JSON.parse(text);
+    // Tolerates a ```json code fence, as parseModelOutput does.
+    value = JSON.parse(
+      text
+        .trim()
+        .replace(/^```(?:json)?\s*/i, "")
+        .replace(/\s*```$/, ""),
+    );
   } catch {
     return text;
   }

@@ -1,0 +1,8 @@
+{
+  "model": "none",
+  "synthetic": true,
+  "note": "Hand-made bad pass 2 reply with shop items on: two shop-item gaps in one outfit, a shortlisted gap left out, and an outfit that wasn't shortlisted (a shoes gap instead of the owned trainers); one good outfit.",
+  "recordedAt": null,
+  "text": "{\"outfits\": [{\"itemIds\": [\"I1\", \"I2\"], \"gaps\": [{\"category\": \"shoes\", \"colours\": [\"burgundy\"], \"description\": \"Burgundy suede loafers\"}, {\"category\": \"outerwear\", \"colours\": [\"navy\"], \"description\": \"Navy blazer\"}], \"name\": \"Too much shopping\", \"reason\": \"Two new pieces\"}, {\"itemIds\": [\"I1\", \"I2\", \"I3\"], \"name\": \"Easy smart\", \"reason\": \"A crisp shirt and chinos with loafers, relaxed but put together\"}, {\"itemIds\": [\"I4\", \"I3\"], \"name\": \"Dress no jacket\", \"reason\": \"Drops the outerwear gap it was offered with\"}, {\"itemIds\": [\"I5\", \"I6\"], \"gaps\": [{\"category\": \"shoes\", \"colours\": [\"white\"], \"description\": \"White trainers\"}], \"name\": \"Not offered\", \"reason\": \"Swaps the owned trainers for a shop pair\"}]}",
+  "editedFrom": "shop-items-final"
+}

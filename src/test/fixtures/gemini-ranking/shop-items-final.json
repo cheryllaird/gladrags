@@ -1,0 +1,7 @@
+{
+  "model": "none",
+  "synthetic": true,
+  "note": "Hand-written in Gemini's format, wrapped in a json code fence as models sometimes do: pass 2 with 'Include items from my shops', two outfits with one shop-item gap each.",
+  "recordedAt": null,
+  "text": "```json\n{\"outfits\": [{\"itemIds\": [\"I1\", \"I2\"], \"gaps\": [{\"category\": \"shoes\", \"subcategory\": \"loafers\", \"colours\": [\"burgundy\"], \"description\": \"Burgundy suede loafers\"}], \"name\": \"Weekend polish\", \"reason\": \"Burgundy loafers lift the blue shirt and tan chinos for lunch out\"}, {\"itemIds\": [\"I1\", \"I2\", \"I3\"], \"gaps\": [], \"name\": \"Easy smart\", \"reason\": \"A crisp shirt and chinos with loafers, relaxed but put together\"}, {\"itemIds\": [\"I4\", \"I3\"], \"gaps\": [{\"category\": \"outerwear\", \"subcategory\": \"jacket\", \"colours\": [\"cream\"], \"description\": \"Cream cropped tweed jacket\"}], \"name\": \"Dress and jacket\", \"reason\": \"A short cream jacket gives the floral dress some structure\"}]}\n```"
+}
