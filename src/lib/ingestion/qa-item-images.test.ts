@@ -236,9 +236,9 @@ describe("setItemCutout: the item changes during the request", () => {
     const deps = makeTestDeps();
     const row = await existingItem(deps, { cutout: true });
     const setCutoutKey = deps.items.setCutoutKey.bind(deps.items);
-    vi.spyOn(deps.items, "setCutoutKey").mockImplementation(async (userId, id, key) => {
+    vi.spyOn(deps.items, "setCutoutKey").mockImplementation(async (userId, id, key, madeFrom) => {
       await deleteWardrobeItem(deps, userId, id);
-      return setCutoutKey(userId, id, key);
+      return setCutoutKey(userId, id, key, madeFrom);
     });
     const error = await rejection(setItemCutout(deps, TEST_USER, row.id, named(await cutoutPng())));
     expect((error as ApiException).code).toBe("not_found");
@@ -253,11 +253,10 @@ describe("setItemCutout: the item changes during the request", () => {
     expect(keysIn(deps, STORAGE_BUCKETS.cutouts)).toEqual([row.cutout_image_key]);
   });
 
-  // BUG (low): the item (and its original) can be deleted between reading
-  // the row and downloading the original to compare sizes. download() then
-  // throws a plain Error, which the route answers as 500 internal instead of
-  // 404 not_found.
-  it.fails("BUG: deleted before its original is read: not_found, not a 500", async () => {
+  // Was BUG (it.fails, low): the item (and its original) could be deleted
+  // between reading the row and downloading the original, which answered
+  // 500 internal. Fixed: a failed download re-reads the row.
+  it("deleted before its original is read: not_found, not a 500", async () => {
     const deps = makeTestDeps();
     const row = await existingItem(deps);
     const download = deps.storage.download.bind(deps.storage);
@@ -320,15 +319,14 @@ describe("setItemCutout: two uploads racing", () => {
     expect((await deps.items.get(TEST_USER, row.id))!.cutout_image_key).not.toBe(row.cutout_image_key);
   });
 
-  // BUG (low/medium): a cut-out upload that read the item before a new photo
-  // replaced its original still saves the cut-out afterwards. The item then
-  // shows the new photo in the wardrobe but a cut-out of the OLD picture in
-  // every collage (and it was size-checked against the old original).
-  // setCutoutKey doesn't check the original is still the one the cut-out
-  // was made from.
-  it.fails("BUG: a cut-out of the old picture isn't attached after the photo was replaced mid-request", async () => {
+  // Was BUG (it.fails, low/medium): a cut-out upload that read the item
+  // before a new photo replaced its original still saved the cut-out of the
+  // OLD picture. Fixed: setCutoutKey saves only while the original is the
+  // one the cut-out was measured against; otherwise not_found, file removed.
+  it("a cut-out of the old picture isn't attached after the photo was replaced mid-request", async () => {
     const deps = makeTestDeps();
-    const row = await existingItem(deps, { needsPhoto: true });
+    // An ordinary item: one still waiting for a photo (needsPhoto) is now refused before any upload.
+    const row = await existingItem(deps);
     const upload = deps.storage.upload.bind(deps.storage);
     let replaced = false;
     vi.spyOn(deps.storage, "upload").mockImplementation(async (bucket, key, image) => {

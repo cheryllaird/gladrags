@@ -92,7 +92,11 @@ describe("SupabaseItemRepository, milestone 5", () => {
   it.each([
     ["updateTags", (r: SupabaseItemRepository) => r.updateTags(TEST_USER, ID, tagging.valid as never), { tags_edited: true, needs_review: false }],
     ["markReviewed", (r: SupabaseItemRepository) => r.markReviewed(TEST_USER, ID), { needs_review: false }],
-    ["setCutoutKey", (r: SupabaseItemRepository) => r.setCutoutKey(TEST_USER, ID, `${TEST_USER}/c.png`), { cutout_image_key: `${TEST_USER}/c.png` }],
+    [
+      "setCutoutKey",
+      (r: SupabaseItemRepository) => r.setCutoutKey(TEST_USER, ID, `${TEST_USER}/c.png`, `${TEST_USER}/o.jpg`),
+      { cutout_image_key: `${TEST_USER}/c.png` },
+    ],
     [
       "replaceOriginal",
       (r: SupabaseItemRepository) => r.replaceOriginal(TEST_USER, ID, `${TEST_USER}/o.jpg`),
@@ -104,6 +108,12 @@ describe("SupabaseItemRepository, milestone 5", () => {
     expect(find(calls, "update")[0]![0]).toMatchObject(columns);
     expect(find(calls, "eq")).toContainEqual(["user_id", TEST_USER]);
     expect(find(calls, "eq")).toContainEqual(["id", ID]);
+  });
+
+  it("setCutoutKey only updates while the original is still the one the cut-out was made from", async () => {
+    const { client, calls } = fakeClient(null);
+    await new SupabaseItemRepository(client).setCutoutKey(TEST_USER, ID, `${TEST_USER}/c.png`, `${TEST_USER}/o.jpg`);
+    expect(find(calls, "eq")).toContainEqual(["original_image_key", `${TEST_USER}/o.jpg`]);
   });
 
   it("markManyReviewed updates the user's rows among the IDs and counts them", async () => {

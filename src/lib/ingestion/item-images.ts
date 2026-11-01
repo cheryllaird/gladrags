@@ -13,7 +13,7 @@
  */
 import "server-only";
 import { STORAGE_BUCKETS, UPLOAD_FIELDS, type WardrobeItem } from "@/contracts";
-import { notFound } from "@/lib/api/errors";
+import { ApiException, notFound } from "@/lib/api/errors";
 import type { UploadedImage } from "@/lib/api/upload";
 import type { ServerImageProcessor } from "@/lib/images/server";
 import { CUTOUT_RULES, ORIGINAL_RULES, checkUploadedCutout, checkUploadedImage, cleanImage, invalidImage } from "./images";
@@ -32,20 +32,34 @@ export interface ItemImageDeps extends WardrobeDeps {
  * pixels with alpha below 250) and no wider or taller than the item's
  * stored original. A PNG that isn't see-through is refused here: unlike
  * the old add-time cut-out there's nothing to fall back to, and saving it
- * would put a rectangle in every collage.
+ * would put a rectangle in every collage. An item still waiting for a
+ * photo (needsPhoto) is refused too: its original is a placeholder, so
+ * there's nothing to cut out.
  *
  * A newer cut-out replaces an older one, and the older file is deleted.
  * If two phones race, each deletes the file it replaced; a cut-out that
  * lost the race is left unreferenced and the orphaned-image cleanup
  * removes it.
+ *
+ * If the item's photo is replaced (PUT /api/items/[id]/photo) while this
+ * runs, the cut-out was made from the old picture: it isn't attached, its
+ * file is removed, and the answer is not_found ("the photo changed; try
+ * again"). The API has no 409 code, and not_found already means "this
+ * item, as you knew it, isn't there". The same answer, worded for a
+ * deleted item, comes if the item is deleted meanwhile.
  */
 export async function setItemCutout(deps: ItemImageDeps, userId: string, itemId: string, upload: UploadedImage): Promise<WardrobeItem> {
   const field = UPLOAD_FIELDS.cutout;
   const row = await deps.items.get(userId, itemId);
   if (!row) throw notFound("That item");
+  if (row.needs_photo) {
+    throw new ApiException("bad_request", "Add a photo first: this item doesn't have one to cut out yet", {
+      issues: [{ path: field, message: "The item has no photo yet" }],
+    });
+  }
 
   // The stored original is EXIF-stripped, so its size is already upright.
-  const storedOriginal = await deps.storage.download(STORAGE_BUCKETS.originals, row.original_image_key);
+  const storedOriginal = await downloadOriginal(deps, userId, itemId, row.original_image_key);
   const originalInfo = await deps.images.inspect(storedOriginal.data);
 
   const cutout = await checkUploadedCutout(deps.images, upload, field, originalInfo);
@@ -54,12 +68,36 @@ export async function setItemCutout(deps: ItemImageDeps, userId: string, itemId:
 
   const newKey = newImageKey(userId, clean.mimeType);
   await deps.storage.upload(STORAGE_BUCKETS.cutouts, newKey, clean);
-  const updated = await pointItemAt(deps, STORAGE_BUCKETS.cutouts, newKey, () => deps.items.setCutoutKey(userId, itemId, newKey));
+  const updated = await pointItemAt(deps, STORAGE_BUCKETS.cutouts, newKey, async () => {
+    // Only onto the picture it was cut from and measured against.
+    const saved = await deps.items.setCutoutKey(userId, itemId, newKey, row.original_image_key);
+    if (!saved && (await deps.items.get(userId, itemId))) throw photoChanged();
+    return saved;
+  });
 
   if (row.cutout_image_key && row.cutout_image_key !== newKey) {
     await removeReplaced(deps, STORAGE_BUCKETS.cutouts, row.cutout_image_key, itemId);
   }
   return toWardrobeItem(deps.storage, updated);
+}
+
+function photoChanged(): ApiException {
+  return new ApiException("not_found", "That item's photo changed while the cut-out was being saved. Please try again.");
+}
+
+/**
+ * The item's stored original. If it can't be read because the item was
+ * deleted meanwhile, that's not_found rather than a server error.
+ */
+async function downloadOriginal(deps: ItemImageDeps, userId: string, itemId: string, key: string) {
+  try {
+    return await deps.storage.download(STORAGE_BUCKETS.originals, key);
+  } catch (error) {
+    const current = await deps.items.get(userId, itemId);
+    if (!current) throw notFound("That item");
+    if (current.original_image_key !== key) throw photoChanged();
+    throw error;
+  }
 }
 
 /**

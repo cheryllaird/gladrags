@@ -141,12 +141,63 @@ describe("setItemCutout", () => {
     const deps = makeTestDeps();
     const row = await existingItem(deps);
     const setCutoutKey = deps.items.setCutoutKey.bind(deps.items);
-    vi.spyOn(deps.items, "setCutoutKey").mockImplementation(async (userId, id, key) => {
+    vi.spyOn(deps.items, "setCutoutKey").mockImplementation(async (userId, id, key, madeFrom) => {
       await deps.items.delete(userId, id);
-      return setCutoutKey(userId, id, key);
+      return setCutoutKey(userId, id, key, madeFrom);
     });
     const error = await apiError(setItemCutout(deps, TEST_USER, row.id, uploaded(await cutoutPng(), "c.png")));
     expect(error.code).toBe("not_found");
+    const cutouts = [...deps.storage.objects.keys()].filter((id) => id.startsWith(`${STORAGE_BUCKETS.cutouts}/`));
+    expect(cutouts).toEqual([]);
+  });
+});
+
+describe("setItemCutout: review fixes", () => {
+  it("refuses an item still waiting for a photo before reading any image", async () => {
+    const deps = makeTestDeps();
+    const row = await existingItem(deps, { source: "email", needsPhoto: true });
+    const download = vi.spyOn(deps.storage, "download");
+    const before = objectCount(deps);
+    const error = await apiError(setItemCutout(deps, TEST_USER, row.id, uploaded(await cutoutPng(), "c.png")));
+    expect(error.code).toBe("bad_request");
+    expect(error.message).toMatch(/Add a photo first/);
+    expect(download).not.toHaveBeenCalled();
+    expect(objectCount(deps)).toBe(before);
+  });
+
+  it("answers not_found, not a 500, when the item is deleted before its original is read", async () => {
+    const deps = makeTestDeps();
+    const row = await existingItem(deps);
+    const download = deps.storage.download.bind(deps.storage);
+    vi.spyOn(deps.storage, "download").mockImplementationOnce(async (bucket, key) => {
+      await deps.items.delete(TEST_USER, row.id);
+      await deps.storage.remove(bucket, [key]);
+      return download(bucket, key);
+    });
+    const error = await apiError(setItemCutout(deps, TEST_USER, row.id, uploaded(await cutoutPng(), "c.png")));
+    expect(error.code).toBe("not_found");
+  });
+
+  it("still fails as a server error when the original is missing but the item is there", async () => {
+    const deps = makeTestDeps();
+    const row = await existingItem(deps);
+    await deps.storage.remove(STORAGE_BUCKETS.originals, [row.original_image_key]);
+    await expect(setItemCutout(deps, TEST_USER, row.id, uploaded(await cutoutPng(), "c.png"))).rejects.not.toBeInstanceOf(ApiException);
+  });
+
+  it("doesn't attach a cut-out of the old picture after the photo was replaced, and removes its file", async () => {
+    const deps = makeTestDeps();
+    const row = await existingItem(deps);
+    const setCutoutKey = deps.items.setCutoutKey.bind(deps.items);
+    vi.spyOn(deps.items, "setCutoutKey").mockImplementationOnce(async (userId, id, key, madeFrom) => {
+      await replaceItemPhoto(deps, userId, id, uploaded(await phoneJpeg({ width: 800, height: 600 }), "new.jpg"));
+      return setCutoutKey(userId, id, key, madeFrom);
+    });
+    const error = await apiError(setItemCutout(deps, TEST_USER, row.id, uploaded(await cutoutPng(), "c.png")));
+    expect(error.code).toBe("not_found");
+    expect(error.message).toMatch(/photo changed/);
+    const after = (await deps.items.get(TEST_USER, row.id))!;
+    expect(after.cutout_image_key).toBeNull();
     const cutouts = [...deps.storage.objects.keys()].filter((id) => id.startsWith(`${STORAGE_BUCKETS.cutouts}/`));
     expect(cutouts).toEqual([]);
   });

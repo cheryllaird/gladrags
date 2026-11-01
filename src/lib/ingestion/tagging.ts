@@ -9,7 +9,8 @@
  * before the call is made.
  */
 import "server-only";
-import { TaggingModelOutputSchema, type ItemTags } from "@/contracts";
+import { z } from "zod";
+import { EMAIL_LINE_ITEM_LIMITS, TaggingModelOutputSchema, scrapedText, type EmailLineItem, type ItemTags } from "@/contracts";
 import { canTagFromText } from "@/lib/ai/tagging-input";
 import { callWithValidation } from "@/lib/ai/validate";
 import type { ImageInput, TaggingInput, TaggingProvider } from "@/lib/ai/types";
@@ -41,18 +42,34 @@ export async function suggestTags(
   return tagWithRetry(deps, userId, { image: modelImage, ...(productHints ? { productHints } : {}) });
 }
 
-/** Product details for tagging an item without a picture. The title is required. */
+/**
+ * Product details for tagging an item without a picture: an order-email
+ * line's name (as `title`), brand and colour. The title is required.
+ */
 export interface TextTaggingHints {
-  title: string;
-  brand?: string | null;
-  colour?: string | null;
+  title: EmailLineItem["name"];
+  brand?: EmailLineItem["brand"];
+  colour?: EmailLineItem["colour"];
 }
+
+/**
+ * The hints as they may reach a prompt, cleaned with the contract's rules
+ * for email text whatever the caller passed: single line (line breaks and
+ * other whitespace flattened to spaces), length-limited like an email line
+ * item, and blank read as null.
+ */
+const TextTaggingHintsSchema = z.object({
+  title: scrapedText(EMAIL_LINE_ITEM_LIMITS.name),
+  brand: scrapedText(EMAIL_LINE_ITEM_LIMITS.brand),
+  colour: scrapedText(EMAIL_LINE_ITEM_LIMITS.colour),
+});
 
 /**
  * Tag one item from its product details alone, for an order-email line
  * with no usable picture (CONTRACTS.md section 11, decision 13). Same
  * validation, single retry, cost metering and fallback as suggestTags.
- * Returns null without calling the model if the title is blank.
+ * The hints are cleaned first (TextTaggingHintsSchema). Returns null
+ * without calling the model if the title is blank.
  *
  * The caller must already have checked the caps (UsageGuard.assertCanStart).
  */
@@ -61,8 +78,13 @@ export async function suggestTagsFromText(
   userId: string,
   productHints: TextTaggingHints,
 ): Promise<ItemTags | null> {
-  if (!canTagFromText(productHints)) return null;
-  return tagWithRetry(deps, userId, { image: null, productHints });
+  const parsed = TextTaggingHintsSchema.safeParse({
+    title: productHints.title,
+    brand: productHints.brand ?? null,
+    colour: productHints.colour ?? null,
+  });
+  if (!parsed.success || !canTagFromText(parsed.data)) return null;
+  return tagWithRetry(deps, userId, { image: null, productHints: parsed.data });
 }
 
 async function tagWithRetry(deps: Pick<TaggingDeps, "tagger" | "usage">, userId: string, input: TaggingInput): Promise<ItemTags | null> {

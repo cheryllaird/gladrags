@@ -57,8 +57,13 @@ export interface ItemRepository {
   markReviewed(userId: string, id: string): Promise<ItemRow | null>;
   /** Clear needs_review on several items. Returns how many of the IDs were the user's items. */
   markManyReviewed(userId: string, ids: readonly string[]): Promise<number>;
-  /** Point the item at a new cut-out. Null if there's no such item. */
-  setCutoutKey(userId: string, id: string, cutoutKey: string): Promise<ItemRow | null>;
+  /**
+   * Point the item at a new cut-out, only if its original is still
+   * `madeFromOriginalKey` (the picture the cut-out was made from and
+   * measured against). Null if there's no such item, or its photo has
+   * changed since.
+   */
+  setCutoutKey(userId: string, id: string, cutoutKey: string, madeFromOriginalKey: string): Promise<ItemRow | null>;
   /**
    * Give the item a new original: drops its cut-out (cut from the old
    * picture), clears needs_photo and marks it "to review". Null if there's no such item.
@@ -173,8 +178,8 @@ export class SupabaseItemRepository implements ItemRepository {
     return (data ?? []).length;
   }
 
-  async setCutoutKey(userId: string, id: string, cutoutKey: string): Promise<ItemRow | null> {
-    return this.updateOne(userId, id, { cutout_image_key: cutoutKey });
+  async setCutoutKey(userId: string, id: string, cutoutKey: string, madeFromOriginalKey: string): Promise<ItemRow | null> {
+    return this.updateOne(userId, id, { cutout_image_key: cutoutKey }, { original_image_key: madeFromOriginalKey });
   }
 
   async replaceOriginal(userId: string, id: string, originalKey: string): Promise<ItemRow | null> {
@@ -186,14 +191,16 @@ export class SupabaseItemRepository implements ItemRepository {
     });
   }
 
-  private async updateOne(userId: string, id: string, columns: Record<string, unknown>): Promise<ItemRow | null> {
-    const { data, error } = await this.db
-      .from("items")
-      .update(columns)
-      .eq("user_id", userId)
-      .eq("id", id)
-      .select(ITEM_COLUMNS)
-      .maybeSingle();
+  /** Update one of the user's items, optionally only while other columns still hold the given values. */
+  private async updateOne(
+    userId: string,
+    id: string,
+    columns: Record<string, unknown>,
+    unlessChanged: Record<string, string> = {},
+  ): Promise<ItemRow | null> {
+    let request = this.db.from("items").update(columns).eq("user_id", userId).eq("id", id);
+    for (const [column, value] of Object.entries(unlessChanged)) request = request.eq(column, value);
+    const { data, error } = await request.select(ITEM_COLUMNS).maybeSingle();
     if (error?.code === UNIQUE_VIOLATION) throw new DuplicateImageKeyError();
     if (error) throw new Error(`Couldn't update the item: ${error.message}`);
     return parseRow(data);
@@ -333,9 +340,9 @@ export class InMemoryItemRepository implements ItemRepository, ImageReferences {
     return updated;
   }
 
-  async setCutoutKey(userId: string, id: string, cutoutKey: string): Promise<ItemRow | null> {
+  async setCutoutKey(userId: string, id: string, cutoutKey: string, madeFromOriginalKey: string): Promise<ItemRow | null> {
     const row = this.rows.get(id);
-    if (!row || row.user_id !== userId) return null;
+    if (!row || row.user_id !== userId || row.original_image_key !== madeFromOriginalKey) return null;
     this.assertKeysFree([cutoutKey], id);
     row.cutout_image_key = cutoutKey;
     return structuredClone(row);
