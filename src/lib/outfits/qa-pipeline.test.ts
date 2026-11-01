@@ -11,6 +11,8 @@ import { FakeRankingProvider } from "@/lib/ai/fakes";
 import type { ModelCall, RankingProvider } from "@/lib/ai/types";
 import { ApiException } from "@/lib/api/errors";
 import { INVENTED_ID, W, WARDROBE, shortlistReplies } from "@/test/fixtures/outfit-engine";
+import { okResult } from "@/test/fixtures/outfit-engine";
+import { MockRankingProvider } from "./mock-ranking";
 import { entry, wardrobe } from "@/test/outfit-helpers";
 import { seededRandom } from "./candidates";
 import { runOutfitPipeline, type PipelineDeps, type PipelineInput } from "./pipeline";
@@ -119,7 +121,7 @@ describe("QA validation: partial-good results keep the good ones", () => {
       ],
     });
     const result = await runOutfitPipeline(input({ anchorItemId: W.coat }), deps(ranking));
-    expect(result).toEqual({ status: "ok", outfits: [good] });
+    expect(result).toEqual(okResult([good]));
   });
 
   it("a good pick on attempt 1 survives when attempt 2 throws", async () => {
@@ -134,7 +136,7 @@ describe("QA validation: partial-good results keep the good ones", () => {
       },
     };
     const result = await runOutfitPipeline(input({ anchorItemId: W.coat }), deps(ranking));
-    expect(result).toEqual({ status: "ok", outfits: [good] });
+    expect(result).toEqual(okResult([good]));
     expect(calls).toBe(2);
   });
 
@@ -153,14 +155,14 @@ describe("QA validation: partial-good results keep the good ones", () => {
     const reply = { outfits: [good, BAD_AROUND_COAT.duplicate.outfits[0]] };
     const ranking = new FakeRankingProvider({ shortlist: [shortlistReplies.aroundCoat], final: [reply] });
     const result = await runOutfitPipeline(input({ anchorItemId: W.coat }), deps(ranking));
-    expect(result).toEqual({ status: "ok", outfits: [good] });
+    expect(result).toEqual(okResult([good]));
   });
 
   it("keeps the good outfits when one name is too long, on both attempts", async () => {
     const longName = named([W.dress, W.shoes2, W.coat], "An extremely long outfit name that goes on and on");
     const ranking = new FakeRankingProvider({ shortlist: [shortlistReplies.aroundCoat], final: [{ outfits: [good, longName] }] });
     const result = await runOutfitPipeline(input({ anchorItemId: W.coat }), deps(ranking));
-    expect(result).toEqual({ status: "ok", outfits: [good] });
+    expect(result).toEqual(okResult([good]));
   });
 });
 
@@ -184,19 +186,21 @@ describe("QA caps inside the pipeline: failed model calls are still costed and c
     }
   });
 
-  it("nothing_fits and missing_category never start ranking", async () => {
+  it("nothing_fits and an empty wardrobe never start ranking", async () => {
     const lounge = wardrobe({ top: 2, bottom: 2, shoes: 2 }, { formality: 1, occasions: ["comfy"] });
     const ranking = new FakeRankingProvider({ shortlist: [{}], final: [{}] });
     const r1 = await runOutfitPipeline(input({ items: lounge, style: { kind: "preset", presetId: "formal_event" } }), deps(ranking));
     expect(r1).toMatchObject({ status: "incomplete_wardrobe", reason: "nothing_fits" });
-    const r2 = await runOutfitPipeline(input({ items: wardrobe({ top: 2, bottom: 2 }) }), deps(ranking));
-    expect(r2).toMatchObject({ status: "incomplete_wardrobe", reason: "missing_category", missingCategories: ["shoes"] });
+    const r2 = await runOutfitPipeline(input({ items: [] }), deps(ranking));
+    expect(r2).toEqual({ status: "incomplete_wardrobe", reason: "empty_wardrobe", missingCategories: [] });
     expect(starts).toBe(0);
     expect(costs).toEqual([]);
   });
 });
 
-describe("QA missing category is anchor-aware", () => {
+// Since milestone 5 a missing category becomes a gap in each outfit; the
+// result still lists what's missing, judged around the anchor.
+describe("QA missing categories become gaps, anchor-aware", () => {
   const cases: [string, Parameters<typeof wardrobe>[0], string, string[]][] = [
     ["top anchor, no bottoms but a dress", { top: 1, dress_jumpsuit: 1, shoes: 1 }, "top", ["bottom"]],
     ["bottom anchor, no tops but a dress", { bottom: 1, dress_jumpsuit: 1, shoes: 1 }, "bottom", ["top"]],
@@ -208,20 +212,30 @@ describe("QA missing category is anchor-aware", () => {
     it(name, async () => {
       const items = wardrobe(counts);
       const anchor = items.find((i) => i.tags.category === anchorCategory)!;
-      const ranking = new FakeRankingProvider({ shortlist: [{}], final: [{}] });
-      const result = await runOutfitPipeline(input({ items, anchorItemId: anchor.id }), deps(ranking));
-      expect(result).toEqual({ status: "incomplete_wardrobe", reason: "missing_category", missingCategories: missing });
-      expect(starts).toBe(0);
+      const result = await runOutfitPipeline(input({ items, anchorItemId: anchor.id }), deps(new MockRankingProvider()));
+      expect(result).toMatchObject({ status: "ok", missingCategories: missing });
+      if (result.status !== "ok") return;
+      // Only required-slot gaps (no shop items asked for): the missing
+      // categories, or one dress standing in for a missing top and bottom.
+      const allowed = new Set([...missing, ...(missing.includes("top") && missing.includes("bottom") ? ["dress_jumpsuit"] : [])]);
+      for (const outfit of result.outfits) {
+        expect(outfit.itemIds).toContain(anchor.id);
+        expect(outfit.gaps.length).toBeGreaterThan(0);
+        for (const gap of outfit.gaps) expect(allowed.has(gap.category)).toBe(true);
+      }
+      expect(starts).toBe(1);
     });
   }
 
-  it("a top anchor with a dress and shoes but no bottoms doesn't fall back to the dress", async () => {
+  it("a top anchor with a dress and shoes but no bottoms gets a bottom gap, never the dress", async () => {
     const items = wardrobe({ top: 1, dress_jumpsuit: 3, shoes: 2 });
-    const result = await runOutfitPipeline(
-      input({ items, anchorItemId: items[0]!.id }),
-      deps(new FakeRankingProvider({ shortlist: [{}], final: [{}] })),
-    );
-    expect(result).toMatchObject({ reason: "missing_category", missingCategories: ["bottom"] });
+    const result = await runOutfitPipeline(input({ items, anchorItemId: items[0]!.id }), deps(new MockRankingProvider()));
+    expect(result).toMatchObject({ status: "ok", missingCategories: ["bottom"] });
+    if (result.status !== "ok") return;
+    for (const outfit of result.outfits) {
+      expect(outfit.gaps.map((g) => g.category)).toEqual(["bottom"]);
+      expect(outfit.itemIds.some((id) => items.find((i) => i.id === id)!.tags.category === "dress_jumpsuit")).toBe(false);
+    }
   });
 });
 
@@ -359,8 +373,8 @@ describe("QA anchor of every category through the pipeline", () => {
       const ranking = new FakeRankingProvider({ shortlist: [{}], final: [{}] });
       const seen: string[][] = [];
       ranking.shortlist = async (i) => {
-        seen.push(...i.candidates);
-        return { raw: { outfits: i.candidates.slice(0, 8).map((itemIds) => ({ itemIds })) }, provider: "f", model: "f" };
+        seen.push(...i.candidates.map((c) => c.itemIds));
+        return { raw: { outfits: i.candidates.slice(0, 8).map(({ itemIds }) => ({ itemIds })) }, provider: "f", model: "f" };
       };
       ranking.pickFinal = async (i) => {
         seen.push(...i.shortlist.map((o) => o.itemIds));

@@ -155,7 +155,7 @@ export class OutfitService {
       count: REFINE_COUNT,
       keepItemIds: swappedOut ? parent.itemIds.filter((id) => id !== swappedOut) : undefined,
       excludeOutfits: [{ itemIds: parent.itemIds, gaps: parent.gaps.map((g) => g.category) }],
-      refinement: { previousItemIds: parent.itemIds, previousGaps, feedback: refine },
+      refinement: { previousItemIds: parent.itemIds, ...(previousGaps.length > 0 ? { previousGaps } : {}), feedback: refine },
     });
   }
 

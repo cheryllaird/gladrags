@@ -103,3 +103,12 @@ export const finalReplies = {
     ],
   },
 };
+
+/**
+ * The pipeline's "ok" result for these picks: each outfit with its gaps
+ * (none unless given) and the wardrobe's missing categories (none unless
+ * given).
+ */
+export function okResult(outfits: readonly ({ itemIds: string[]; name: string; reason: string } & { gaps?: unknown[] })[], missingCategories: string[] = []) {
+  return { status: "ok", outfits: outfits.map((o) => ({ ...o, gaps: o.gaps ?? [] })), missingCategories };
+}

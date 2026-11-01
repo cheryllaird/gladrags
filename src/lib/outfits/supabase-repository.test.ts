@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { OutfitSchema, type StoredOutfitRequest } from "@/contracts";
+import { OutfitSchema, type GapDescription, type ShopProduct, type StoredOutfitRequest } from "@/contracts";
 import { FakeSupabase } from "@/test/fake-supabase";
 import { entry, toItemRow, uuid } from "@/test/outfit-helpers";
 import { SupabaseOutfitRepository } from "./supabase-repository";
@@ -37,8 +37,8 @@ describe("SupabaseOutfitRepository", () => {
 
   it("saves outfits in ranked order and returns them with signed item images", async () => {
     const saved = await repo.insertOutfits(ALICE, [
-      { request: REQUEST, name: "First", reason: "Best", itemIds: [uuid(1), uuid(2), uuid(3)], parentOutfitId: null },
-      { request: REQUEST, name: "Second", reason: "Next", itemIds: [uuid(2), uuid(1), uuid(3)], parentOutfitId: null },
+      { request: REQUEST, name: "First", reason: "Best", itemIds: [uuid(1), uuid(2), uuid(3)], gaps: [], parentOutfitId: null },
+      { request: REQUEST, name: "Second", reason: "Next", itemIds: [uuid(2), uuid(1), uuid(3)], gaps: [], parentOutfitId: null },
     ]);
     expect(saved.map((o) => o.name)).toEqual(["First", "Second"]);
     for (const outfit of saved) expect(OutfitSchema.parse(outfit)).toEqual(outfit);
@@ -52,15 +52,15 @@ describe("SupabaseOutfitRepository", () => {
   });
 
   it("stores parent_outfit_id for refinements", async () => {
-    const [parent] = await repo.insertOutfits(ALICE, [{ request: REQUEST, name: "P", reason: "R", itemIds: [uuid(1), uuid(2), uuid(3)], parentOutfitId: null }]);
-    const [child] = await repo.insertOutfits(ALICE, [{ request: REQUEST, name: "C", reason: "R", itemIds: [uuid(2), uuid(1), uuid(3)], parentOutfitId: parent!.id }]);
+    const [parent] = await repo.insertOutfits(ALICE, [{ request: REQUEST, name: "P", reason: "R", itemIds: [uuid(1), uuid(2), uuid(3)], gaps: [], parentOutfitId: null }]);
+    const [child] = await repo.insertOutfits(ALICE, [{ request: REQUEST, name: "C", reason: "R", itemIds: [uuid(2), uuid(1), uuid(3)], gaps: [], parentOutfitId: parent!.id }]);
     expect(child!.parentOutfitId).toBe(parent!.id);
     expect(db.tables.outfits![1]!.parent_outfit_id).toBe(parent!.id);
   });
 
   it("lists newest first, by status, and hides other users' outfits", async () => {
-    const [a] = await repo.insertOutfits(ALICE, [{ request: REQUEST, name: "A", reason: "R", itemIds: [uuid(1), uuid(2), uuid(3)], parentOutfitId: null }]);
-    const [b] = await repo.insertOutfits(ALICE, [{ request: REQUEST, name: "B", reason: "R", itemIds: [uuid(2), uuid(1), uuid(3)], parentOutfitId: null }]);
+    const [a] = await repo.insertOutfits(ALICE, [{ request: REQUEST, name: "A", reason: "R", itemIds: [uuid(1), uuid(2), uuid(3)], gaps: [], parentOutfitId: null }]);
+    const [b] = await repo.insertOutfits(ALICE, [{ request: REQUEST, name: "B", reason: "R", itemIds: [uuid(2), uuid(1), uuid(3)], gaps: [], parentOutfitId: null }]);
     await repo.setStatus(ALICE, a!.id, "saved");
     expect((await repo.listOutfits(ALICE)).map((o) => o.name)).toEqual(["B", "A"]);
     expect((await repo.listOutfits(ALICE, "saved")).map((o) => o.id)).toEqual([a!.id]);
@@ -70,15 +70,61 @@ describe("SupabaseOutfitRepository", () => {
     expect((await repo.getOutfit(ALICE, b!.id))!.status).toBe("suggested");
   });
 
-  it("lists rejected outfits' item IDs, newest first", async () => {
+  it("lists rejected outfits' item IDs and gap slots, newest first", async () => {
     const [a, b] = await repo.insertOutfits(ALICE, [
-      { request: REQUEST, name: "A", reason: "R", itemIds: [uuid(1), uuid(2), uuid(3)], parentOutfitId: null },
-      { request: REQUEST, name: "B", reason: "R", itemIds: [uuid(2), uuid(1), uuid(3)], parentOutfitId: null },
+      { request: REQUEST, name: "A", reason: "R", itemIds: [uuid(1), uuid(2), uuid(3)], gaps: [], parentOutfitId: null },
+      { request: REQUEST, name: "B", reason: "R", itemIds: [uuid(2), uuid(1), uuid(3)], gaps: [], parentOutfitId: null },
     ]);
     await repo.setStatus(ALICE, a!.id, "rejected");
     await repo.setStatus(ALICE, b!.id, "rejected");
-    expect(await repo.listRejectedItemIds(ALICE, 30)).toEqual([b!.itemIds, a!.itemIds]);
-    expect(await repo.listRejectedItemIds(ALICE, 1)).toEqual([b!.itemIds]);
+    expect(await repo.listRejectedOutfits(ALICE, 30)).toEqual([
+      { itemIds: b!.itemIds, gaps: [] },
+      { itemIds: a!.itemIds, gaps: [] },
+    ]);
+    expect(await repo.listRejectedOutfits(ALICE, 1)).toEqual([{ itemIds: b!.itemIds, gaps: [] }]);
+  });
+
+  it("never points ranking at the placeholder picture of an item waiting for a photo (needs_photo)", async () => {
+    db.tables.items!.push({ ...itemRow(5, ALICE, "bottom"), needs_photo: true, needs_review: true });
+    const items = await repo.listWardrobe(ALICE);
+    expect(items.find((i) => i.id === uuid(5))!.image).toBeNull();
+    expect(items.find((i) => i.id === uuid(1))!.image).not.toBeNull();
+  });
+
+  it("stores gaps with no shop results yet, reads them back, and keeps ranked order when items repeat", async () => {
+    const shoesGap: GapDescription = { category: "shoes", subcategory: "trainers", colours: ["white"], description: "White leather trainers" };
+    const bottomGap: GapDescription = { category: "bottom", subcategory: null, colours: ["blue"], description: "Straight jeans" };
+    const saved = await repo.insertOutfits(ALICE, [
+      { request: { ...REQUEST, includeShopItems: true }, name: "First", reason: "R", itemIds: [uuid(1)], gaps: [bottomGap, shoesGap], parentOutfitId: null },
+      { request: REQUEST, name: "Second", reason: "R", itemIds: [uuid(1), uuid(2)], gaps: [shoesGap], parentOutfitId: null },
+    ]);
+    expect(saved.map((o) => o.name)).toEqual(["First", "Second"]);
+    expect(saved[0]!.gaps).toEqual([
+      { ...bottomGap, shopResults: [], searchedAt: null, shopProduct: null },
+      { ...shoesGap, shopResults: [], searchedAt: null, shopProduct: null },
+    ]);
+    expect(saved[0]!.request.includeShopItems).toBe(true);
+    expect(db.tables.outfits![0]!.gaps).toHaveLength(2);
+    expect((await repo.getOutfit(ALICE, saved[1]!.id))!.gaps.map((g) => g.category)).toEqual(["shoes"]);
+    await repo.setStatus(ALICE, saved[1]!.id, "rejected");
+    expect(await repo.listRejectedOutfits(ALICE, 30)).toEqual([{ itemIds: [uuid(1), uuid(2)], gaps: ["shoes"] }]);
+  });
+
+  it("updates an outfit's gaps for its owner only", async () => {
+    const gap: GapDescription = { category: "shoes", subcategory: null, colours: ["white"], description: "White trainers" };
+    const [outfit] = await repo.insertOutfits(ALICE, [{ request: REQUEST, name: "A", reason: "R", itemIds: [uuid(1), uuid(2)], gaps: [gap], parentOutfitId: null }]);
+    const product: ShopProduct = { shopId: "next", title: "Trainers", url: "https://www.next.co.uk/p/1", priceText: "£30", imageUrl: null };
+    const gaps = [{ ...gap, shopResults: [product], searchedAt: "2026-10-31T10:00:00.000Z", shopProduct: product }];
+    expect(await repo.updateGaps(BOB, outfit!.id, gaps)).toBeNull();
+    const updated = await repo.updateGaps(ALICE, outfit!.id, gaps);
+    expect(updated!.gaps).toEqual(gaps);
+    expect((await repo.getOutfit(ALICE, outfit!.id))!.gaps[0]!.shopProduct).toEqual(product);
+  });
+
+  it("reads the favourite shops, with the defaults for a missing settings row", async () => {
+    db.tables.user_settings = [{ user_id: ALICE, favourite_shop_ids: ["zara", "hm"], forwarding_token: "0123456789abcdef0123456789abcdef", updated_at: "2026-10-30 10:00:00+00" }];
+    expect(await repo.getFavouriteShopIds(ALICE)).toEqual(["zara", "hm"]);
+    expect(await repo.getFavouriteShopIds(BOB)).toEqual(["next", "marks_and_spencer", "new_look"]);
   });
 
   it("records feedback rows", async () => {
@@ -87,7 +133,7 @@ describe("SupabaseOutfitRepository", () => {
   });
 
   it("skips an outfit whose item has gone (deleted mid-request)", async () => {
-    const [a] = await repo.insertOutfits(ALICE, [{ request: REQUEST, name: "A", reason: "R", itemIds: [uuid(1), uuid(2), uuid(3)], parentOutfitId: null }]);
+    const [a] = await repo.insertOutfits(ALICE, [{ request: REQUEST, name: "A", reason: "R", itemIds: [uuid(1), uuid(2), uuid(3)], gaps: [], parentOutfitId: null }]);
     db.tables.items = db.tables.items!.filter((i) => i.id !== uuid(3));
     expect(await repo.getOutfit(ALICE, a!.id)).toBeNull();
   });

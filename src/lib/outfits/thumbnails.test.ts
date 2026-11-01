@@ -29,7 +29,7 @@ describe("ResizingThumbnailSource", () => {
     });
     const thumbs = await source.getThumbnails(items);
     expect([...thumbs.keys()]).toEqual(items.map((i) => i.id));
-    expect(downloads).toEqual(items.map((i) => i.image.key));
+    expect(downloads).toEqual(items.map((i) => i.image!.key));
     expect(sizes).toEqual([RANKING_THUMBNAIL_PX, RANKING_THUMBNAIL_PX]);
     expect(RANKING_THUMBNAIL_PX).toBe(256);
     expect(thumbs.get(items[0]!.id)!.data).toHaveLength(8);
@@ -41,8 +41,8 @@ describe("ResizingThumbnailSource", () => {
     const undecodable = new Uint8Array([0]);
     const store: ImageStore = {
       download: async (ref) => {
-        if (ref.key === items[1]!.image.key) throw new Error("gone"); // download fails
-        if (ref.key === items[2]!.image.key) return { data: undecodable, mimeType: "image/png" }; // resize fails
+        if (ref.key === items[1]!.image!.key) throw new Error("gone"); // download fails
+        if (ref.key === items[2]!.image!.key) return { data: undecodable, mimeType: "image/png" }; // resize fails
         return png();
       },
     };

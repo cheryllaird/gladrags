@@ -198,7 +198,7 @@ describe("QA routes: refine", () => {
     for (const o of final.shortlist) expect(o.itemIds).not.toContain(W.shoes1);
     for (const call of ranking.shortlistCalls) {
       expect(call.items.map((i) => i.id)).not.toContain(W.shoes1);
-      expect(call.candidates.flat()).not.toContain(W.shoes1);
+      expect(call.candidates.flatMap((c) => c.itemIds)).not.toContain(W.shoes1);
     }
     expect(outfitRequests()).toBe(2);
   });
@@ -252,7 +252,7 @@ describe("QA routes: avoid hints are scoped to the user", () => {
     });
     await generate();
     expect(ranking.shortlistCalls[0]!.avoidPairs).toEqual([]);
-    const sentKeys = ranking.shortlistCalls[0]!.candidates.map((ids) => [...ids].sort().join());
+    const sentKeys = ranking.shortlistCalls[0]!.candidates.map((c) => [...c.itemIds].sort().join());
     expect(sentKeys).toContain([W.top1, W.bottom1, W.shoes1].sort().join());
   });
 
@@ -264,6 +264,6 @@ describe("QA routes: avoid hints are scoped to the user", () => {
     const call = ranking.shortlistCalls[0]!;
     expect(call.avoidPairs.length).toBeGreaterThan(0);
     const firstKey = [...first!.itemIds].sort().join();
-    expect(call.candidates.map((ids) => [...ids].sort().join())).not.toContain(firstKey);
+    expect(call.candidates.map((c) => [...c.itemIds].sort().join())).not.toContain(firstKey);
   });
 });

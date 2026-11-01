@@ -106,7 +106,7 @@ function firstPick() {
   };
   ranking.shortlist = async (i) => {
     ranking.shortlistCalls.push(i);
-    return { raw: { outfits: i.candidates.slice(0, 8).map((itemIds) => ({ itemIds })) }, provider: "fake", model: "f" };
+    return { raw: { outfits: i.candidates.slice(0, 8).map(({ itemIds }) => ({ itemIds })) }, provider: "fake", model: "f" };
   };
   return ranking;
 }
@@ -181,7 +181,7 @@ describe("QA filter: custom style through the pipeline", () => {
     expect(formalities).toEqual(new Set([1, 3, 5]));
     expect(call.items.some((i) => i.tags.seasons.length === 1)).toBe(false);
     const byId = new Map(items.map((i) => [i.id, i.tags.formality]));
-    for (const ids of call.candidates) {
+    for (const { itemIds: ids } of call.candidates) {
       const f = ids.map((id) => byId.get(id)!);
       expect(Math.max(...f) - Math.min(...f)).toBeLessThanOrEqual(2);
     }
