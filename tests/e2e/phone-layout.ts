@@ -13,6 +13,16 @@ export async function expectNoSidewaysScroll(page: Page) {
         return r.width > 0 && (r.right > window.innerWidth + 1 || r.left < -1) && getComputedStyle(el).position !== "fixed";
       })
       .filter((el) => !el.closest(".sr-only") && !el.classList.contains("sr-only"))
+      // Clipped by an ancestor that hides its overflow and itself fits (a progress bar's indicator, say).
+      .filter((el) => {
+        for (let parent = el.parentElement; parent; parent = parent.parentElement) {
+          if (getComputedStyle(parent).overflowX !== "visible") {
+            const r = parent.getBoundingClientRect();
+            if (r.left >= -1 && r.right <= window.innerWidth + 1) return false;
+          }
+        }
+        return true;
+      })
       .slice(0, 5)
       .map((el) => `${el.tagName.toLowerCase()}.${el.className.toString().slice(0, 40)}`),
   }));
