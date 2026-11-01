@@ -151,7 +151,7 @@ describe("validation and the single retry", () => {
     const ranking = fake([shortlistReplies.valid], [finalReplies.inventedItemId]);
     const result = await runOutfitPipeline(input(), deps(ranking));
     expect(ranking.finalCalls).toHaveLength(2);
-    expect(result).toEqual(okResult([finalReplies.inventedItemId.outfits[0]]));
+    expect(result).toEqual(okResult([finalReplies.inventedItemId.outfits[0]!]));
     // The invented ID never comes back.
     expect(JSON.stringify(result)).not.toContain(INVENTED_ID);
   });

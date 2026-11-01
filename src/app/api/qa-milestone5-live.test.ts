@@ -32,15 +32,12 @@ import * as itemLinkCutout from "./items/link/cutout/route";
 import * as itemPhoto from "./items/photo/route";
 import * as itemsReviewed from "./items/reviewed/route";
 import * as items from "./items/route";
-import * as gapProduct from "./outfits/[id]/gaps/[category]/route";
-import * as shopSearch from "./outfits/[id]/shop-search/route";
 import * as forwardingAddress from "./settings/forwarding-address/route";
 import * as settings from "./settings/route";
 
 const BASE = "https://gladrags.example";
 const ID = "1a000000-0000-4000-8000-000000000001";
 const ctx = (id: string) => ({ params: Promise.resolve({ id }) });
-const gapCtx = (id: string, category: string) => ({ params: Promise.resolve({ id, category }) });
 const IMAGE_KEY = `0a000000-0000-4000-8000-000000000001/${ID}.jpg`;
 
 function json(path: string, method: string, body?: unknown, headers: Record<string, string> = {}): Request {
@@ -89,11 +86,9 @@ const CASES: [string, () => Promise<Response>][] = [
   ["POST /api/items/reviewed", () => itemsReviewed.POST(json("/api/items/reviewed", "POST", { itemIds: [ID] }))],
   ["PUT /api/items/:id/cutout", () => itemCutout.PUT(form(`/api/items/${ID}/cutout`, "PUT", { cutout: png() }), ctx(ID))],
   ["PUT /api/items/:id/photo", () => itemPhotoReplace.PUT(form(`/api/items/${ID}/photo`, "PUT", { original: jpeg() }), ctx(ID))],
-  ["POST /api/outfits/:id/shop-search", () => shopSearch.POST(json(`/api/outfits/${ID}/shop-search`, "POST"), ctx(ID))],
-  [
-    "PUT /api/outfits/:id/gaps/:category",
-    () => gapProduct.PUT(json(`/api/outfits/${ID}/gaps/shoes`, "PUT", { productUrl: "https://www.next.co.uk/p/1" }), gapCtx(ID, "shoes")),
-  ],
+  // POST /api/outfits/:id/shop-search and PUT /api/outfits/:id/gaps/:category
+  // are built (C4): src/app/api/outfits/shop-search-live.test.ts covers them
+  // with mock mode off.
   ["GET /api/items?needsReview=true", () => items.GET(json("/api/items?needsReview=true", "GET"))],
   ["GET /api/items?needsReview=false", () => items.GET(json("/api/items?needsReview=false", "GET"))],
   ["PATCH /api/items/:id { reviewed: true }", () => itemById.PATCH(json(`/api/items/${ID}`, "PATCH", { reviewed: true }), ctx(ID))],
