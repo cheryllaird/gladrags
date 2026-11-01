@@ -1,0 +1,7 @@
+{
+  "model": "none",
+  "synthetic": true,
+  "note": "Hand-made bad reply: two entries for one gap.",
+  "recordedAt": null,
+  "text": "{\"gaps\": [{\"category\": \"shoes\", \"candidates\": []}, {\"category\": \"shoes\", \"candidates\": []}]}"
+}

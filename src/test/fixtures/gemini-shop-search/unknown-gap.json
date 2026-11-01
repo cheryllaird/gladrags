@@ -1,0 +1,7 @@
+{
+  "model": "none",
+  "synthetic": true,
+  "note": "Hand-made bad reply: results for a bottom gap the outfit doesn't have.",
+  "recordedAt": null,
+  "text": "{\"gaps\": [{\"category\": \"shoes\", \"candidates\": [{\"url\": \"https://www.next.co.uk/style/st123456/k98765\", \"title\": \"Trainers\"}]}, {\"category\": \"bottom\", \"candidates\": [{\"url\": \"https://www.next.co.uk/style/st7/k7\", \"title\": \"Jeans\"}]}]}"
+}
