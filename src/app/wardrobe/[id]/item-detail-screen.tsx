@@ -1,6 +1,6 @@
 "use client";
 
-import { ExternalLinkIcon, PencilIcon, SparklesIcon, Trash2Icon } from "lucide-react";
+import { CheckIcon, ExternalLinkIcon, ImageOffIcon, PencilIcon, SparklesIcon, Trash2Icon } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -30,11 +30,12 @@ import {
   WARMTH_LABELS,
   categoryLine,
 } from "@/components/wardrobe/labels";
+import { AddPhotoButton } from "@/components/wardrobe/review/add-photo-button";
 import { StickyActions } from "@/components/wardrobe/sticky-actions";
 import { TagForm } from "@/components/wardrobe/tag-form";
 import { useSignedUrlRefresh } from "@/components/wardrobe/use-signed-url-refresh";
 import { wardrobeReturnPath } from "@/components/wardrobe/wardrobe-return";
-import { ApiClientError, deleteItem, getItem, updateItemTags } from "@/lib/client/api";
+import { ApiClientError, deleteItem, getItem, markItemReviewed, updateItemTags } from "@/lib/client/api";
 
 type State =
   | { kind: "loading" }
@@ -84,6 +85,20 @@ export function ItemDetailScreen({ id }: { id: string }) {
       setEditing(false);
       setNotice("Tags saved.");
       window.scrollTo({ top: 0 });
+    } catch (error) {
+      setActionError(error);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function confirmTags(item: WardrobeItem) {
+    setActionError(null);
+    setSaving(true);
+    try {
+      const updated = await markItemReviewed(item.id);
+      setState({ kind: "ready", item: updated, loadedAt: Date.now() });
+      setNotice("Tags confirmed.");
     } catch (error) {
       setActionError(error);
     } finally {
@@ -156,8 +171,33 @@ export function ItemDetailScreen({ id }: { id: string }) {
               onError={onImageError}
               className="mx-auto w-full max-w-64"
             />
-            {state.item.cutoutUrl === null && (
-              <p className="text-muted-foreground text-center text-xs">Showing the original photo: this item has no cut-out.</p>
+
+            {state.item.needsPhoto && !editing && (
+              <div className="space-y-2 rounded-lg border p-3">
+                <p className="flex items-center gap-2 text-sm">
+                  <ImageOffIcon className="size-4 shrink-0" aria-hidden="true" />
+                  No picture came with this item. Add a photo of it so it shows in your wardrobe and outfits.
+                </p>
+                <AddPhotoButton
+                  itemId={state.item.id}
+                  className="w-full"
+                  onAdded={(updated) => {
+                    setState({ kind: "ready", item: updated, loadedAt: Date.now() });
+                    setNotice("Photo added. Check the tags still match it.");
+                  }}
+                  onError={setActionError}
+                />
+              </div>
+            )}
+
+            {state.item.needsReview && !state.item.needsPhoto && !editing && (
+              <div className="space-y-2 rounded-lg border p-3">
+                <p className="text-sm">These tags were filled in for you and haven&apos;t been checked yet.</p>
+                <Button variant="outline" size="lg" className="w-full" disabled={saving} onClick={() => void confirmTags(state.item)}>
+                  <CheckIcon aria-hidden="true" />
+                  Tags look right
+                </Button>
+              </div>
             )}
 
             {notice && !editing && (

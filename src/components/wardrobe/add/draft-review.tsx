@@ -12,13 +12,13 @@ import { tagsWereEdited } from "../tag-form-values";
 import { keepDraft } from "./pending-add";
 
 /**
- * Step 5 of adding an item (spec: Add by photo): the cut-out and the
- * pre-filled tags, all editable, then save with POST /api/items.
+ * Step 5 of adding an item (spec: Add by photo): the photo and the
+ * pre-filled tags, all editable, then save with POST /api/items. Also how
+ * the review list fills in a batch draft whose tagging failed.
  */
 export function DraftReview({
   userId,
   draft,
-  cutoutFailed,
   restoredTags = null,
   onSaved,
   onDiscard,
@@ -26,7 +26,6 @@ export function DraftReview({
   /** The signed-in user, so a draft kept on sign-out is only restored for them (see pending-add.ts). */
   userId: string | null;
   draft: ItemDraft;
-  cutoutFailed: boolean;
   /** Tags the user had chosen before being signed out (see pending-add.ts). */
   restoredTags?: ItemTags | null;
   onSaved: (item: WardrobeItem) => void;
@@ -52,25 +51,15 @@ export function DraftReview({
     } catch (err) {
       // Signed out: the API client is taking them to sign-in. Keep the item
       // so /add can reopen this review afterwards.
-      if (err instanceof ApiClientError && err.code === "unauthorized") keepDraft(userId, draft, cutoutFailed, tags);
+      if (err instanceof ApiClientError && err.code === "unauthorized") keepDraft(userId, draft, tags);
       setError(err);
       setSaving(false);
     }
   }
 
-  const noCutout = draft.cutoutUrl === null;
-
   return (
     <div className="space-y-5">
       <ItemImage item={draft} alt="The item you're adding" priority className="mx-auto w-full max-w-48" />
-
-      {noCutout && (
-        <p className="text-muted-foreground text-center text-sm">
-          {cutoutFailed
-            ? "We couldn't cut this one out on your phone, so the original photo will be used."
-            : "No cut-out for this one, so the original image will be used."}
-        </p>
-      )}
 
       {draft.suggestedTags === null ? (
         <Alert>

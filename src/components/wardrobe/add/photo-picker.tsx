@@ -9,9 +9,14 @@ import { cn } from "@/lib/utils";
  * "Take a photo" (opens the camera) and "Choose from library" buttons, each
  * backed by its own file input. Accepts any image the phone offers; the
  * add flow re-encodes it as JPEG before upload, which also handles HEIC.
+ *
+ * With `onFiles`, the library lets the user pick several photos at once
+ * and hands them all over (in the order chosen); the camera still takes
+ * one at a time and goes to `onFile`.
  */
 export function PhotoPicker({
   onFile,
+  onFiles,
   disabled,
   cameraLabel = "Take a photo",
   libraryLabel = "Choose from library",
@@ -19,6 +24,8 @@ export function PhotoPicker({
   className,
 }: {
   onFile: (file: File) => void;
+  /** Several photos picked from the library at once (two or more). One goes to onFile. */
+  onFiles?: (files: File[]) => void;
   disabled?: boolean;
   cameraLabel?: string;
   libraryLabel?: string;
@@ -31,10 +38,11 @@ export function PhotoPicker({
   const id = useId();
 
   function handleChange(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
+    const files = Array.from(event.target.files ?? []);
     // Reset so choosing the same file again still fires a change.
     event.target.value = "";
-    if (file) onFile(file);
+    if (files.length > 1 && onFiles) onFiles(files);
+    else if (files[0]) onFile(files[0]);
   }
 
   const camera = (
@@ -84,6 +92,7 @@ export function PhotoPicker({
         id={`${id}-library`}
         type="file"
         accept="image/*"
+        multiple={onFiles !== undefined}
         className="sr-only"
         tabIndex={-1}
         aria-hidden="true"

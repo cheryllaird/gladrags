@@ -1,6 +1,6 @@
 "use client";
 
-import { CircleUserIcon, LogOutIcon, ShieldIcon, Trash2Icon } from "lucide-react";
+import { CircleUserIcon, LogOutIcon, SettingsIcon, ShieldIcon, Trash2Icon } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import {
@@ -64,6 +64,12 @@ export function AccountSheet({ email }: { email: string | null }) {
           <SheetDescription>{email ? <>Signed in as {email}</> : "Signed in"}</SheetDescription>
         </SheetHeader>
         <div className="grid gap-2 px-4">
+          <Button asChild variant="outline" size="lg" className="w-full">
+            <Link href="/settings">
+              <SettingsIcon aria-hidden="true" />
+              Settings: shops and order emails
+            </Link>
+          </Button>
           {/* A plain form post. Clear what this tab keeps first, so the next person to sign in here sees none of it. */}
           <form action="/api/auth/sign-out" method="post" onSubmit={() => clearGladragsSessionStorage()}>
             <Button type="submit" variant="outline" size="lg" className="w-full">

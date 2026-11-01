@@ -33,7 +33,6 @@ const kept = (
   kind: "draft",
   userId: USER,
   draft: { ...DRAFT, ...draft },
-  cutoutFailed: false,
   tags: null,
   ...overrides,
 });
@@ -66,8 +65,6 @@ describe("tampered entries: wrong types", () => {
     ["userId as a number", kept({ userId: 1 })],
     ["userId empty", kept({ userId: "" })],
     ["userId null", kept({ userId: null })],
-    ["cutoutFailed as a string", kept({ cutoutFailed: "false" })],
-    ["cutoutFailed missing", (({ cutoutFailed: _c, ...rest }) => rest)(kept())],
     ["tags as a string", kept({ tags: "shirt" })],
     ["tags missing (not null)", (({ tags: _t, ...rest }) => rest)(kept())],
     ["an unknown kind", kept({ kind: "item" })],
@@ -221,7 +218,7 @@ describe("storage failures", () => {
     vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
       throw new DOMException("QuotaExceededError");
     });
-    expect(() => keepDraft(USER, DRAFT, false, null)).not.toThrow();
+    expect(() => keepDraft(USER, DRAFT, null)).not.toThrow();
     expect(() => notePhotoLost(USER)).not.toThrow();
   });
 
@@ -238,7 +235,6 @@ describe("one user after another on the same tab", () => {
     keepDraft(
       OTHER,
       { ...DRAFT, originalImageKey: `${OTHER}/${IMAGE}`, cutoutImageKey: null },
-      false,
       null,
     );
     notePhotoLost(USER);

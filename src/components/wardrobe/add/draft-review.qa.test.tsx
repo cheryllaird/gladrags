@@ -63,30 +63,24 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-function renderReview(draft: ItemDraft, cutoutFailed = false) {
+function renderReview(draft: ItemDraft) {
   const onSaved = vi.fn();
   const onDiscard = vi.fn();
   const user = userEvent.setup();
-  render(<DraftReview userId={null} draft={draft} cutoutFailed={cutoutFailed} onSaved={onSaved} onDiscard={onDiscard} />);
+  render(<DraftReview userId={null} draft={draft} onSaved={onSaved} onDiscard={onDiscard} />);
   return { user, onSaved, onDiscard, save: () => user.click(screen.getByRole("button", { name: "Save to wardrobe" })) };
 }
 
-describe("background removal fallback", () => {
-  it("when removal failed on the phone, says so and shows the original image", () => {
-    renderReview({ ...DRAFT, cutoutImageKey: null, cutoutUrl: null }, true);
-    expect(screen.getByText(/couldn't cut this one out on your phone/)).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: "The item you're adding" })).toHaveAttribute("src", DRAFT.originalUrl);
-  });
-
-  it("shows the cut-out when there is one, with no fallback message", () => {
+describe("the picture (milestone 5: originals, no cut-out while adding)", () => {
+  it("shows the original image, even when an older draft has a cut-out, and says nothing about cut-outs", () => {
     renderReview(DRAFT);
-    expect(screen.getByRole("img", { name: "The item you're adding" })).toHaveAttribute("src", DRAFT.cutoutUrl);
-    expect(screen.queryByText(/original (photo|image) will be used/)).toBeNull();
+    expect(screen.getByRole("img", { name: "The item you're adding" })).toHaveAttribute("src", DRAFT.originalUrl);
+    expect(screen.queryByText(/cut/i)).toBeNull();
   });
 
-  it("saves with no cut-out key when removal failed", async () => {
+  it("saves with no cut-out key for a draft without one", async () => {
     vi.mocked(createItem).mockResolvedValue(saved(TAGS));
-    const { save } = renderReview({ ...DRAFT, cutoutImageKey: null, cutoutUrl: null }, true);
+    const { save } = renderReview({ ...DRAFT, cutoutImageKey: null, cutoutUrl: null });
     await save();
     expect(createItem).toHaveBeenCalledWith(expect.objectContaining({ cutoutImageKey: null, originalImageKey: ORIGINAL_KEY }));
   });

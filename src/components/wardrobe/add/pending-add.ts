@@ -30,7 +30,6 @@ const StoredPendingAddSchema = z.discriminatedUnion("kind", [
     kind: z.literal("draft"),
     userId: z.string().min(1),
     draft: ItemDraftSchema,
-    cutoutFailed: z.boolean(),
     tags: ItemTagsSchema.nullable(),
   }),
   z.object({ kind: z.literal("photo_lost"), userId: z.string().min(1) }),
@@ -39,7 +38,7 @@ type StoredPendingAdd = z.infer<typeof StoredPendingAddSchema>;
 
 /** What the add screen gets back: the kept work, without the owner check's bookkeeping. */
 export type PendingAdd =
-  | { kind: "draft"; draft: ItemDraft; cutoutFailed: boolean; tags: ItemTags | null }
+  | { kind: "draft"; draft: ItemDraft; tags: ItemTags | null }
   | { kind: "photo_lost" };
 
 function write(value: StoredPendingAdd): void {
@@ -51,9 +50,9 @@ function write(value: StoredPendingAdd): void {
 }
 
 /** Keep a draft for `userId`. Without a known user there's no safe way to hand it back, so nothing is kept. */
-export function keepDraft(userId: string | null, draft: ItemDraft, cutoutFailed: boolean, tags: ItemTags | null): void {
+export function keepDraft(userId: string | null, draft: ItemDraft, tags: ItemTags | null): void {
   if (!userId) return;
-  write({ kind: "draft", userId, draft, cutoutFailed, tags });
+  write({ kind: "draft", userId, draft, tags });
 }
 
 /** Remember that `userId`'s photo was lost, so /add can ask for it again after sign-in. */
@@ -102,7 +101,7 @@ export function takePendingAdd(userId: string | null): PendingAdd | null {
     const kept = parsed.data;
     if (kept.kind === "photo_lost") return { kind: "photo_lost" };
     if (!draftBelongsTo(kept.draft, userId)) return null;
-    return { kind: "draft", draft: kept.draft, cutoutFailed: kept.cutoutFailed, tags: kept.tags };
+    return { kind: "draft", draft: kept.draft, tags: kept.tags };
   } catch {
     return null;
   }

@@ -1,9 +1,7 @@
-// QA tests for the add-item pipelines: background removal failing in every
-// way it can, link step 2 fallbacks, the share-target link parsing and the
-// resize maths.
+// QA tests for the add-item pipelines: no cut-out while adding, link step 2,
+// the share-target link parsing and the resize maths.
 import { describe, expect, it, vi } from "vitest";
 import { MAX_IMAGE_DIMENSION_PX, type ItemDraft } from "@/contracts";
-import { FakeBackgroundRemover, type BackgroundRemover } from "@/lib/images";
 import { addByPhoto, finishLinkImport, linkFromShare, type PipelineDeps } from "./add-item";
 import { fitWithin } from "./photo";
 
@@ -21,46 +19,23 @@ const DRAFT: ItemDraft = {
 function deps(overrides: Partial<PipelineDeps> = {}): PipelineDeps {
   return {
     prepare: vi.fn(async () => new Blob(["jpeg"], { type: "image/jpeg" })),
-    remover: new FakeBackgroundRemover(),
-    fitCutout: vi.fn(async (blob: Blob) => blob),
     uploadPhoto: vi.fn(async () => DRAFT),
-    uploadLinkCutout: vi.fn(async () => ({ ...DRAFT, source: "link" as const })),
-    fetchImage: vi.fn(async () => new Blob(["product"], { type: "image/jpeg" })),
+    uploadPhotoForReview: vi.fn(async () => ({ status: "draft" as const, draft: DRAFT })),
+    importLink: vi.fn(async () => Promise.reject(new Error("unused"))),
+    finishLink: vi.fn(async () => ({ ...DRAFT, source: "link" as const })),
+    finishLinkForReview: vi.fn(async () => ({ status: "draft" as const, draft: DRAFT })),
     ...overrides,
   };
 }
 
 const photo = (name: string) => new File(["raw"], name, { type: "image/jpeg" });
 
-describe("background removal failing falls back to the original", () => {
-  const failures: [string, BackgroundRemover][] = [
-    ["throws a plain Error (model failed to load)", { name: "x", removeBackground: async () => Promise.reject(new Error("wasm")) }],
-    ["throws a non-Error value", { name: "x", removeBackground: async () => Promise.reject("boom") }],
-    ["throws synchronously", { name: "x", removeBackground: () => { throw new Error("sync"); } }],
-    ["runs out of memory", new FakeBackgroundRemover({ fail: "out_of_memory" })],
-  ];
-
-  it.each(failures)("when the remover %s", async (_label, remover) => {
-    const d = deps({ remover });
-    const result = await addByPhoto(photo("shirt.jpg"), { deps: d });
-    expect(result.cutoutFailed).toBe(true);
-    const upload = vi.mocked(d.uploadPhoto).mock.calls[0]![0];
-    expect(upload.cutout).toBeNull();
-    expect(upload.original.name).toBe("shirt.jpg");
-  });
-
-  it("when shrinking the cut-out throws", async () => {
-    const d = deps({ fitCutout: vi.fn(async () => Promise.reject(new Error("decode"))) });
-    const result = await addByPhoto(photo("shirt.jpg"), { deps: d });
-    expect(result.cutoutFailed).toBe(true);
-  });
-
-  it("cuts out the resized photo, not the raw file", async () => {
+describe("adding no longer cuts the item out (milestone 5)", () => {
+  it("uploads the resized photo itself, with nothing else", async () => {
     const prepared = new Blob(["resized"], { type: "image/jpeg" });
-    const removeBackground = vi.fn(async () => new Blob(["png"], { type: "image/png" }));
-    const d = deps({ prepare: vi.fn(async () => prepared), remover: { name: "spy", removeBackground } });
+    const d = deps({ prepare: vi.fn(async () => prepared) });
     await addByPhoto(photo("IMG_1.HEIC"), { deps: d });
-    expect(removeBackground).toHaveBeenCalledWith(prepared);
+    expect(vi.mocked(d.uploadPhoto).mock.calls[0]![0]).toEqual({ original: { blob: prepared, name: "IMG_1.jpg" }, sourceUrl: undefined });
   });
 
   it("names a nameless camera capture", async () => {
@@ -73,15 +48,17 @@ describe("background removal failing falls back to the original", () => {
 describe("link step 2", () => {
   const step1 = { originalImageKey: KEY, originalUrl: "https://storage.example.com/signed/product.jpg" };
 
-  it("sends no cut-out when background removal fails on the product image", async () => {
-    const d = deps({ remover: new FakeBackgroundRemover({ fail: "out_of_memory" }) });
-    const result = await finishLinkImport(step1, { deps: d });
-    expect(result.cutoutFailed).toBe(true);
-    expect(vi.mocked(d.uploadLinkCutout).mock.calls[0]![0]).toEqual({ originalImageKey: KEY, cutout: null });
+  it("never downloads the product image on the phone", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const d = deps();
+    await finishLinkImport(step1, { deps: d });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(d.finishLink).toHaveBeenCalledWith(KEY);
+    fetchSpy.mockRestore();
   });
 
   it("lets a step 2 error (an expired import) through for the screen to show", async () => {
-    const d = deps({ uploadLinkCutout: vi.fn(async () => Promise.reject(new Error("not_found"))) });
+    const d = deps({ finishLink: vi.fn(async () => Promise.reject(new Error("not_found"))) });
     await expect(finishLinkImport(step1, { deps: d })).rejects.toThrow("not_found");
   });
 });

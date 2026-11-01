@@ -1,6 +1,6 @@
 "use client";
 
-import { PlusIcon } from "lucide-react";
+import { ChevronRightIcon, ListChecksIcon, PlusIcon } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { WardrobeItem } from "@/contracts";
@@ -9,6 +9,14 @@ import { PageBody, PageHeader } from "@/components/app-shell/page-header";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiErrorNotice } from "@/components/wardrobe/api-error-notice";
+import {
+  checklistKey,
+  checklistSteps,
+  dismissChecklist,
+  parseChecklistMemory,
+  wardrobeIsStocked,
+} from "@/components/wardrobe/get-started/checklist";
+import { GetStarted } from "@/components/wardrobe/get-started/get-started";
 import { ItemImage } from "@/components/wardrobe/item-image";
 import {
   NO_FILTERS,
@@ -17,10 +25,12 @@ import {
   filtersToSearch,
   type WardrobeFilters,
 } from "@/components/wardrobe/wardrobe-filter-values";
+import { BATCH_DRAFTS_KEY, batchDraftsFromRaw } from "@/components/wardrobe/review/batch-drafts";
 import { WardrobeFiltersBar } from "@/components/wardrobe/wardrobe-filters";
 import { rememberWardrobeSearch } from "@/components/wardrobe/wardrobe-return";
 import { useSignedUrlRefresh } from "@/components/wardrobe/use-signed-url-refresh";
-import { listItems } from "@/lib/client/api";
+import { listItems, listOutfits } from "@/lib/client/api";
+import { useStorageValue } from "@/lib/client/use-storage-value";
 
 /** Wait this long after typing stops before searching. */
 const SEARCH_DEBOUNCE_MS = 250;
@@ -31,7 +41,16 @@ type LoadState =
   | { kind: "ready"; key: string; items: WardrobeItem[]; filtered: boolean; loadedAt: number }
   | { kind: "error"; key: string; error: unknown };
 
-export function WardrobeScreen({ initialFilters, email = null }: { initialFilters: WardrobeFilters; email?: string | null }) {
+export function WardrobeScreen({
+  initialFilters,
+  email = null,
+  userId = null,
+}: {
+  initialFilters: WardrobeFilters;
+  email?: string | null;
+  /** The signed-in user: whose batch drafts and checklist memory to read. */
+  userId?: string | null;
+}) {
   const [filters, setFilters] = useState(() => startingFilters(initialFilters));
   // The filters the list is fetched for: selects at once, search after a pause.
   const [query, setQuery] = useState(() => filtersToQuery(filters));
@@ -82,6 +101,44 @@ export function WardrobeScreen({ initialFilters, email = null }: { initialFilter
 
   const refreshing = state.kind !== "loading" && state.key !== key;
 
+  // "Review N new items": items still to review, plus batch drafts kept in this tab.
+  const [unreviewed, setUnreviewed] = useState(0);
+  const drafts = batchDraftsFromRaw(useStorageValue("session", BATCH_DRAFTS_KEY), userId).length;
+  useEffect(() => {
+    let current = true;
+    listItems({ needsReview: true }).then(
+      (items) => current && setUnreviewed(items.length),
+      () => {
+        // The banner is a shortcut; the wardrobe works without it.
+      },
+    );
+    return () => {
+      current = false;
+    };
+  }, [attempt]);
+  const toReview = unreviewed + drafts;
+
+  // The get-started checklist, on the unfiltered wardrobe only. Memory is
+  // undefined until hydrated, so nothing flashes before it's known.
+  const rawMemory = useStorageValue("local", checklistKey(userId));
+  const memory = rawMemory === undefined ? null : parseChecklistMemory(rawMemory);
+  const unfiltered = state.kind === "ready" && !state.filtered ? state.items : null;
+  const showChecklist = unfiltered !== null && memory !== null && !memory.dismissed && !wardrobeIsStocked(unfiltered);
+  const [hasOutfit, setHasOutfit] = useState(false);
+  useEffect(() => {
+    if (!showChecklist) return;
+    let current = true;
+    listOutfits().then(
+      (outfits) => current && setHasOutfit(outfits.length > 0),
+      () => {
+        // Not knowing just leaves the step unticked.
+      },
+    );
+    return () => {
+      current = false;
+    };
+  }, [showChecklist]);
+
   return (
     <>
       <PageHeader
@@ -89,6 +146,16 @@ export function WardrobeScreen({ initialFilters, email = null }: { initialFilter
         actions={<AccountSheet email={email} />}
       />
       <PageBody className="space-y-4">
+        {toReview > 0 && <ReviewBanner count={toReview} />}
+
+        {showChecklist && unfiltered.length > 0 && (
+          <GetStarted
+            steps={checklistSteps({ items: unfiltered, addedSeveral: memory.addedSeveral, hasOutfit })}
+            empty={false}
+            onDismiss={() => dismissChecklist(userId)}
+          />
+        )}
+
         <WardrobeFiltersBar value={filters} onChange={setFilters} />
 
         {state.kind === "loading" && <GridSkeleton />}
@@ -114,7 +181,13 @@ export function WardrobeScreen({ initialFilters, email = null }: { initialFilter
                     Clear filters
                   </Button>
                 </div>
-              ) : (
+              ) : showChecklist ? (
+                <GetStarted
+                  steps={checklistSteps({ items: [], addedSeveral: memory.addedSeveral, hasOutfit })}
+                  empty
+                  onDismiss={() => dismissChecklist(userId)}
+                />
+              ) : memory === null ? null : (
                 <EmptyWardrobe />
               )
             ) : (
@@ -146,6 +219,22 @@ function countLabel(count: number, filtered: boolean): string {
   return filtered ? `${items} match` : items;
 }
 
+function ReviewBanner({ count }: { count: number }) {
+  return (
+    <Link
+      href="/wardrobe/review"
+      className="bg-muted hover:bg-accent focus-visible:ring-ring/50 flex min-h-11 items-center gap-3 rounded-lg px-3 py-3 outline-none focus-visible:ring-[3px]"
+    >
+      <ListChecksIcon className="size-5 shrink-0" aria-hidden="true" />
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-medium">Review {count === 1 ? "1 new item" : `${count} new items`}</span>
+        <span className="text-muted-foreground block text-xs">Check the tags we filled in</span>
+      </span>
+      <ChevronRightIcon className="text-muted-foreground size-5 shrink-0" aria-hidden="true" />
+    </Link>
+  );
+}
+
 function ItemGrid({ items, onImageError }: { items: WardrobeItem[]; onImageError: () => void }) {
   return (
     <ul className="grid grid-cols-3 gap-x-2 gap-y-3">
@@ -157,6 +246,7 @@ function ItemGrid({ items, onImageError }: { items: WardrobeItem[]; onImageError
           >
             <ItemImage item={item} alt="" priority={index < 9} onError={onImageError} />
             <span className="mt-1 line-clamp-2 text-xs leading-snug">{item.tags.description}</span>
+            {item.needsPhoto && <span className="text-muted-foreground block text-xs">Needs a photo</span>}
           </Link>
         </li>
       ))}

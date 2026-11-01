@@ -18,7 +18,7 @@ export default async function WardrobePage({
   return (
     <>
       <SignedInUser userId={user?.id ?? null} />
-      <WardrobeScreen initialFilters={initialFilters} email={user?.email ?? null} />
+      <WardrobeScreen initialFilters={initialFilters} email={user?.email ?? null} userId={user?.id ?? null} />
     </>
   );
 }

@@ -1,15 +1,16 @@
 "use client";
 
-import { CameraIcon, ImageOffIcon } from "lucide-react";
+import { CameraIcon, ImageOffIcon, InfoIcon, ListChecksIcon, PlusIcon } from "lucide-react";
 import Link from "next/link";
 import { useId, useState } from "react";
-import { SourceUrlSchema, type ItemTags, type LinkProduct, type WardrobeItem } from "@/contracts";
+import type { ItemTags, LinkProduct, WardrobeItem } from "@/contracts";
 import { PageBody, PageHeader } from "@/components/app-shell/page-header";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { ApiErrorNotice, errorCopy } from "@/components/wardrobe/api-error-notice";
+import { BatchProgress } from "@/components/wardrobe/add/batch-progress";
 import { DraftReview } from "@/components/wardrobe/add/draft-review";
 import { notePhotoLost } from "@/components/wardrobe/add/pending-add";
 import { PhotoPicker } from "@/components/wardrobe/add/photo-picker";
@@ -18,20 +19,29 @@ import { RestoredNotice } from "@/components/wardrobe/add/restored-notice";
 import { SavedPanel } from "@/components/wardrobe/add/saved-panel";
 import { UsageNote } from "@/components/wardrobe/add/usage-note";
 import { usePreviewUrl } from "@/components/wardrobe/add/use-preview-url";
+import { useBatch, type BatchState } from "@/components/wardrobe/add/use-batch";
 import { useRestorePendingAdd } from "@/components/wardrobe/add/use-restore-pending-add";
 import { addingBlockedBy, useUsage } from "@/components/wardrobe/add/use-usage";
-import { ADD_STAGE_LABELS, addByPhoto, finishLinkImport, type AddResult, type AddStage } from "@/lib/client/add-item";
+import {
+  ADD_STAGE_LABELS,
+  MAX_BATCH_SIZE,
+  addByPhoto,
+  addLinksForReview,
+  addScreenshotForReview,
+  extractLinks,
+  finishLinkImport,
+  type AddResult,
+  type AddStage,
+} from "@/lib/client/add-item";
 import { ApiClientError, importLink } from "@/lib/client/api";
-import { usePreloadBackgroundRemover } from "@/lib/client/use-preload-background-remover";
 
-type LinkStage = "fetching" | Exclude<AddStage, "preparing">;
+type LinkStage = "fetching" | "tagging";
 
 const LINK_STEPS = [
   { id: "fetching", label: "Reading the product page" },
-  { id: "cutting_out", label: ADD_STAGE_LABELS.cutting_out },
-  { id: "uploading", label: ADD_STAGE_LABELS.uploading },
+  { id: "tagging", label: "Tagging the item" },
 ];
-const SCREENSHOT_STEPS = (["preparing", "cutting_out", "uploading"] as const).map((id) => ({ id, label: ADD_STAGE_LABELS[id] }));
+const SCREENSHOT_STEPS = (["preparing", "uploading"] as const).map((id) => ({ id, label: ADD_STAGE_LABELS[id] }));
 
 /** The screenshot fallback: which link it's for and what the server said. */
 interface ScreenshotFor {
@@ -48,13 +58,20 @@ type Step =
   | { kind: "saved"; item: WardrobeItem }
   // `screenshot` is set when the error came from the screenshot route, so
   // retrying goes back there (same link) rather than to the link box.
-  | { kind: "error"; error: unknown; screenshot: ScreenshotFor | null };
+  | { kind: "error"; error: unknown; screenshot: ScreenshotFor | null }
+  /** Several links pasted at once: imported one after another as "to review". */
+  | { kind: "batch" };
 
 /**
  * Add by link (CONTRACTS.md section 5): paste or share a product link; the
- * server reads the page and stores the product image; the phone cuts it
- * out and sends the cut-out for tagging. If the site can't be read, ask
- * for a screenshot, which goes down the photo route and keeps the link.
+ * server reads the page, stores the product image and tags it. If the
+ * site can't be read, ask for a screenshot, which goes down the photo
+ * route and keeps the link.
+ *
+ * Several links pasted at once (one per line, or a block of text with
+ * links in it) are imported one after another and saved as "to review";
+ * those that need a screenshot are listed at the end, each with a way to
+ * add one.
  */
 export function AddLinkFlow({
   sharedUrl,
@@ -75,7 +92,8 @@ export function AddLinkFlow({
   const [preview, setPreview] = usePreviewUrl();
   const { usage, refresh: refreshUsage } = useUsage();
   const blocked = addingBlockedBy(usage);
-  usePreloadBackgroundRemover();
+  const { batch, run: runBatch, setRow, clear: clearBatch } = useBatch(userId);
+  const found = extractLinks(url);
   const id = useId();
   // Shown after signing in again, if the session expired mid-add.
   const [restored, setRestored] = useState<"draft" | "photo_lost" | null>(null);
@@ -85,23 +103,26 @@ export function AddLinkFlow({
     window.scrollTo({ top: 0 });
   }
 
-  async function start(link: string) {
-    const parsed = SourceUrlSchema.safeParse(link.trim());
-    if (!parsed.success) {
+  function submit(text: string) {
+    const { links, extra } = extractLinks(text);
+    if (links.length === 0) {
       go({ kind: "enter", invalid: "Paste a full link starting with https://" });
       return;
     }
+    if (links.length === 1) void start(links[0]!);
+    else void startBatch(links, extra);
+  }
+
+  async function start(link: string) {
     go({ kind: "working", stage: "fetching", product: null });
     try {
-      const imported = await importLink(parsed.data);
+      const imported = await importLink(link);
       if (imported.status === "needs_screenshot") {
         go({ kind: "screenshot", sourceUrl: imported.sourceUrl, message: imported.message });
         return;
       }
-      setStep({ kind: "working", stage: "cutting_out", product: imported.product });
-      const result = await finishLinkImport(imported, {
-        onStage: (stage) => setStep({ kind: "working", stage: stage === "preparing" ? "cutting_out" : stage, product: imported.product }),
-      });
+      setStep({ kind: "working", stage: "tagging", product: imported.product });
+      const result = await finishLinkImport(imported);
       go({ kind: "review", result });
     } catch (error) {
       go({ kind: "error", error, screenshot: null });
@@ -128,11 +149,31 @@ export function AddLinkFlow({
     }
   }
 
+  async function startBatch(links: string[], extra: number) {
+    setRestored(null);
+    go({ kind: "batch" });
+    await runBatch(links.map(linkLabel), extra, (onChange) => addLinksForReview(links, onChange));
+    refreshUsage();
+  }
+
+  /** A screenshot for one link of the batch that needed the fallback. */
+  async function batchScreenshot(index: number, file: File, screenshot: ScreenshotFor) {
+    setRow(index, { kind: "pending", stage: "uploading" });
+    try {
+      setRow(index, await addScreenshotForReview(file, screenshot.sourceUrl));
+    } catch (error) {
+      // Leave it waiting for a screenshot, saying what went wrong, so it can be tried again.
+      setRow(index, { kind: "needs_screenshot", sourceUrl: screenshot.sourceUrl, message: `${errorCopy(error).message} ${screenshot.message}` });
+    } finally {
+      refreshUsage();
+    }
+  }
+
   // Back from sign-in after the session expired mid-add: reopen what was kept.
   useRestorePendingAdd(userId, (pending) => {
     setRestored(pending.kind);
     if (pending.kind === "draft") {
-      go({ kind: "review", result: { draft: pending.draft, cutoutFailed: pending.cutoutFailed }, restoredTags: pending.tags });
+      go({ kind: "review", result: { draft: pending.draft }, restoredTags: pending.tags });
     }
   });
 
@@ -142,6 +183,7 @@ export function AddLinkFlow({
     setRestored(null);
     setUrl("");
     setFromShare(false);
+    clearBatch();
     go({ kind: "enter" });
   }
 
@@ -161,7 +203,16 @@ export function AddLinkFlow({
   }
 
   const title =
-    step.kind === "review" ? "Check the tags" : step.kind === "saved" ? "Saved" : step.kind === "screenshot" ? "Add a screenshot" : "Add by link";
+    step.kind === "review"
+      ? "Check the tags"
+      : step.kind === "saved"
+        ? "Saved"
+        : step.kind === "screenshot"
+          ? "Add a screenshot"
+          : step.kind === "batch"
+            ? "Adding links"
+            : "Add by link";
+  const submitLabel = shared ? "Import this link" : found.links.length > 1 ? `Add ${found.links.length} links` : "Add from link";
 
   return (
     <>
@@ -177,19 +228,20 @@ export function AddLinkFlow({
               noValidate
               onSubmit={(event) => {
                 event.preventDefault();
-                void start(url);
+                submit(url);
               }}
             >
-              <Label htmlFor={`${id}-url`}>Product link</Label>
-              <Input
+              <Label htmlFor={`${id}-url`}>Product links</Label>
+              <Textarea
                 id={`${id}-url`}
-                type="url"
                 inputMode="url"
                 autoComplete="off"
                 autoCapitalize="none"
+                autoCorrect="off"
                 spellCheck={false}
-                enterKeyHint="go"
+                rows={3}
                 placeholder="https://shop.example.com/…"
+                className="max-h-64 min-h-24 text-base break-all"
                 value={url}
                 onChange={(event) => setUrl(event.target.value)}
                 aria-invalid={step.invalid ? true : undefined}
@@ -205,11 +257,17 @@ export function AddLinkFlow({
                 </p>
               ) : (
                 <p id={`${id}-url-hint`} className="text-muted-foreground text-xs">
-                  Copy the link from the shop&apos;s product page and paste it here.
+                  Copy the link from the shop&apos;s product page and paste it here. To add several, paste them all: one per
+                  line, or any text with links in it.
+                  {found.links.length > 1 && (
+                    <span className="text-foreground block pt-1 font-medium">
+                      {found.links.length} different links found{found.extra > 0 ? ` (the first ${MAX_BATCH_SIZE}; add the other ${found.extra} in another go)` : ""}.
+                    </span>
+                  )}
                 </p>
               )}
               <Button type="submit" size="lg" className="w-full" disabled={blocked !== null || url.trim() === ""}>
-                {shared ? "Import this link" : "Add from link"}
+                {submitLabel}
               </Button>
             </form>
           </>
@@ -253,11 +311,21 @@ export function AddLinkFlow({
 
         {step.kind === "screenshot_processing" && <ProgressSteps steps={SCREENSHOT_STEPS} current={step.stage} preview={preview} />}
 
+        {step.kind === "batch" && batch && (
+          <LinkBatch
+            batch={batch}
+            onScreenshot={(index, file) => {
+              const row = batch.rows[index]?.state;
+              if (row?.kind === "needs_screenshot") void batchScreenshot(index, file, { sourceUrl: row.sourceUrl, message: row.message });
+            }}
+            onAddMore={reset}
+          />
+        )}
+
         {step.kind === "review" && (
           <DraftReview
             userId={userId}
             draft={step.result.draft}
-            cutoutFailed={step.result.cutoutFailed}
             restoredTags={step.restoredTags}
             onSaved={saved}
             onDiscard={reset}
@@ -282,6 +350,63 @@ export function AddLinkFlow({
           <LinkError error={step.error} fromScreenshot={step.screenshot !== null} onRetry={() => retry(step.screenshot)} />
         )}
       </PageBody>
+    </>
+  );
+}
+
+/** A short label for a link in the batch list: the shop's host and the page's path. */
+function linkLabel(link: string): string {
+  try {
+    const url = new URL(link);
+    return `${url.hostname.replace(/^www\./, "")}${url.pathname === "/" ? "" : url.pathname}`;
+  } catch {
+    return link;
+  }
+}
+
+function LinkBatch({
+  batch,
+  onScreenshot,
+  onAddMore,
+}: {
+  batch: BatchState;
+  onScreenshot: (index: number, file: File) => void;
+  onAddMore: () => void;
+}) {
+  const reviewable = batch.rows.some((row) => row.state.kind === "saved" || row.state.kind === "draft");
+  return (
+    <>
+      {batch.extra > 0 && (
+        <Alert>
+          <InfoIcon />
+          <AlertDescription>
+            You can add up to {MAX_BATCH_SIZE} links at once, so the other {batch.extra} weren&apos;t included. Add them in another go.
+          </AlertDescription>
+        </Alert>
+      )}
+      <BatchProgress
+        kind="link"
+        rows={batch.rows}
+        running={batch.running}
+        stoppedBy={batch.stoppedBy}
+        onScreenshot={onScreenshot}
+        actions={
+          <>
+            {reviewable && (
+              <Button asChild size="lg">
+                <Link href="/wardrobe/review">
+                  <ListChecksIcon aria-hidden="true" />
+                  Review new items
+                </Link>
+              </Button>
+            )}
+            <Button size="lg" variant={reviewable ? "outline" : "default"} onClick={onAddMore}>
+              <PlusIcon aria-hidden="true" />
+              Paste more links
+            </Button>
+          </>
+        }
+      />
     </>
   );
 }
