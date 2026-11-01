@@ -6,7 +6,7 @@
  * Client-only. Lives for the page session, so moving between the results
  * and the saved outfits doesn't cut the same item out twice.
  */
-import { getClientBackgroundRemover, usesTestFakeRemover } from "@/lib/client/background-remover";
+import { getClientBackgroundRemover } from "@/lib/client/background-remover";
 import { fitCutout } from "@/lib/client/photo";
 import { outfitsApi } from "./api";
 import { CutoutQueue } from "./cutout-queue";
@@ -31,12 +31,14 @@ export const collageCutouts = new CutoutQueue(() => {
 /**
  * Whether collages cut items out here. Always for people. Browsers driven
  * by automation (navigator.webdriver, i.e. the e2e tests) skip it unless the
- * test opts in with the fake remover (tests/e2e/helpers.ts): otherwise every
+ * test opts in with `window.__GLADRAGS_TEST_COLLAGE_CUTOUTS__ = true` (see
+ * tests/e2e/outfits-gaps.spec.ts, which also uses the fake remover): otherwise every
  * test that shows a collage would download the model, and its uploads would
  * change the shared mock wardrobe under other tests (the camel coat would
  * gain a cut-out). The real model has its own browser tests.
  */
 export function collageCutoutsEnabled(): boolean {
   if (typeof navigator === "undefined") return false;
-  return usesTestFakeRemover() || !navigator.webdriver;
+  const optedIn = (globalThis as { __GLADRAGS_TEST_COLLAGE_CUTOUTS__?: boolean }).__GLADRAGS_TEST_COLLAGE_CUTOUTS__ === true;
+  return optedIn || !navigator.webdriver;
 }

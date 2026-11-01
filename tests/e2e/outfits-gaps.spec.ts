@@ -273,6 +273,14 @@ test.describe("saved outfits with gaps", () => {
   });
 });
 
+/** Opt this page in to collage cut-outs (automated browsers skip them otherwise), with the fake remover. */
+async function enableCollageCutouts(page: Page) {
+  await installFakeBackgroundRemover(page);
+  await page.addInitScript(() => {
+    (window as unknown as { __GLADRAGS_TEST_COLLAGE_CUTOUTS__?: boolean }).__GLADRAGS_TEST_COLLAGE_CUTOUTS__ = true;
+  });
+}
+
 test.describe("cut-out on first collage use", () => {
   const COAT_ID = "1a000000-0000-4000-8000-000000000009";
   const SHIRT_ID = "1a000000-0000-4000-8000-000000000001";
@@ -310,7 +318,7 @@ test.describe("cut-out on first collage use", () => {
   }
 
   test("cuts the item out once in the browser, uploads it, and never holds up the results", async ({ page }) => {
-    await installFakeBackgroundRemover(page);
+    await enableCollageCutouts(page);
     const coat = await answerWithCoatOutfits(page);
 
     const uploads: { body: Buffer | null; contentType: string | undefined }[] = [];
@@ -346,7 +354,7 @@ test.describe("cut-out on first collage use", () => {
   });
 
   test("an item still waiting for a photo (needsPhoto) is drawn as it is, never cut out", async ({ page }) => {
-    await installFakeBackgroundRemover(page);
+    await enableCollageCutouts(page);
     await answerWithCoatOutfits(page, { needsPhoto: true });
     let uploads = 0;
     await page.route(`**/api/items/${COAT_ID}/cutout`, (route) => {
@@ -362,6 +370,8 @@ test.describe("cut-out on first collage use", () => {
   });
 
   test("automated browsers that don't opt in skip cut-outs, so tests don't change the shared mock wardrobe", async ({ page }) => {
+    // The fake remover alone (as the add-item tests use it) doesn't opt in.
+    await installFakeBackgroundRemover(page);
     await answerWithCoatOutfits(page);
     let uploads = 0;
     await page.route(`**/api/items/${COAT_ID}/cutout`, (route) => {
@@ -377,7 +387,7 @@ test.describe("cut-out on first collage use", () => {
   });
 
   test("if the upload fails, the collage still shows and nothing is retried", async ({ page }) => {
-    await installFakeBackgroundRemover(page);
+    await enableCollageCutouts(page);
     await answerWithCoatOutfits(page);
     let uploads = 0;
     await page.route(`**/api/items/${COAT_ID}/cutout`, (route) => {

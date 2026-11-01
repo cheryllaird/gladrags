@@ -147,7 +147,7 @@ export function ShopFinder(props: ShopFinderProps) {
             {gap.shopResults.length === 0 ? (
               <p className="text-muted-foreground text-sm">
                 Nothing found in your shops for this one.{" "}
-                <Link href="/settings" className="underline underline-offset-4">
+                <Link href="/settings" prefetch={false} className="underline underline-offset-4">
                   Choose more shops
                 </Link>
               </p>

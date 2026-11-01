@@ -193,7 +193,7 @@ export function RequestForm(props: RequestFormProps) {
           Each outfit may suggest one new piece to buy, even if you own something similar. You can then find it in your
           favourite shops.
         </p>
-        <Link href="/settings" className="inline-flex min-h-11 items-center text-sm underline underline-offset-4">
+        <Link href="/settings" prefetch={false} className="inline-flex min-h-11 items-center text-sm underline underline-offset-4">
           Choose your shops
         </Link>
       </div>
