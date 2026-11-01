@@ -129,7 +129,7 @@ export const NO_SHOES_GAP_RULES = {
 export function noShoesShortlistInput(): ShortlistInput {
   const c = (itemIds: string[]) => ({ itemIds, gaps: ["shoes" as const] });
   return {
-    request: { style: { kind: "preset", presetId: "casual" }, guidance: null, includeShopItems: false },
+    request: { style: { kind: "preset", presetId: "casual" }, includeShopItems: false },
     avoidPairs: [],
     items: NO_SHOES_ITEMS,
     candidates: [
@@ -176,7 +176,7 @@ export function shopItemsFinalInput(): FinalPickInput {
     { itemIds: [IDS.tshirt, IDS.jeans, IDS.trainers], gaps: [] },
   ];
   return {
-    request: { style: { kind: "preset", presetId: "smart_casual" }, guidance: null, includeShopItems: true },
+    request: { style: { kind: "preset", presetId: "smart_casual" }, includeShopItems: true },
     avoidPairs: [],
     shortlist: shortlist.map((o) => ({ ...o, thumbnails: thumbnailsFor(o.itemIds) })),
     count: 3,
