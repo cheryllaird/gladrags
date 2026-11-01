@@ -8,7 +8,8 @@
  * 2. One grounded web search for all the gaps (ShopSearchProvider: Gemini
  *    with Google Search), limited to the user's favourite shops, metered as
  *    `shop_grounding`. The reply is checked with ShopSearchModelOutputSchema
- *    through callWithValidation (one retry).
+ *    through callWithValidation (one retry). Entries for gaps the outfit
+ *    doesn't have are ignored; a reply with only such entries is retried.
  * 3. Keep only links on a favourite shop's website (shopForUrl), and
  *    confirm each page through link-import's fetcher and parser
  *    (ShopPageChecker), in parallel within a time budget.
@@ -147,11 +148,12 @@ export class ShopSearchService {
             shops: shops.map(({ id, name, domains }) => ({ id, name, domains })),
           }),
         {
-          // An answer about gaps this outfit doesn't have means the model misread the request.
-          check: (reply) => {
-            const unknown = reply.gaps.filter((g) => !gapCategories.has(g.category)).map((g) => g.category);
-            return unknown.length > 0 ? `Results for gaps the outfit doesn't have: ${unknown.join(", ")}` : null;
-          },
+          // Entries for gaps the outfit doesn't have are dropped (candidatePages).
+          // A reply with none for its actual gaps misread the request: retry.
+          check: (reply) =>
+            reply.gaps.length > 0 && !reply.gaps.some((g) => gapCategories.has(g.category))
+              ? `Results only for gaps the outfit doesn't have: ${reply.gaps.map((g) => g.category).join(", ")}`
+              : null,
           ...usage.meterAiCalls(userId, "shop_grounding", provider.name),
           provider: provider.name,
         },

@@ -1,0 +1,7 @@
+{
+  "model": "none",
+  "synthetic": true,
+  "note": "Hand-made bad reply: results only for gaps the outfit doesn't have (a top and a bottom), so nothing answers its shoes or jacket gaps.",
+  "recordedAt": null,
+  "text": "{\"gaps\": [{\"category\": \"top\", \"candidates\": [{\"url\": \"https://www.next.co.uk/style/st8/k8\", \"title\": \"Shirt\"}]}, {\"category\": \"bottom\", \"candidates\": [{\"url\": \"https://www.next.co.uk/style/st7/k7\", \"title\": \"Jeans\"}]}]}"
+}

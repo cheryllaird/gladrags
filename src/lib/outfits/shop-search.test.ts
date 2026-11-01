@@ -140,15 +140,23 @@ describe("search", () => {
     expect(found.gaps[0]!.searchedAt).toBe(NOW.toISOString());
   });
 
-  it("retries a bad reply once (prose, an unknown gap) and uses the good one", async () => {
-    replies = [shopSearchReply("unknown-gap"), shopSearchReply("trainers-and-jacket")];
+  it("ignores results for a gap the outfit doesn't have, without a retry", async () => {
+    replies = [shopSearchReply("unknown-gap")];
+    const found = await service().search(USER, gapOutfit().id);
+    expect(calls).toBe(1);
+    expect(found.gaps[0]!.shopResults.map((p) => p.url)).toEqual(["https://www.next.co.uk/style/st123456/k98765"]);
+    expect(checked.map((c) => c.url)).not.toContain("https://www.next.co.uk/style/st7/k7");
+  });
+
+  it("retries a bad reply once (prose) and uses the good one", async () => {
+    replies = [shopSearchReply("prose"), shopSearchReply("trainers-and-jacket")];
     const found = await service().search(USER, gapOutfit().id);
     expect(calls).toBe(2);
     expect(found.gaps[0]!.shopResults).toHaveLength(3);
     expect(count("shop_grounding")).toBe(2);
   });
 
-  it.each(["prose", "truncated", "duplicate-gap", "unknown-gap"])("ai_failed after two %s replies; the search stays counted", async (name) => {
+  it.each(["prose", "truncated", "duplicate-gap", "only-unknown-gaps"])("ai_failed after two %s replies; the search stays counted", async (name) => {
     replies = [shopSearchReply(name)];
     const error = await service().search(USER, gapOutfit().id).catch((e: unknown) => e);
     expect((error as ApiException).code).toBe("ai_failed");
