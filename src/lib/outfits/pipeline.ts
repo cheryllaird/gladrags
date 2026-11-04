@@ -74,6 +74,13 @@ export interface PipelineInput {
   rejectedOutfits: readonly OutfitShape[];
   /** Exact outfits not to suggest again (the outfit being refined). */
   excludeOutfits?: readonly OutfitShape[];
+  /**
+   * Outfits to leave out only if anything else is possible: a guidance
+   * refinement of an outfit with gaps. With a sparse wardrobe the same
+   * owned items and gap slots may be all there is, and new gap
+   * descriptions are then the revision.
+   */
+  softExcludeOutfits?: readonly OutfitShape[];
   refinement?: RankingContext["refinement"];
 }
 
@@ -137,32 +144,45 @@ export async function runOutfitPipeline(input: PipelineInput, deps: PipelineDeps
 
   // Steps 1 and 2: filter, then generate candidates (complete outfits
   // first, then outfits with gaps). For each set of required items, try
-  // each filter level and pick one (pickLevel).
+  // each filter level and pick one (pickLevel); use the first set of
+  // required items that gives any.
   const season = seasonAt(deps.now());
-  const excludeOutfits = [...input.rejectedOutfits, ...(input.excludeOutfits ?? [])];
   const rejectedItemIds = input.rejectedOutfits.map((o) => shapeParts(o).itemIds);
-  let chosen: Choice | null = null;
-  for (const requiredIds of requiredSetsFor(input)) {
-    const tried: Choice[] = [];
-    for (const level of FILTER_LEVELS) {
-      const filtered = filterItems(input.items, { style: input.style, season, ...level, keepIds: new Set(requiredIds) });
-      const avoidPairs = avoidPairsFromRejected(rejectedItemIds, new Set(filtered.map((i) => i.id)), MAX_AVOID_PAIRS);
-      // Gaps are judged against what this request could use: the filtered wardrobe.
-      const gapRules: GapRules = { fillableCategories: new Set(filtered.map((i) => i.tags.category)), includeShopItems };
-      const { candidates, complete } = generateOutfitCandidates(filtered, {
-        requiredIds,
-        anchorItemId: input.anchorItemId,
-        excludeOutfits,
-        avoidPairs,
-        gapRules,
-        limit: MAX_CANDIDATES_SENT,
-        random: deps.random,
-      });
-      tried.push({ requiredIds, items: filtered, candidates, complete, avoidPairs, gapRules });
-      if (complete >= input.count) break;
+  const chooseCandidates = (excludeOutfits: readonly OutfitShape[]): Choice | null => {
+    for (const requiredIds of requiredSetsFor(input)) {
+      const tried: Choice[] = [];
+      for (const level of FILTER_LEVELS) {
+        const filtered = filterItems(input.items, { style: input.style, season, ...level, keepIds: new Set(requiredIds) });
+        const avoidPairs = avoidPairsFromRejected(rejectedItemIds, new Set(filtered.map((i) => i.id)), MAX_AVOID_PAIRS);
+        // Gaps are judged against what this request could use: the filtered wardrobe.
+        const gapRules: GapRules = { fillableCategories: new Set(filtered.map((i) => i.tags.category)), includeShopItems };
+        const { candidates, complete } = generateOutfitCandidates(filtered, {
+          requiredIds,
+          anchorItemId: input.anchorItemId,
+          excludeOutfits,
+          avoidPairs,
+          gapRules,
+          limit: MAX_CANDIDATES_SENT,
+          random: deps.random,
+        });
+        tried.push({ requiredIds, items: filtered, candidates, complete, avoidPairs, gapRules });
+        if (complete >= input.count) break;
+      }
+      const picked = pickLevel(tried, input.count);
+      if (picked) return picked;
     }
-    chosen = pickLevel(tried, input.count);
-    if (chosen) break;
+    return null;
+  };
+
+  // Rejected outfits and `excludeOutfits` are always left out; soft
+  // exclusions only while something else is possible.
+  const hardExcluded = [...input.rejectedOutfits, ...(input.excludeOutfits ?? [])];
+  const soft = input.softExcludeOutfits ?? [];
+  let excludeOutfits: readonly OutfitShape[] = soft.length > 0 ? [...hardExcluded, ...soft] : hardExcluded;
+  let chosen = chooseCandidates(excludeOutfits);
+  if (!chosen && soft.length > 0) {
+    excludeOutfits = hardExcluded;
+    chosen = chooseCandidates(excludeOutfits);
   }
   if (!chosen) return { status: "incomplete_wardrobe", reason: "nothing_fits", missingCategories: [] };
 

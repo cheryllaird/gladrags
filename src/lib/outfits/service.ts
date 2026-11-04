@@ -145,6 +145,7 @@ export class OutfitService {
         message: "There's nothing else in your wardrobe to swap in yet. Add more items to get other outfits.",
       };
     }
+    const parentShape = { itemIds: parent.itemIds, gaps: parent.gaps.map((g) => g.category) };
     const previousGaps = parent.gaps.map(({ category, subcategory, colours, description }) => ({ category, subcategory, colours, description }));
     return this.run(userId, stored, parent.id, {
       items,
@@ -154,7 +155,12 @@ export class OutfitService {
       includeShopItems: stored.includeShopItems,
       count: REFINE_COUNT,
       keepItemIds: swappedOut ? parent.itemIds.filter((id) => id !== swappedOut) : undefined,
-      excludeOutfits: [{ itemIds: parent.itemIds, gaps: parent.gaps.map((g) => g.category) }],
+      // The outfit being refined doesn't come back. For guidance on an
+      // outfit with gaps it may, when nothing else is possible (a sparse
+      // wardrobe): the new gap descriptions are then the revision.
+      ...(refine.kind === "guidance" && parent.gaps.length > 0
+        ? { softExcludeOutfits: [parentShape] }
+        : { excludeOutfits: [parentShape] }),
       refinement: { previousItemIds: parent.itemIds, ...(previousGaps.length > 0 ? { previousGaps } : {}), feedback: refine },
     });
   }

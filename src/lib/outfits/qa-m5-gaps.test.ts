@@ -515,15 +515,31 @@ describe("refine and swap with gaps", () => {
   });
 
   // Spec, Refinement: "On any outfit the user can ... type guidance ... which returns a revised set."
-  // With one item, the only possible shape is the item plus its gaps; the
-  // revision could re-describe the gaps ("warmer" -> boots instead of trainers),
-  // but the parent's shape is excluded outright, so guidance can never help.
-  it.fails("BUG: guidance on a one-item wardrobe's outfit still gets a revised set (new gap descriptions)", async () => {
+  // Was BUG (it.fails): with one item the only shape is the item plus its
+  // gaps, and the parent's shape was excluded outright. Fixed: for guidance
+  // on a gap outfit the parent's shape is left out only while something
+  // else is possible; here the revision re-describes the gaps.
+  it("guidance on a one-item wardrobe's outfit still gets a revised set (new gap descriptions)", async () => {
     const top = first("top");
     keepOnly([top.id]);
     const [parent] = outfitsOf(await service.generate(USER, { style: STYLE, count: 3 }));
     const result = await service.refine(USER, parent!.id, { kind: "guidance", text: "warmer, boots not trainers" });
     expect(result.status).toBe("ok");
+    for (const o of outfitsOf(result)) {
+      expect(o.itemIds).toEqual([top.id]);
+      expect(o.parentOutfitId).toBe(parent!.id);
+      expect(o.request.guidance).toBe("warmer, boots not trainers");
+    }
+    expect(ranking.finals.at(-1)!.refinement!.feedback).toEqual({ kind: "guidance", text: "warmer, boots not trainers" });
+  });
+
+  it("a swap still never returns the outfit being refined, even with gaps", async () => {
+    const top = first("top");
+    keepOnly([top.id, first("bottom").id]);
+    const [parent] = outfitsOf(await service.generate(USER, { style: STYLE, count: 3 }));
+    const bottom = parent!.itemIds.find((id) => id !== top.id)!;
+    const result = await service.refine(USER, parent!.id, { kind: "swap", itemId: bottom });
+    if (result.status === "ok") for (const o of result.outfits) expect(o.itemIds).not.toContain(bottom);
   });
 
   it("refining with guidance carries the parent's gaps to the model, without its shop results", async () => {
