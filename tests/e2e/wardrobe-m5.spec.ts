@@ -202,6 +202,11 @@ test.describe("review list", () => {
       (url) => isItemsList(url, true),
       (route) => route.fulfill({ json: { items: list } }),
     );
+    // The banner counts the unfiltered list's own "to review" items.
+    await page.route(
+      (url) => isItemsList(url, false),
+      (route) => route.fulfill({ json: { items: all.map((item) => ({ ...item, needsReview: waiting.some((w) => w.id === item.id) })) } }),
+    );
     await page.route("**/api/items/*", async (route) => {
       if (route.request().method() !== "PATCH") return route.continue();
       patches.push(route.request().postDataJSON());

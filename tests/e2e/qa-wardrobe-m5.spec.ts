@@ -141,10 +141,8 @@ test.describe("batch photos (QA)", () => {
   });
 
   test("a session that expires mid-batch goes to sign-in without a 'leave page?' prompt", async ({ page }) => {
-    // Known bug, reported: the beforeunload guard is still attached when
-    // api.ts redirects to sign-in, so the browser asks "Leave site?"; "Stay"
-    // leaves the user on a dead page.
-    test.fail();
+    // Fixed after review: the beforeunload guard used to still be attached
+    // when api.ts redirected to sign-in, so the browser asked "Leave site?".
     const item = await anItem(page);
     await answerUploads(page, item, async (route, n) => {
       if (n === 2) {
@@ -165,7 +163,33 @@ test.describe("batch photos (QA)", () => {
     expect(dialogs).toEqual([]);
   });
 
-  test("leaving by the bottom nav mid-batch: the wardrobe opens and nothing breaks", async ({ page }) => {
+  // Changed after review: in-app navigation mid-batch now asks first, and
+  // leaving stops the batch (the photo in flight finishes; the rest aren't sent).
+  test("the bottom nav mid-batch asks first; staying carries on", async ({ page }) => {
+    const item = await anItem(page);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const seen = await answerUploads(page, item, async (_route, n) => {
+      if (n === 1) await gate;
+      return false;
+    });
+    const dialogs: string[] = [];
+    page.on("dialog", (dialog) => {
+      dialogs.push(dialog.message());
+      void dialog.dismiss();
+    });
+    await page.goto("/add");
+    await page.getByTestId("photo-library-input").setInputFiles([photo("a.jpg"), photo("b.jpg"), photo("c.jpg")]);
+    await expect(page.getByText(/0 of 3 photos done/)).toBeVisible();
+    await page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Wardrobe" }).click();
+    await expect.poll(() => dialogs).toEqual(["Photos are still uploading. Leave anyway?"]);
+    await expect(page).toHaveURL(/\/add$/);
+    release();
+    await expect(page.getByText("All 3 photos added")).toBeVisible();
+    expect(seen.count).toBe(3);
+  });
+
+  test("the bottom nav mid-batch, leaving anyway: the wardrobe opens and the rest aren't uploaded", async ({ page }) => {
     const item = await anItem(page);
     let release!: () => void;
     const gate = new Promise<void>((resolve) => (release = resolve));
@@ -175,14 +199,15 @@ test.describe("batch photos (QA)", () => {
     });
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
+    page.on("dialog", (dialog) => void dialog.accept());
     await page.goto("/add");
     await page.getByTestId("photo-library-input").setInputFiles([photo("a.jpg"), photo("b.jpg"), photo("c.jpg")]);
     await expect(page.getByText(/0 of 3 photos done/)).toBeVisible();
     await page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Wardrobe" }).click();
     await expect(page).toHaveURL(/\/wardrobe/);
     release();
-    // The batch carries on in the background (recorded behaviour; reported as no warning on in-app navigation).
-    await expect.poll(() => seen.count).toBe(3);
+    await page.waitForTimeout(1_000);
+    expect(seen.count).toBe(1);
     expect(errors).toEqual([]);
   });
 
@@ -198,7 +223,10 @@ test.describe("batch photos (QA)", () => {
     page.on("pageerror", (error) => errors.push(error.message));
     await page.goto("/add");
     await page.getByTestId("photo-library-input").setInputFiles([photo("fine.jpg"), photo("x-mock-no-tags.jpg")]);
-    await expect(page.getByText("1 couldn't be tagged automatically: fill in the tags in the review list.")).toBeVisible();
+    // Changed after review: the draft can't be kept, so it's filled in from its row.
+    await expect(page.getByText(/1 couldn't be tagged automatically, and this browser won't let us keep it for later/)).toBeVisible();
+    await page.getByRole("button", { name: "Fill in tags: Photo 2" }).click();
+    await expect(page.getByRole("button", { name: "Save to wardrobe" })).toBeVisible();
     expect(errors).toEqual([]);
   });
 });
@@ -434,8 +462,7 @@ test.describe("get-started checklist (QA)", () => {
   });
 
   test("with storage blocked, 'Hide' hides it for this visit", async ({ page }) => {
-    // Known bug, reported: the button does nothing when storage is blocked.
-    test.fail();
+    // Fixed after review: the button used to do nothing with storage blocked.
     await page.addInitScript(() => {
       Object.defineProperty(window, "localStorage", {
         get() {
