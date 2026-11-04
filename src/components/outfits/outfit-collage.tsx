@@ -107,6 +107,8 @@ export function OutfitCollage({ name, items, gaps = [], lazy = false, onReloadPi
     const canvas = canvasRef.current;
     if (!canvas) return;
     let cancelled = false;
+    // Calls off this collage's queued cut-outs if it goes away first.
+    const unmounted = new AbortController();
     let paintCount = 0;
     const images = new Map<string, HTMLImageElement>();
 
@@ -177,7 +179,7 @@ export function OutfitCollage({ name, items, gaps = [], lazy = false, onReloadPi
       for (const placed of placedItems) {
         const item = byId.get(placed.id);
         if (!item || cutoutIds.has(item.id) || !needsCutout(item)) continue;
-        void collageCutouts.request(item).then((result) => {
+        void collageCutouts.request(item, unmounted.signal).then((result) => {
           if (!cancelled && result.url) void swapInCutout(target, result.url, item.id);
         });
       }
@@ -186,6 +188,7 @@ export function OutfitCollage({ name, items, gaps = [], lazy = false, onReloadPi
     void draw(canvas);
     return () => {
       cancelled = true;
+      unmounted.abort();
       pngRef.current = null;
       // Free the canvas's pixels now: mobile Safari caps total canvas memory.
       canvas.width = 0;

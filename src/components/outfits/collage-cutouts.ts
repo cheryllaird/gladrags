@@ -25,6 +25,7 @@ export const collageCutouts = new CutoutQueue(() => {
     fitCutout,
     upload: async (itemId, cutout) => (await outfitsApi.uploadCutout(itemId, cutout)).ok,
     toUrl: (cutout) => URL.createObjectURL(cutout),
+    revokeUrl: (url) => URL.revokeObjectURL(url),
   };
 });
 

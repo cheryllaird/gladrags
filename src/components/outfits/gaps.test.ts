@@ -398,6 +398,62 @@ describe("CutoutQueue", () => {
     expect(await queue.request(ITEM)).toEqual({ url: expect.stringMatching(/^blob:/), uploaded: false });
   });
 
+  it("a remover that hangs counts as failed after the timeout, and the next item still runs", async () => {
+    const deps = fakeDeps({
+      removeBackground: vi.fn().mockReturnValueOnce(new Promise<Blob>(() => {})).mockResolvedValue(new Blob(["two"])),
+    });
+    const queue = new CutoutQueue(() => deps, { removalTimeoutMs: 20 });
+    const [one, two] = await Promise.all([queue.request(ITEM), queue.request(ITEM_2)]);
+    expect(one).toEqual({ url: null, uploaded: false });
+    expect(two.url).not.toBeNull();
+    expect(deps.upload).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps only the latest results, freeing the older cut-outs' URLs; a freed item isn't cut out again", async () => {
+    const revokeUrl = vi.fn();
+    let n = 0;
+    const deps = fakeDeps({ revokeUrl, toUrl: vi.fn(() => `blob:${++n}`) });
+    const queue = new CutoutQueue(() => deps, { maxKept: 2 });
+    const item = (id: string) => ({ ...ITEM, id });
+    await queue.request(item("a"));
+    await queue.request(item("b"));
+    await queue.request(item("c"));
+    expect(revokeUrl).toHaveBeenCalledWith("blob:1");
+    expect(queue.peek("a")).toBeUndefined();
+    expect(queue.peek("c")).toEqual({ url: "blob:3", uploaded: true });
+    expect(await queue.request(item("a"))).toEqual({ url: null, uploaded: false });
+    expect(deps.removeBackground).toHaveBeenCalledTimes(3);
+  });
+
+  it("skips a queued job whose collage went away, and a later collage can queue it again", async () => {
+    const first = deferred<Blob>();
+    const deps = fakeDeps({ removeBackground: vi.fn().mockReturnValueOnce(first.promise).mockResolvedValue(new Blob(["x"])) });
+    const queue = new CutoutQueue(() => deps);
+    void queue.request(ITEM);
+    const gone = new AbortController();
+    const skipped = queue.request(ITEM_2, gone.signal);
+    gone.abort();
+    first.resolve(new Blob(["one"]));
+    expect(await skipped).toEqual({ url: null, uploaded: false });
+    expect(deps.fetchOriginal).toHaveBeenCalledTimes(1);
+    expect(queue.peek(ITEM_2.id)).toBeUndefined();
+    expect((await queue.request(ITEM_2)).url).not.toBeNull();
+  });
+
+  it("doesn't skip a job another collage still wants", async () => {
+    const first = deferred<Blob>();
+    const deps = fakeDeps({ removeBackground: vi.fn().mockReturnValueOnce(first.promise).mockResolvedValue(new Blob(["x"])) });
+    const queue = new CutoutQueue(() => deps);
+    void queue.request(ITEM);
+    const gone = new AbortController();
+    const still = new AbortController();
+    void queue.request(ITEM_2, gone.signal);
+    const wanted = queue.request(ITEM_2, still.signal);
+    gone.abort();
+    first.resolve(new Blob(["one"]));
+    expect((await wanted).url).not.toBeNull();
+  });
+
   it("a failure on one item doesn't stop the next", async () => {
     const deps = fakeDeps({
       removeBackground: vi.fn().mockRejectedValueOnce(new Error("no subject")).mockResolvedValue(new Blob(["two"])),
