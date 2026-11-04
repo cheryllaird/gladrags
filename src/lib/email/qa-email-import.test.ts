@@ -21,7 +21,7 @@ import { TEST_USER } from "@/test/ingestion-deps";
 import { parseReceivedSpf } from "./auth-headers";
 import { PostmarkInboundProvider, basicAuthHeader } from "./postmark";
 import { EMAIL_PROCESSING_BUDGET_MS, MIN_TIME_FOR_A_LINE_MS, processAcceptedEmail } from "./process";
-import { receiveInboundEmail } from "./receive";
+import { MAX_IMPORT_ROWS_PER_DAY, receiveInboundEmail } from "./receive";
 import { EMAIL_TEST_LIMITS, FORWARDING_CONFIG, TOKEN, USER_EMAIL, acceptedEmail, emailFixture, makeEmailDeps } from "./test-support";
 import { BodyTooLargeError, readBodyCapped, secretsEqual } from "./webhook-request";
 
@@ -621,14 +621,28 @@ describe("caps", () => {
     expect((await t.deps.usage.summary(TEST_USER)).emailsToday.used).toBe(10);
   });
 
-  it("refused and redelivered emails don't use up the email cap", async () => {
-    const limits = { ...EMAIL_TEST_LIMITS, dailyCaps: { ...EMAIL_TEST_LIMITS.dailyCaps, email_import: 1 } };
+  // Orchestrator decision (review round 1): refused emails count against
+  // emails_per_day, so failed rows are capped too. Redeliveries still don't.
+  it("refused emails use up the email cap; redeliveries don't", async () => {
+    const limits = { ...EMAIL_TEST_LIMITS, dailyCaps: { ...EMAIL_TEST_LIMITS.dailyCaps, email_import: 2 } };
     const t = makeEmailDeps(network, { orderReplies: [reply([])], limits });
-    await receiveInboundEmail(t.deps, acceptedEmail({ messageId: "x1", from: "stranger@evil.example" }), FORWARDING_CONFIG);
-    await receiveInboundEmail(t.deps, acceptedEmail({ messageId: "x2", spam: { isSpam: true, score: 9 } }), FORWARDING_CONFIG);
     expect(await receiveInboundEmail(t.deps, acceptedEmail({ messageId: "ok" }), FORWARDING_CONFIG)).not.toBeNull();
     expect(await receiveInboundEmail(t.deps, acceptedEmail({ messageId: "ok" }), FORWARDING_CONFIG)).toBeNull();
-    expect((await t.deps.usage.summary(TEST_USER)).emailsToday.used).toBe(1);
+    await receiveInboundEmail(t.deps, acceptedEmail({ messageId: "x1", from: "stranger@evil.example" }), FORWARDING_CONFIG);
+    expect((await t.deps.usage.summary(TEST_USER)).emailsToday.used).toBe(2);
+    // The day's emails are used up, so the next one, refused or not, is daily_cap_reached.
+    expect(await receiveInboundEmail(t.deps, acceptedEmail({ messageId: "late" }), FORWARDING_CONFIG)).toBeNull();
+    expect((await t.imports.list(TEST_USER, 20)).map((i) => String(i.error)).sort()).toEqual(["daily_cap_reached", "null", "sender_not_allowed"]);
+  });
+
+  it("someone flooding a forwarding address can't fill the table: rows stop at MAX_IMPORT_ROWS_PER_DAY", async () => {
+    const limits = { ...EMAIL_TEST_LIMITS, dailyCaps: { ...EMAIL_TEST_LIMITS.dailyCaps, email_import: 1 } };
+    const t = makeEmailDeps(network, { orderReplies: [reply([])], limits });
+    for (let i = 0; i < MAX_IMPORT_ROWS_PER_DAY + 30; i++) {
+      await receiveInboundEmail(t.deps, acceptedEmail({ messageId: `flood-${i}`, from: "stranger@evil.example" }), FORWARDING_CONFIG);
+    }
+    expect(t.imports.rows.size).toBe(MAX_IMPORT_ROWS_PER_DAY);
+    expect([...t.imports.rows.values()].every((r) => r.status === "failed")).toBe(true);
   });
 
   it("two deliveries of the same message at once start only one import", async () => {

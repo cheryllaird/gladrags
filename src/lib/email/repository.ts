@@ -55,6 +55,8 @@ export interface EmailImportRepository {
    * was judged, so the service's retry is processed rather than skipped.
    */
   abandon(id: string): Promise<void>;
+  /** How many rows this user has with received_at after `since` (the one being processed included). */
+  countSince(userId: string, since: Date): Promise<number>;
 }
 
 export interface EmailImportReader {
@@ -133,6 +135,16 @@ export class SupabaseEmailImportRepository implements EmailImportRepository {
     const { error } = await this.admin.from("email_imports").delete().eq("id", id).eq("status", "processing");
     if (error) throw new Error(`Couldn't remove the email import: ${error.message}`);
   }
+
+  async countSince(userId: string, since: Date): Promise<number> {
+    const { count, error } = await this.admin
+      .from("email_imports")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .gt("received_at", since.toISOString());
+    if (error) throw new Error(`Couldn't count email imports: ${error.message}`);
+    return count ?? 0;
+  }
 }
 
 export class SupabaseEmailImportReader implements EmailImportReader {
@@ -208,6 +220,10 @@ export class InMemoryEmailImportRepository implements EmailImportRepository, Ema
 
   async abandon(id: string): Promise<void> {
     if (this.rows.get(id)?.status === "processing") this.rows.delete(id);
+  }
+
+  async countSince(userId: string, since: Date): Promise<number> {
+    return [...this.rows.values()].filter((r) => r.user_id === userId && Date.parse(r.received_at) > since.getTime()).length;
   }
 
   async list(userId: string, limit: number): Promise<EmailImport[]> {

@@ -71,22 +71,49 @@ export async function receiveInboundEmail(
   }
 }
 
+/**
+ * Most email_imports rows recorded for one user in 24 hours. Every email
+ * to a valid token counts against emails_per_day (refused ones too), and
+ * over the cap it's recorded as daily_cap_reached; beyond this many rows
+ * a day, nothing more is recorded, so someone who learns a forwarding
+ * address can't fill the table.
+ */
+export const MAX_IMPORT_ROWS_PER_DAY = 20;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Count the email first, refused or not (so failed rows are capped too),
+ * then judge the sender and checks. While AI is paused nothing is counted:
+ * a refused email still shows why it was refused, an acceptable one shows
+ * ai_paused.
+ */
 async function judgeAndCount(deps: ReceiveDeps, importId: string, user: ForwardingUser, email: InboundEmail): Promise<AcceptedEmail | null> {
   const failed = (error: "sender_not_allowed" | "failed_checks" | "daily_cap_reached" | "ai_paused") =>
     deps.imports.finish(importId, { status: "failed", shopName: null, orderDate: null, itemCount: 0, skippedCount: 0, error });
-
   const verdict = judgeInboundEmail(email, user.email);
-  if (!verdict.accepted) {
-    await failed(verdict.error);
-    return null;
-  }
 
   let counted: UsageReservation;
   try {
     counted = await deps.usage.reserveAction(user.userId, "email_import");
   } catch (error) {
     if (!(error instanceof CapReachedError)) throw error;
-    await failed(error.cap === "monthly_ai_spend" ? "ai_paused" : "daily_cap_reached");
+    if (error.cap === "monthly_ai_spend") {
+      await failed(verdict.accepted ? "ai_paused" : verdict.error);
+      return null;
+    }
+    // Over today's email cap. Record it, unless the day's rows are already at their limit.
+    const since = new Date(Date.parse(email.receivedAt) - DAY_MS);
+    if ((await deps.imports.countSince(user.userId, since)) > MAX_IMPORT_ROWS_PER_DAY) {
+      await deps.imports.abandon(importId);
+      return null;
+    }
+    await failed("daily_cap_reached");
+    return null;
+  }
+
+  if (!verdict.accepted) {
+    // Counted: refused emails use up the day's emails too.
+    await failed(verdict.error);
     return null;
   }
   return { importId, user, email, counted };
