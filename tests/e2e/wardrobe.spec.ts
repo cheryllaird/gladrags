@@ -151,7 +151,7 @@ test.describe("add by photo", () => {
 });
 
 test.describe("add by link", () => {
-  test("a readable product page goes through cut-out and tagging to review, and keeps its link", async ({ page }) => {
+  test("a readable product page goes through tagging to review, and keeps its link", async ({ page }) => {
     const link = `https://shop.example.com/products/linen-shirt-${Date.now()}`;
     await page.goto("/add");
     await page.getByRole("link", { name: "Paste a product link" }).click();
@@ -286,11 +286,21 @@ test.describe("wardrobe grid, filters and search", () => {
     await expect(page.getByText("Nothing matches those filters.")).toBeVisible();
   });
 
-  test("an item with no cut-out shows its original photo", async ({ page }) => {
+  test("the grid and item detail show the original image, never the cut-out", async ({ page }) => {
+    // The mock fixtures use one picture for both, so give the t-shirt a cut-out of its own.
+    const tshirt = (await (await page.request.get("/api/items/1a000000-0000-4000-8000-000000000001")).json()).item;
+    const item = { ...tshirt, cutoutUrl: "/mock/items/blue-oxford-shirt.svg" };
+    await page.route("**/api/items", (route) => route.fulfill({ json: { items: [item] } }));
+    await page.route(`**/api/items/${item.id}`, (route) => route.fulfill({ json: { item } }));
+    await page.goto("/wardrobe");
+    await expect(page.getByRole("link", { name: "White crew-neck t-shirt" }).locator("img")).toHaveAttribute("src", item.originalUrl);
+    await page.goto(`/wardrobe/${item.id}`);
+    await expect(page.getByRole("img", { name: "White crew-neck t-shirt" })).toHaveAttribute("src", item.originalUrl);
+
+    await page.unroute("**/api/items");
     await page.goto("/wardrobe/1a000000-0000-4000-8000-000000000009");
-    await expect(page.getByRole("heading", { name: "Camel wool overcoat" })).toBeVisible();
-    await expect(page.getByText("this item has no cut-out")).toBeVisible();
     await expect(page.getByRole("img", { name: "Camel wool overcoat" })).toHaveAttribute("src", "/mock/items/camel-coat.svg");
+    await expect(page.getByText(/cut-out/)).toHaveCount(0);
   });
 
   test("an unknown item says so", async ({ page }) => {

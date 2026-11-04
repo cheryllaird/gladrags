@@ -8,7 +8,9 @@
 import type { z } from "zod";
 import {
   ApiErrorSchema,
+  BatchAddResponseSchema,
   CreateItemRequestSchema,
+  EmailImportListResponseSchema,
   DeletedResponseSchema,
   ItemDraftResponseSchema,
   ItemListResponseSchema,
@@ -16,17 +18,30 @@ import {
   LinkCutoutMetaSchema,
   LinkImportRequestSchema,
   LinkImportResponseSchema,
+  MAX_ITEMS_PER_REVIEW,
+  MarkItemsReviewedRequestSchema,
+  MarkItemsReviewedResponseSchema,
+  OutfitListResponseSchema,
+  PHOTO_REPLACE_FIELDS,
+  ResetForwardingAddressResponseSchema,
   UPLOAD_FIELDS,
   UpdateItemRequestSchema,
+  UpdateSettingsRequestSchema,
   UsageSummarySchema,
+  UserSettingsSchema,
   type ApiError,
   type ApiErrorCode,
+  type BatchAddResponse,
   type CreateItemRequest,
+  type EmailImport,
   type ItemDraft,
   type ItemListQuery,
   type ItemTags,
   type LinkImportResponse,
+  type Outfit,
+  type ShopId,
   type UsageSummary,
+  type UserSettings,
   type WardrobeItem,
 } from "@/contracts";
 
@@ -149,6 +164,7 @@ export async function listItems(query: ItemListQuery = {}): Promise<WardrobeItem
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(query)) {
     if (typeof value === "string" && value.trim() !== "") params.set(key, value.trim());
+    if (typeof value === "boolean") params.set(key, String(value));
   }
   const search = params.toString();
   const { items } = await apiRequest(ItemListResponseSchema, `/api/items${search ? `?${search}` : ""}`);
@@ -174,6 +190,43 @@ export async function updateItemTags(id: string, tags: ItemTags): Promise<Wardro
   return item;
 }
 
+/** PATCH /api/items/:id with `{ reviewed: true }`: the suggested tags are right as they are. */
+export async function markItemReviewed(id: string): Promise<WardrobeItem> {
+  const body = UpdateItemRequestSchema.parse({ reviewed: true });
+  const { item } = await apiRequest(ItemResponseSchema, `/api/items/${encodeURIComponent(id)}`, jsonInit("PATCH", body));
+  return item;
+}
+
+/**
+ * POST /api/items/reviewed: "Confirm all". Sent in chunks of
+ * MAX_ITEMS_PER_REVIEW; returns how many the server marked. `onChunkDone`
+ * hears each chunk the server confirmed, so if a later chunk fails the
+ * screen can still drop the ones that went through.
+ */
+export async function markItemsReviewed(
+  itemIds: readonly string[],
+  onChunkDone?: (confirmedIds: string[]) => void,
+): Promise<number> {
+  const unique = [...new Set(itemIds)];
+  let updated = 0;
+  for (let start = 0; start < unique.length; start += MAX_ITEMS_PER_REVIEW) {
+    const chunk = unique.slice(start, start + MAX_ITEMS_PER_REVIEW);
+    const body = MarkItemsReviewedRequestSchema.parse({ itemIds: chunk });
+    const result = await apiRequest(MarkItemsReviewedResponseSchema, "/api/items/reviewed", jsonInit("POST", body));
+    updated += result.updated;
+    onChunkDone?.(chunk);
+  }
+  return updated;
+}
+
+/** PUT /api/items/:id/photo (multipart): a real photo for an item saved without one (needsPhoto). */
+export async function replaceItemPhoto(id: string, original: NamedBlob): Promise<WardrobeItem> {
+  const form = new FormData();
+  form.append(PHOTO_REPLACE_FIELDS.original, original.blob, original.name);
+  const { item } = await apiRequest(ItemResponseSchema, `/api/items/${encodeURIComponent(id)}/photo`, { method: "PUT", body: form });
+  return item;
+}
+
 export async function deleteItem(id: string): Promise<void> {
   await apiRequest(DeletedResponseSchema, `/api/items/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
@@ -188,18 +241,27 @@ export interface NamedBlob {
   name: string;
 }
 
-/** POST /api/items/photo (multipart). `sourceUrl` is set for the link screenshot fallback. */
-export async function uploadPhoto(upload: {
-  original: NamedBlob;
-  cutout: NamedBlob | null;
-  sourceUrl?: string;
-}): Promise<ItemDraft> {
+function photoForm(upload: { original: NamedBlob; sourceUrl?: string }, saveForReview: boolean): FormData {
   const form = new FormData();
   form.append(UPLOAD_FIELDS.original, upload.original.blob, upload.original.name);
-  if (upload.cutout) form.append(UPLOAD_FIELDS.cutout, upload.cutout.blob, upload.cutout.name);
   if (upload.sourceUrl) form.append(UPLOAD_FIELDS.sourceUrl, upload.sourceUrl);
-  const { draft } = await apiRequest(ItemDraftResponseSchema, "/api/items/photo", { method: "POST", body: form });
+  if (saveForReview) form.append(UPLOAD_FIELDS.saveForReview, "true");
+  return form;
+}
+
+/**
+ * POST /api/items/photo (multipart): one photo, returned as a draft to
+ * review. `sourceUrl` is set for the link screenshot fallback. No cut-out:
+ * collages make that later.
+ */
+export async function uploadPhoto(upload: { original: NamedBlob; sourceUrl?: string }): Promise<ItemDraft> {
+  const { draft } = await apiRequest(ItemDraftResponseSchema, "/api/items/photo", { method: "POST", body: photoForm(upload, false) });
   return draft;
+}
+
+/** POST /api/items/photo with `saveForReview`: one photo of a batch, saved straight away as "to review" (or a draft if tagging failed). */
+export async function uploadPhotoForReview(upload: { original: NamedBlob; sourceUrl?: string }): Promise<BatchAddResponse> {
+  return apiRequest(BatchAddResponseSchema, "/api/items/photo", { method: "POST", body: photoForm(upload, true) });
 }
 
 /** POST /api/items/link, step 1 of adding by link. */
@@ -208,14 +270,25 @@ export async function importLink(url: string): Promise<LinkImportResponse> {
   return apiRequest(LinkImportResponseSchema, "/api/items/link", jsonInit("POST", body));
 }
 
-/** POST /api/items/link/cutout (multipart), step 2 of adding by link. */
-export async function uploadLinkCutout(upload: { originalImageKey: string; cutout: NamedBlob | null }): Promise<ItemDraft> {
-  const meta = LinkCutoutMetaSchema.parse({ originalImageKey: upload.originalImageKey });
+function linkStep2Form(originalImageKey: string, saveForReview: boolean): FormData {
+  const meta = LinkCutoutMetaSchema.parse(saveForReview ? { originalImageKey, saveForReview: true } : { originalImageKey });
   const form = new FormData();
   form.append(UPLOAD_FIELDS.meta, JSON.stringify(meta));
-  if (upload.cutout) form.append(UPLOAD_FIELDS.cutout, upload.cutout.blob, upload.cutout.name);
-  const { draft } = await apiRequest(ItemDraftResponseSchema, "/api/items/link/cutout", { method: "POST", body: form });
+  return form;
+}
+
+/** POST /api/items/link/cutout (multipart), step 2 of adding by link: tag the stored product image. No cut-out is sent. */
+export async function finishLink(originalImageKey: string): Promise<ItemDraft> {
+  const { draft } = await apiRequest(ItemDraftResponseSchema, "/api/items/link/cutout", {
+    method: "POST",
+    body: linkStep2Form(originalImageKey, false),
+  });
   return draft;
+}
+
+/** Step 2 for one link of a batch: saved as "to review" (or a draft if tagging failed). */
+export async function finishLinkForReview(originalImageKey: string): Promise<BatchAddResponse> {
+  return apiRequest(BatchAddResponseSchema, "/api/items/link/cutout", { method: "POST", body: linkStep2Form(originalImageKey, true) });
 }
 
 // ---------------------------------------------------------------------------
@@ -224,6 +297,38 @@ export async function uploadLinkCutout(upload: { originalImageKey: string; cutou
 
 export async function getUsage(): Promise<UsageSummary> {
   return apiRequest(UsageSummarySchema, "/api/usage");
+}
+
+// ---------------------------------------------------------------------------
+// Outfits (read only here: the get-started checklist asks whether there are any)
+// ---------------------------------------------------------------------------
+
+export async function listOutfits(): Promise<Outfit[]> {
+  const { outfits } = await apiRequest(OutfitListResponseSchema, "/api/outfits");
+  return outfits;
+}
+
+// ---------------------------------------------------------------------------
+// Settings and order emails
+// ---------------------------------------------------------------------------
+
+export async function getSettings(): Promise<UserSettings> {
+  return apiRequest(UserSettingsSchema, "/api/settings");
+}
+
+export async function updateFavouriteShops(favouriteShopIds: readonly ShopId[]): Promise<UserSettings> {
+  const body = UpdateSettingsRequestSchema.parse({ favouriteShopIds });
+  return apiRequest(UserSettingsSchema, "/api/settings", jsonInit("PUT", body));
+}
+
+/** A new forwarding address; the old one stops working at once. */
+export async function resetForwardingAddress(): Promise<UserSettings> {
+  return apiRequest(ResetForwardingAddressResponseSchema, "/api/settings/forwarding-address", { method: "POST" });
+}
+
+export async function listEmailImports(): Promise<EmailImport[]> {
+  const { imports } = await apiRequest(EmailImportListResponseSchema, "/api/email-imports");
+  return imports;
 }
 
 // ---------------------------------------------------------------------------

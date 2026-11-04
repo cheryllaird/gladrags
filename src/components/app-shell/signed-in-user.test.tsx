@@ -38,7 +38,7 @@ describe("forgetOtherUsersData", () => {
   it("leaves the same user's data alone", () => {
     forgetOtherUsersData(A);
     rememberWardrobeSearch("?category=top");
-    keepDraft(A, draftFor(A), false, null);
+    keepDraft(A, draftFor(A), null);
     forgetOtherUsersData(A);
     expect(wardrobeReturnPath()).toBe("/wardrobe?category=top");
     expect(takePendingAdd(A)).not.toBeNull();
@@ -47,7 +47,7 @@ describe("forgetOtherUsersData", () => {
   it("forgets the previous user's search and kept draft when someone else signs in", () => {
     forgetOtherUsersData(A);
     rememberWardrobeSearch("?q=a-private-search");
-    keepDraft(A, draftFor(A), false, null);
+    keepDraft(A, draftFor(A), null);
     window.sessionStorage.setItem("not-ours", "stays");
 
     forgetOtherUsersData(B);
@@ -60,15 +60,15 @@ describe("forgetOtherUsersData", () => {
   it("keeps a draft just kept for the user who's now signed in", () => {
     forgetOtherUsersData(A);
     rememberWardrobeSearch("?q=a-private-search");
-    keepDraft(B, draftFor(B), true, null);
+    keepDraft(B, draftFor(B), null);
     forgetOtherUsersData(B);
     expect(wardrobeReturnPath()).toBe("/wardrobe");
-    expect(takePendingAdd(B)).toMatchObject({ kind: "draft", cutoutFailed: true });
+    expect(takePendingAdd(B)).toMatchObject({ kind: "draft" });
   });
 
   it("clears data left in a tab that never recorded a user, except the user's own draft", () => {
     rememberWardrobeSearch("?q=unknown-owner");
-    keepDraft(B, draftFor(B), false, null);
+    keepDraft(B, draftFor(B), null);
     forgetOtherUsersData(B);
     expect(wardrobeReturnPath()).toBe("/wardrobe");
     expect(takePendingAdd(B)).not.toBeNull();

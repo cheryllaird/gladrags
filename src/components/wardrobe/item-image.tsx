@@ -1,10 +1,10 @@
-import { displayImageUrl } from "@/contracts";
 import { cn } from "@/lib/utils";
 
 /**
- * An item's picture: the cut-out, or the original photo when background
- * removal failed (displayImageUrl). Shared by the wardrobe grid, item
- * detail, the tag review screen and (if it likes) outfit-ui.
+ * An item's picture: always the original photo or product image (spec:
+ * "The wardrobe shows the original image"). Cut-outs are only for
+ * collages. Shared by the wardrobe grid, item detail, the review list and
+ * the tag review screen.
  *
  * A plain <img>, not next/image: these are short-lived signed URLs from
  * private storage, which the image optimiser shouldn't fetch or cache.
@@ -17,7 +17,7 @@ export function ItemImage({
   priority = false,
   onError,
 }: {
-  item: { cutoutUrl: string | null; originalUrl: string };
+  item: { originalUrl: string };
   alt: string;
   className?: string;
   fit?: "contain" | "cover";
@@ -29,7 +29,7 @@ export function ItemImage({
     <div className={cn("bg-muted relative aspect-square overflow-hidden rounded-lg", className)}>
       {/* eslint-disable-next-line @next/next/no-img-element -- signed URLs; see comment above */}
       <img
-        src={displayImageUrl(item)}
+        src={item.originalUrl}
         alt={alt}
         loading={priority ? "eager" : "lazy"}
         decoding="async"

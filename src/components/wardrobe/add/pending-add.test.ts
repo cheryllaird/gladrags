@@ -31,13 +31,13 @@ afterEach(() => window.sessionStorage.clear());
 describe("pending add (kept across an expired session)", () => {
   it("keeps the draft with the tags as the user left them, once", () => {
     const tags = { ...MOCK_SUGGESTED_TAGS, description: "My edited shirt" };
-    keepDraft(USER, DRAFT, true, tags);
-    expect(takePendingAdd(USER)).toEqual({ kind: "draft", draft: DRAFT, cutoutFailed: true, tags });
+    keepDraft(USER, DRAFT, tags);
+    expect(takePendingAdd(USER)).toEqual({ kind: "draft", draft: DRAFT, tags });
     expect(takePendingAdd(USER)).toBeNull();
   });
 
   it("stores whose draft it is", () => {
-    keepDraft(USER, DRAFT, false, null);
+    keepDraft(USER, DRAFT, null);
     expect(JSON.parse(window.sessionStorage.getItem(KEY)!)).toMatchObject({ kind: "draft", userId: USER });
   });
 
@@ -60,7 +60,7 @@ describe("pending add (kept across an expired session)", () => {
 
 describe("pending add when someone else signs in on the same tab", () => {
   it("doesn't show one user's draft to another, and deletes it", () => {
-    keepDraft(USER, DRAFT, false, { ...MOCK_SUGGESTED_TAGS, description: "First user's shirt" });
+    keepDraft(USER, DRAFT, { ...MOCK_SUGGESTED_TAGS, description: "First user's shirt" });
     expect(takePendingAdd(OTHER_USER)).toBeNull();
     expect(window.sessionStorage.getItem(KEY)).toBeNull();
     // Gone for the first user too: it isn't kept around waiting for them.
@@ -73,43 +73,43 @@ describe("pending add when someone else signs in on the same tab", () => {
   });
 
   it("drops a draft whose original image is in someone else's folder, even if the user ID matches", () => {
-    plant({ kind: "draft", userId: OTHER_USER, draft: DRAFT, cutoutFailed: false, tags: null });
+    plant({ kind: "draft", userId: OTHER_USER, draft: DRAFT, tags: null });
     expect(takePendingAdd(OTHER_USER)).toBeNull();
   });
 
   it("drops a draft whose cut-out is in someone else's folder", () => {
     const mixed = { ...DRAFT, cutoutImageKey: `${OTHER_USER}/1b000000-0000-4000-8000-000000000002.png` };
-    plant({ kind: "draft", userId: USER, draft: mixed, cutoutFailed: false, tags: null });
+    plant({ kind: "draft", userId: USER, draft: mixed, tags: null });
     expect(takePendingAdd(USER)).toBeNull();
   });
 
   it("restores a draft with no cut-out when the original is the user's", () => {
     const noCutout = { ...DRAFT, cutoutImageKey: null, cutoutUrl: null };
-    keepDraft(USER, noCutout, true, null);
-    expect(takePendingAdd(USER)).toEqual({ kind: "draft", draft: noCutout, cutoutFailed: true, tags: null });
+    keepDraft(USER, noCutout, null);
+    expect(takePendingAdd(USER)).toEqual({ kind: "draft", draft: noCutout, tags: null });
   });
 
   it("drops a draft kept before user IDs were stored", () => {
-    plant({ kind: "draft", draft: DRAFT, cutoutFailed: false, tags: null });
+    plant({ kind: "draft", draft: DRAFT, tags: null });
     expect(takePendingAdd(USER)).toBeNull();
   });
 
   it("doesn't treat a user ID that merely starts the same as the owner", () => {
     const prefixUser = USER.slice(0, -1);
-    plant({ kind: "draft", userId: prefixUser, draft: DRAFT, cutoutFailed: false, tags: null });
+    plant({ kind: "draft", userId: prefixUser, draft: DRAFT, tags: null });
     expect(takePendingAdd(prefixUser)).toBeNull();
   });
 });
 
 describe("pending add with no known user", () => {
   it("keeps nothing", () => {
-    keepDraft(null, DRAFT, false, null);
+    keepDraft(null, DRAFT, null);
     notePhotoLost(null);
     expect(window.sessionStorage.getItem(KEY)).toBeNull();
   });
 
   it("restores nothing and leaves storage alone", () => {
-    keepDraft(USER, DRAFT, false, null);
+    keepDraft(USER, DRAFT, null);
     expect(takePendingAdd(null)).toBeNull();
     expect(takePendingAdd(USER)).not.toBeNull();
   });

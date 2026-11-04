@@ -6,8 +6,8 @@ import { expect, test, type Page } from "@playwright/test";
 //   (including errors), static chunks, the ONNX model and runtime, icons,
 //   the service worker and 404s;
 // - the Report-Only CSP raises nothing across the five journeys plus
-//   add-by-link and its screenshot fallback, with the REAL in-browser
-//   background remover (ONNX Runtime + WebAssembly) on the add screens;
+//   add-by-link and its screenshot fallback (since milestone 5 the add
+//   screens no longer run the background remover; collages do);
 // - cross-site requests from a real browser on another origin are refused.
 
 const PHOTO = readFileSync(new URL("./fixtures/shirt.jpg", import.meta.url));
@@ -134,13 +134,13 @@ test.describe("the Report-Only CSP across the journeys, with the real background
     await expect.poll(() => reports.length).toBeGreaterThan(0);
   });
 
-  test("journey 1 by photo (real ONNX cut-out), item detail, journeys 3, 4 and 5, then sign-in: no reports", async ({ page }) => {
+  test("journey 1 by photo, item detail, journeys 3, 4 and 5, then sign-in: no reports", async ({ page }) => {
     test.setTimeout(180_000);
     const reports = await collectCsp(page);
     const fetched: string[] = [];
     page.on("request", (r) => fetched.push(new URL(r.url()).pathname));
 
-    // Journey 1: add by photo, with the real remover.
+    // Journey 1: add by photo.
     await page.goto("/add");
     await page.getByTestId("photo-library-input").setInputFiles({ name: "qa-csp.jpg", mimeType: "image/jpeg", buffer: PHOTO });
     await expect(page.getByRole("heading", { name: "Check the tags" })).toBeVisible({ timeout: 90_000 });
@@ -148,9 +148,10 @@ test.describe("the Report-Only CSP across the journeys, with the real background
     await page.getByLabel("Description").fill(description);
     await page.getByRole("button", { name: "Save to wardrobe" }).click();
     await expect(page.getByText("Saved to your wardrobe")).toBeVisible();
-    // The real remover ran: it fetched the ONNX model and the WebAssembly runtime.
-    expect(fetched.some((p) => p.startsWith("/models/"))).toBe(true);
-    expect(fetched.some((p) => p.startsWith("/ort/"))).toBe(true);
+    // Milestone 5: adding no longer cuts the item out, so the add screen
+    // doesn't load the model or the WebAssembly runtime (collages do, later).
+    expect(fetched.some((p) => p.startsWith("/models/"))).toBe(false);
+    expect(fetched.some((p) => p.startsWith("/ort/"))).toBe(false);
 
     // Wardrobe and item detail, then journey 3 from it.
     await page.goto("/wardrobe");
@@ -181,7 +182,7 @@ test.describe("the Report-Only CSP across the journeys, with the real background
     expect(reports).toEqual([]);
   });
 
-  test("add by link (real ONNX cut-out of the product image) and the screenshot fallback: no reports", async ({ page }) => {
+  test("add by link and the screenshot fallback: no reports", async ({ page }) => {
     test.setTimeout(180_000);
     const reports = await collectCsp(page);
 
