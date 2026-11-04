@@ -67,7 +67,8 @@ describe("review banner count", () => {
   it("adds this user's batch drafts to the items still to review", async () => {
     keepBatchDraft(USER, draft(USER, 1));
     keepBatchDraft(USER, draft(USER, 2));
-    stub(MOCK_ITEMS, MOCK_ITEMS.slice(0, 3).map((i) => ({ ...i, needsReview: true })));
+    // Since review: the unfiltered list's own needsReview flags are counted (no extra request).
+    stub(MOCK_ITEMS.map((i, n) => (n < 3 ? { ...i, needsReview: true } : i)));
     render(<WardrobeScreen initialFilters={NO_FILTERS} userId={USER} />);
     expect(await screen.findByRole("link", { name: /Review 5 new items/ })).toBeInTheDocument();
   });
@@ -133,10 +134,9 @@ describe("get-started checklist threshold", () => {
     expect(screen.getByText("0 of 4 done")).toBeInTheDocument();
   });
 
-  // Medium, reported: with storage blocked (Safari private browsing, say) the
-  // "Hide" button does nothing at all, since dismissal is only read back from
-  // localStorage. It should at least hide for this visit.
-  it.fails("'Hide' works for this visit even with storage blocked", async () => {
+  // Fixed after review: with storage blocked (Safari private browsing, say)
+  // the "Hide" button used to do nothing at all. It now hides for this visit.
+  it("'Hide' works for this visit even with storage blocked", async () => {
     vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
       throw new Error("blocked");
     });

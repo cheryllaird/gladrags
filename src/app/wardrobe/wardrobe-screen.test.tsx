@@ -216,11 +216,35 @@ describe("WardrobeScreen: review banner and get-started checklist (milestone 5)"
   });
 
   it("shows 'Review N new items' when items are waiting, linking to the review list", async () => {
-    const waiting = MOCK_ITEMS.slice(0, 2).map((i) => ({ ...i, needsReview: true }));
-    stub(MOCK_ITEMS, waiting);
+    const fetchMock = stub(MOCK_ITEMS.map((i, n) => (n < 2 ? { ...i, needsReview: true } : i)));
     render(<WardrobeScreen initialFilters={NO_FILTERS} userId={USER} />);
     const banner = await screen.findByRole("link", { name: /Review 2 new items/ });
     expect(banner).toHaveAttribute("href", "/wardrobe/review");
+    // Counted from the unfiltered list: no separate request.
+    expect(fetchMock.mock.calls.map(([u]) => String(u)).filter((u) => u.includes("needsReview"))).toEqual([]);
+  });
+
+  it("with filters on, asks the API for the count", async () => {
+    const waiting = MOCK_ITEMS.slice(0, 3).map((i) => ({ ...i, needsReview: true }));
+    const fetchMock = stub(MOCK_ITEMS.slice(0, 1), waiting);
+    window.history.replaceState(null, "", "/wardrobe?category=top");
+    render(<WardrobeScreen initialFilters={{ ...NO_FILTERS, category: "top" }} userId={USER} />);
+    expect(await screen.findByRole("link", { name: /Review 3 new items/ })).toBeInTheDocument();
+    expect(fetchMock.mock.calls.map(([u]) => String(u))).toContain("/api/items?needsReview=true");
+  });
+
+  it("asks for outfits until one has been seen, then remembers it and stops asking", async () => {
+    const outfitsAsked = () => vi.mocked(fetch).mock.calls.filter(([u]) => String(u).startsWith("/api/outfits")).length;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const body = url.startsWith("/api/outfits") ? { outfits: [{}] } : { items: MOCK_ITEMS.slice(0, 1) };
+      return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.localStorage.setItem(`gladrags-checklist:${USER}`, JSON.stringify({ hasOutfit: true }));
+    render(<WardrobeScreen initialFilters={NO_FILTERS} userId={USER} />);
+    expect(await screen.findByText("2 of 4 done")).toBeInTheDocument();
+    expect(outfitsAsked()).toBe(0);
   });
 
   it("shows no banner when nothing is waiting, and no checklist on a stocked wardrobe", async () => {

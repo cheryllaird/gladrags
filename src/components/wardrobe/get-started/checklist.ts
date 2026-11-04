@@ -86,6 +86,8 @@ const KEY_PREFIX = "gladrags-checklist:";
 export interface ChecklistMemory {
   dismissed: boolean;
   addedSeveral: boolean;
+  /** An outfit has been seen, so "Get your first outfit" stays ticked without asking again. */
+  hasOutfit: boolean;
 }
 
 /** The localStorage key for this user's checklist memory on this device. */
@@ -95,13 +97,13 @@ export function checklistKey(userId: string | null): string | null {
 
 /** Parse what's stored (anything unexpected reads as nothing remembered). */
 export function parseChecklistMemory(raw: string | null | undefined): ChecklistMemory {
-  const empty = { dismissed: false, addedSeveral: false };
+  const empty = { dismissed: false, addedSeveral: false, hasOutfit: false };
   if (!raw) return empty;
   try {
     const parsed: unknown = JSON.parse(raw);
     if (typeof parsed !== "object" || parsed === null) return empty;
     const value = parsed as Record<string, unknown>;
-    return { dismissed: value.dismissed === true, addedSeveral: value.addedSeveral === true };
+    return { dismissed: value.dismissed === true, addedSeveral: value.addedSeveral === true, hasOutfit: value.hasOutfit === true };
   } catch {
     return empty;
   }
@@ -133,6 +135,11 @@ function remember(userId: string | null, change: Partial<ChecklistMemory>): void
 /** "Hide this" on the checklist, for this user on this device. */
 export function dismissChecklist(userId: string | null): void {
   remember(userId, { dismissed: true });
+}
+
+/** An outfit exists: step 4 is done, and outfits needn't be fetched for the checklist again. */
+export function noteHasOutfit(userId: string | null): void {
+  remember(userId, { hasOutfit: true });
 }
 
 /** A batch add saved at least one item: step 2 is done. */

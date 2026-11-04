@@ -13,6 +13,7 @@ import {
   checklistKey,
   checklistSteps,
   dismissChecklist,
+  noteHasOutfit,
   parseChecklistMemory,
   wardrobeIsStocked,
 } from "@/components/wardrobe/get-started/checklist";
@@ -101,13 +102,17 @@ export function WardrobeScreen({
 
   const refreshing = state.kind !== "loading" && state.key !== key;
 
-  // "Review N new items": items still to review, plus batch drafts kept in this tab.
-  const [unreviewed, setUnreviewed] = useState(0);
+  // "Review N new items": items still to review, plus batch drafts kept in
+  // this tab. The unfiltered list already has every item, so it's counted
+  // from there; only a filtered list needs to ask the API.
+  const filtering = Object.keys(query).length > 0;
+  const [filteredUnreviewed, setFilteredUnreviewed] = useState(0);
   const drafts = batchDraftsFromRaw(useStorageValue("session", BATCH_DRAFTS_KEY), userId).length;
   useEffect(() => {
+    if (!filtering) return;
     let current = true;
     listItems({ needsReview: true }).then(
-      (items) => current && setUnreviewed(items.length),
+      (items) => current && setFilteredUnreviewed(items.length),
       () => {
         // The banner is a shortcut; the wardrobe works without it.
       },
@@ -115,7 +120,9 @@ export function WardrobeScreen({
     return () => {
       current = false;
     };
-  }, [attempt]);
+  }, [filtering, attempt]);
+  const unreviewed =
+    state.kind === "ready" && !state.filtered ? state.items.filter((item) => item.needsReview).length : filteredUnreviewed;
   const toReview = unreviewed + drafts;
 
   // The get-started checklist, on the unfiltered wardrobe only. Memory is
@@ -123,13 +130,27 @@ export function WardrobeScreen({
   const rawMemory = useStorageValue("local", checklistKey(userId));
   const memory = rawMemory === undefined ? null : parseChecklistMemory(rawMemory);
   const unfiltered = state.kind === "ready" && !state.filtered ? state.items : null;
-  const showChecklist = unfiltered !== null && memory !== null && !memory.dismissed && !wardrobeIsStocked(unfiltered);
-  const [hasOutfit, setHasOutfit] = useState(false);
+  // "Hide" works for this visit even when storage is blocked and can't remember it.
+  const [dismissedThisVisit, setDismissedThisVisit] = useState(false);
+  const dismissed = dismissedThisVisit || (memory?.dismissed ?? false);
+  const showChecklist = unfiltered !== null && memory !== null && !dismissed && !wardrobeIsStocked(unfiltered);
+  const hide = () => {
+    setDismissedThisVisit(true);
+    dismissChecklist(userId);
+  };
+  // "Get your first outfit": once an outfit has been seen it's remembered, so outfits aren't fetched again.
+  const [outfitSeen, setOutfitSeen] = useState(false);
+  const hasOutfit = outfitSeen || (memory?.hasOutfit ?? false);
+  const needOutfitCheck = showChecklist && !hasOutfit;
   useEffect(() => {
-    if (!showChecklist) return;
+    if (!needOutfitCheck) return;
     let current = true;
     listOutfits().then(
-      (outfits) => current && setHasOutfit(outfits.length > 0),
+      (outfits) => {
+        if (!current || outfits.length === 0) return;
+        setOutfitSeen(true);
+        noteHasOutfit(userId);
+      },
       () => {
         // Not knowing just leaves the step unticked.
       },
@@ -137,7 +158,7 @@ export function WardrobeScreen({
     return () => {
       current = false;
     };
-  }, [showChecklist]);
+  }, [needOutfitCheck, userId]);
 
   return (
     <>
@@ -152,7 +173,7 @@ export function WardrobeScreen({
           <GetStarted
             steps={checklistSteps({ items: unfiltered, addedSeveral: memory.addedSeveral, hasOutfit })}
             empty={false}
-            onDismiss={() => dismissChecklist(userId)}
+            onDismiss={hide}
           />
         )}
 
@@ -185,7 +206,7 @@ export function WardrobeScreen({
                 <GetStarted
                   steps={checklistSteps({ items: [], addedSeveral: memory.addedSeveral, hasOutfit })}
                   empty
-                  onDismiss={() => dismissChecklist(userId)}
+                  onDismiss={hide}
                 />
               ) : memory === null ? null : (
                 <EmptyWardrobe />

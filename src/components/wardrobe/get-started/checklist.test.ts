@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Category } from "@/contracts";
 import { MOCK_ITEMS } from "@/lib/mocks/fixtures";
-import { checklistSteps, dismissChecklist, noteAddedSeveral, readChecklistMemory, wardrobeIsStocked } from "./checklist";
+import { checklistSteps, dismissChecklist, noteAddedSeveral, noteHasOutfit, readChecklistMemory, wardrobeIsStocked } from "./checklist";
 
 const of = (...categories: Category[]) => categories.map((category) => ({ tags: { ...MOCK_ITEMS[0]!.tags, category } }));
 const USER = "0a000000-0000-4000-8000-000000000001";
@@ -50,14 +50,15 @@ describe("checklist memory (per user, per device)", () => {
   it("remembers a dismissal and a batch for that user only", () => {
     dismissChecklist(USER);
     noteAddedSeveral(USER);
-    expect(readChecklistMemory(USER)).toEqual({ dismissed: true, addedSeveral: true });
-    expect(readChecklistMemory("someone-else")).toEqual({ dismissed: false, addedSeveral: false });
-    expect(readChecklistMemory(null)).toEqual({ dismissed: false, addedSeveral: false });
+    noteHasOutfit(USER);
+    expect(readChecklistMemory(USER)).toEqual({ dismissed: true, addedSeveral: true, hasOutfit: true });
+    expect(readChecklistMemory("someone-else")).toEqual({ dismissed: false, addedSeveral: false, hasOutfit: false });
+    expect(readChecklistMemory(null)).toEqual({ dismissed: false, addedSeveral: false, hasOutfit: false });
   });
 
   it("reads junk as nothing remembered", () => {
     window.localStorage.setItem(`gladrags-checklist:${USER}`, "{not json");
-    expect(readChecklistMemory(USER)).toEqual({ dismissed: false, addedSeveral: false });
+    expect(readChecklistMemory(USER)).toEqual({ dismissed: false, addedSeveral: false, hasOutfit: false });
     window.localStorage.setItem(`gladrags-checklist:${USER}`, JSON.stringify({ dismissed: "yes" }));
     expect(readChecklistMemory(USER).dismissed).toBe(false);
   });
@@ -70,6 +71,6 @@ describe("checklist memory (per user, per device)", () => {
       throw new Error("blocked");
     });
     expect(() => dismissChecklist(USER)).not.toThrow();
-    expect(readChecklistMemory(USER)).toEqual({ dismissed: false, addedSeveral: false });
+    expect(readChecklistMemory(USER)).toEqual({ dismissed: false, addedSeveral: false, hasOutfit: false });
   });
 });
