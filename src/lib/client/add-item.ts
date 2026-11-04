@@ -131,7 +131,6 @@ function cutAtNonAsciiHost(link: string): string {
   const hostStart = link.indexOf("://") + 3;
   const hostEnd = link.slice(hostStart).search(/[/?#]/);
   const host = hostEnd === -1 ? link.slice(hostStart) : link.slice(hostStart, hostStart + hostEnd);
-  // eslint-disable-next-line no-control-regex -- matching anything outside ASCII
   const bad = host.search(/[^\x00-\x7F]/);
   return bad === -1 ? link : link.slice(0, hostStart + bad);
 }
