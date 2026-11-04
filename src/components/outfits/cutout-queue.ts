@@ -61,6 +61,10 @@ interface Job {
   promise: Promise<CutoutResult>;
   /** One per request; null for a request that can't be called off. */
   signals: (AbortSignal | null)[];
+  /** The cut-out's URL as soon as it's made, before the upload finishes. */
+  readyUrl: string | null;
+  /** Told the URL as soon as it's made. */
+  onReady: ((url: string) => void)[];
 }
 
 /** Reject if `promise` takes longer than `ms`. */
@@ -113,16 +117,25 @@ export class CutoutQueue {
    * If `signal` aborts before the job's turn (its collage went away), and
    * no other request for the item is still waiting, the job is skipped and
    * a later request can queue it again.
+   *
+   * `onReady` is called with the cut-out's URL as soon as it's made, so the
+   * collage can draw it while the upload is still going; the promise
+   * resolves once the upload has finished (or failed).
    */
-  request(item: CutoutCandidate, signal?: AbortSignal): Promise<CutoutResult> {
+  request(item: CutoutCandidate, signal?: AbortSignal, onReady?: (url: string) => void): Promise<CutoutResult> {
     if (this.freed.has(item.id)) return Promise.resolve(NO_CUTOUT);
     const existing = this.jobs.get(item.id);
     if (existing) {
       existing.signals.push(signal ?? null);
+      if (onReady) {
+        const ready = existing.readyUrl;
+        if (ready) queueMicrotask(() => onReady(ready));
+        else existing.onReady.push(onReady);
+      }
       return existing.promise;
     }
 
-    const job: Job = { promise: Promise.resolve(NO_CUTOUT), signals: [signal ?? null] };
+    const job: Job = { promise: Promise.resolve(NO_CUTOUT), signals: [signal ?? null], readyUrl: null, onReady: onReady ? [onReady] : [] };
     job.promise = this.tail.then(() => this.run(item, job));
     this.tail = job.promise;
     this.jobs.set(item.id, job);
@@ -134,7 +147,7 @@ export class CutoutQueue {
       this.jobs.delete(item.id);
       return NO_CUTOUT;
     }
-    const result = await this.cutOut(item);
+    const result = await this.cutOut(item, job);
     // cutOut drops the job when a later request should try again.
     if (this.jobs.get(item.id) === job) this.keep(item.id, result);
     return result;
@@ -158,7 +171,7 @@ export class CutoutQueue {
     }
   }
 
-  private async cutOut(item: CutoutCandidate): Promise<CutoutResult> {
+  private async cutOut(item: CutoutCandidate, job: Job): Promise<CutoutResult> {
     let deps: CutoutDeps;
     let original: Blob;
     try {
@@ -181,18 +194,31 @@ export class CutoutQueue {
     // session doesn't try again (it would most likely fail the same way).
     if (!cutout) return NO_CUTOUT;
 
+    // Draw the local copy straight away, whatever happens to the upload: a
+    // failed upload only means the next session cuts it out again.
+    let url: string | null = null;
+    try {
+      url = deps.toUrl(cutout);
+    } catch {
+      url = null;
+    }
+    if (url) {
+      job.readyUrl = url;
+      for (const listener of job.onReady.splice(0)) {
+        try {
+          listener(url);
+        } catch {
+          // A collage's own problem; the queue carries on.
+        }
+      }
+    }
+
     let uploaded = false;
     try {
       uploaded = await deps.upload(item.id, cutout);
     } catch {
       uploaded = false;
     }
-    // Draw the local copy either way: it's ready now, and a failed upload
-    // only means the next session cuts it out again.
-    try {
-      return { url: deps.toUrl(cutout), uploaded };
-    } catch {
-      return { url: null, uploaded };
-    }
+    return { url, uploaded };
   }
 }

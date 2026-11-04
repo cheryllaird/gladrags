@@ -153,6 +153,7 @@ test.describe("Find in my shops", () => {
     await expect(shopLink).toHaveAttribute("target", "_blank");
     await expect(shopLink).toHaveAttribute("rel", "noopener noreferrer");
     await expect(shopLink).toHaveAttribute("href", /^https:\/\/www\.next\.co\.uk\//);
+    await expect(shopLink).toHaveAccessibleName(/^View in Next: .+ \(opens in a new tab\)$/);
     await expect(card.getByRole("button", { name: "Search my shops again" })).toBeVisible();
     await expectNoSidewaysScroll(page);
 
@@ -163,7 +164,16 @@ test.describe("Find in my shops", () => {
     await products.first().getByRole("button", { name: "Pick this" }).click();
     expect((await pick).postDataJSON()).toEqual({ productUrl });
     await expect(products.first()).toHaveAttribute("data-chosen", "true");
-    await expect(products.first().getByRole("button", { name: "Picked" })).toHaveAttribute("aria-pressed", "true");
+    await expect(products.first().getByRole("button", { name: `Unpick: ${title}` })).toBeVisible();
+    await expect(products.first()).toContainText("Picked");
+    // Every card offers "I've bought this", named with its product.
+    for (let i = 0; i < 3; i++) {
+      const t = (await products.nth(i).locator("p").first().textContent())!;
+      await expect(products.nth(i).getByRole("link", { name: `I've bought this: ${t}` })).toBeVisible();
+      await expect(products.nth(i).getByRole("button", { name: /^(Pick this|Unpick): / })).toHaveAccessibleName(new RegExp(escapeRegExp(t)));
+    }
+    // Card pictures come from the shops' servers: no referrer.
+    await expect(products.nth(0).locator("img")).toHaveAttribute("referrerpolicy", "no-referrer");
 
     // The collage keeps the dashed placeholder, labelled with the product, and can still be saved.
     const collage = card.getByTestId("outfit-collage");
@@ -173,7 +183,7 @@ test.describe("Find in my shops", () => {
     // The gap row shows the pick, with "I've bought this".
     const chosen = card.getByTestId("chosen-product");
     await expect(chosen).toContainText(title);
-    const bought = chosen.getByRole("link", { name: "I've bought this" });
+    const bought = chosen.getByRole("link", { name: /^I've bought this/ });
     await expect(bought).toHaveAttribute("href", `/add/link?url=${encodeURIComponent(productUrl)}`);
     expect((await bought.boundingBox())!.height).toBeGreaterThanOrEqual(44);
 
@@ -190,7 +200,7 @@ test.describe("Find in my shops", () => {
     const product = card.getByTestId("product-card").first();
     await product.getByRole("button", { name: "Pick this" }).click();
     const productUrl = (await product.getByRole("link", { name: /View in/ }).getAttribute("href"))!;
-    await card.getByRole("link", { name: "I've bought this" }).click();
+    await card.getByTestId("chosen-product").getByRole("link", { name: /^I've bought this/ }).click();
 
     await expect(page).toHaveURL(/\/add\/link\?url=/);
     expect(new URL(page.url()).searchParams.get("url")).toBe(productUrl);
@@ -276,10 +286,15 @@ test.describe("saved outfits with gaps", () => {
 /** Opt this page in to collage cut-outs (automated browsers skip them otherwise), with the fake remover. */
 async function enableCollageCutouts(page: Page) {
   await installFakeBackgroundRemover(page);
-  await page.addInitScript(() => {
-    (window as unknown as { __GLADRAGS_TEST_COLLAGE_CUTOUTS__?: boolean }).__GLADRAGS_TEST_COLLAGE_CUTOUTS__ = true;
-  });
+  await page.addInitScript((png) => {
+    const w = window as unknown as { __GLADRAGS_TEST_COLLAGE_CUTOUTS__?: boolean; __GLADRAGS_TEST_REMOVER_RESULT__?: string };
+    w.__GLADRAGS_TEST_COLLAGE_CUTOUTS__ = true;
+    // A visible "cut-out" (an opaque red pixel), so the swap into the collage can be seen.
+    w.__GLADRAGS_TEST_REMOVER_RESULT__ = png;
+  }, RED_PIXEL_PNG);
 }
+
+const RED_PIXEL_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
 
 test.describe("cut-out on first collage use", () => {
   const COAT_ID = "1a000000-0000-4000-8000-000000000009";
@@ -342,6 +357,9 @@ test.describe("cut-out on first collage use", () => {
     expect(uploads[0]!.contentType).toMatch(/^multipart\/form-data/);
     expect(uploads[0]!.body!.includes(Buffer.from('name="cutout"'))).toBe(true);
     expect(uploads[0]!.body!.includes(Buffer.from([0x89, 0x50, 0x4e, 0x47]))).toBe(true);
+    // The cut-out is drawn straight away, before the upload finishes, in both collages.
+    for (const i of [0, 1]) await expect(cards(page).nth(i).getByTestId("outfit-collage")).toHaveAttribute("data-cutouts", "1");
+    for (const i of [0, 1]) await expectCollageReadyAndExportable(cards(page).nth(i));
     releaseUpload();
 
     // Asking again draws new collages with the same coat: still no second cut-out.

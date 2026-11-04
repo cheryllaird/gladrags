@@ -45,12 +45,7 @@ export function GapRow(props: { gap: OutfitGap; busy: boolean; onClear: () => vo
           </p>
           <div className="flex flex-wrap gap-x-1">
             <ShopLink product={product} />
-            <Button asChild variant="ghost" size="sm" className="h-11">
-              <Link href={addBoughtProductHref(product)}>
-                <ShoppingBagIcon aria-hidden />
-                I&apos;ve bought this
-              </Link>
-            </Button>
+            <BoughtLink product={product} />
             {props.canClear && (
               <Button type="button" variant="ghost" size="sm" className="h-11" disabled={props.busy} onClick={props.onClear}>
                 <XIcon aria-hidden />
@@ -84,15 +79,36 @@ function GapSwatch({ gap }: { gap: OutfitGap }) {
   );
 }
 
-/** "View in shop": the product page, in a new tab, telling the shop nothing about where it came from. */
+/**
+ * "View in Next": the product page, in a new tab, telling the shop nothing
+ * about where it came from. The accessible name adds the product title, as
+ * there are several of these on a screen.
+ */
 function ShopLink({ product }: { product: ShopProduct }) {
+  const shop = shopName(product);
   return (
     <Button asChild variant="ghost" size="sm" className="h-11">
-      <a href={product.url} target="_blank" rel="noopener noreferrer">
+      <a
+        href={product.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label={`View in ${shop}: ${product.title} (opens in a new tab)`}
+      >
         <ExternalLinkIcon aria-hidden />
-        View in {shopName(product)}
-        <span className="sr-only"> (opens in a new tab)</span>
+        View in {shop}
       </a>
+    </Button>
+  );
+}
+
+/** "I've bought this": add-by-link with the product's page filled in. */
+function BoughtLink({ product }: { product: ShopProduct }) {
+  return (
+    <Button asChild variant="ghost" size="sm" className="h-11">
+      <Link href={addBoughtProductHref(product)} aria-label={`I've bought this: ${product.title}`}>
+        <ShoppingBagIcon aria-hidden />
+        I&apos;ve bought this
+      </Link>
     </Button>
   );
 }
@@ -185,20 +201,27 @@ function ProductCard(props: { product: ShopProduct; chosen: boolean; disabled: b
           {shopName(product)}
           {product.priceText ? ` · ${product.priceText}` : ""}
         </p>
+        {chosen && (
+          <Badge variant="secondary">
+            <CheckIcon aria-hidden />
+            Picked
+          </Badge>
+        )}
         <div className="flex flex-wrap gap-x-1">
           <ShopLink product={product} />
           <Button
             type="button"
-            variant={chosen ? "secondary" : "ghost"}
+            variant="ghost"
             size="sm"
             className="h-11"
-            aria-pressed={chosen}
+            aria-label={`${chosen ? "Unpick" : "Pick this"}: ${product.title}`}
             disabled={props.disabled}
             onClick={() => props.onToggle(!chosen)}
           >
-            {chosen ? <CheckIcon aria-hidden /> : null}
-            {chosen ? "Picked" : "Pick this"}
+            {chosen ? "Unpick" : "Pick this"}
           </Button>
+          {/* On every card, not only after a pick: it saves a tap (orchestrator decision). */}
+          <BoughtLink product={product} />
         </div>
       </div>
     </li>

@@ -179,8 +179,9 @@ export function OutfitCollage({ name, items, gaps = [], lazy = false, onReloadPi
       for (const placed of placedItems) {
         const item = byId.get(placed.id);
         if (!item || cutoutIds.has(item.id) || !needsCutout(item)) continue;
-        void collageCutouts.request(item, unmounted.signal).then((result) => {
-          if (!cancelled && result.url) void swapInCutout(target, result.url, item.id);
+        // Swapped in as soon as it's made, not when the upload finishes.
+        void collageCutouts.request(item, unmounted.signal, (url) => {
+          if (!cancelled) void swapInCutout(target, url, item.id);
         });
       }
     }

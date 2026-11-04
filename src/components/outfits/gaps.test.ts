@@ -454,6 +454,23 @@ describe("CutoutQueue", () => {
     expect((await wanted).url).not.toBeNull();
   });
 
+  it("tells every collage the cut-out's URL as soon as it's made, before the upload finishes", async () => {
+    const upload = deferred<boolean>();
+    const deps = fakeDeps({ upload: vi.fn(() => upload.promise) });
+    const queue = new CutoutQueue(() => deps);
+    const early: string[] = [];
+    const done = queue.request(ITEM, undefined, (url) => early.push(url));
+    await vi.waitFor(() => expect(early).toHaveLength(1));
+    // A collage that asks while the upload is still going hears straight away too.
+    void queue.request(ITEM, undefined, (url) => early.push(url));
+    await vi.waitFor(() => expect(early).toHaveLength(2));
+    expect(early[1]).toBe(early[0]);
+    expect(queue.peek(ITEM.id)).toBeUndefined();
+    upload.resolve(true);
+    expect(await done).toEqual({ url: early[0], uploaded: true });
+    expect(deps.removeBackground).toHaveBeenCalledTimes(1);
+  });
+
   it("a failure on one item doesn't stop the next", async () => {
     const deps = fakeDeps({
       removeBackground: vi.fn().mockRejectedValueOnce(new Error("no subject")).mockResolvedValue(new Blob(["two"])),

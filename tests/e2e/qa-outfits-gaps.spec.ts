@@ -940,8 +940,8 @@ test.describe("Find in my shops, adversarial", () => {
     );
     await expectCollageReadyAndExportable(card);
 
-    // Un-pick by tapping "Picked" on the card itself.
-    await products.nth(2).getByRole("button", { name: "Picked" }).click();
+    // Un-pick by tapping "Unpick" on the card itself.
+    await products.nth(2).getByRole("button", { name: /^Unpick/ }).click();
     await expect(card.getByTestId("chosen-product")).toHaveCount(0);
 
     // A failed pick: error shown, nothing marked as picked.
@@ -991,7 +991,8 @@ test.describe("Find in my shops, adversarial", () => {
     await askForCasual(page);
     await cards(page)
       .first()
-      .getByRole("link", { name: "I've bought this" })
+      .getByTestId("chosen-product")
+      .getByRole("link", { name: /^I've bought this/ })
       .click();
     await expect(page).toHaveURL(/\/add\/link\?url=/);
     expect(new URL(page.url()).searchParams.get("url")).toBe(productUrl);
@@ -1067,7 +1068,7 @@ test.describe("saved outfits with gaps", () => {
       "Navy chinos",
     );
     await expect(
-      card.getByRole("link", { name: "I've bought this" }),
+      card.getByTestId("chosen-product").getByRole("link", { name: /^I've bought this/ }),
     ).toHaveAttribute(
       "href",
       `/add/link?url=${encodeURIComponent(product.url)}`,
