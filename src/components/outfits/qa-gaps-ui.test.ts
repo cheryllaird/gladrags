@@ -313,13 +313,11 @@ describe("gap text in the collage", () => {
     });
   }
 
-  // BUG (low, cosmetic): in the shoes slot (the shortest, 230 px tall) the
-  // swatch row + a 2-3 line description + the picked product's name (up to
-  // 2 lines) is taller than the dashed box, so the product name is drawn
-  // below the dashed outline, at the very bottom edge of the canvas.
-  // collage-draw.ts drawGap: blockHeight isn't capped to inner.height.
-  it.fails(
-    "BUG: a long description plus a picked product's long name stays inside the shoes slot's dashed box",
+  // Was a BUG (fixed): in the shoes slot (the shortest, 230 px tall) the
+  // swatch row + description + product name was taller than the dashed box.
+  // drawGap now uses fewer lines (fitGapText) until the block fits.
+  it(
+    "a long description plus a picked product's long name stays inside the shoes slot's dashed box",
     () => {
       stubOpaqueScan();
       const layout = layoutCollage([
@@ -338,7 +336,9 @@ describe("gap text in the collage", () => {
       const box = boxOf(layout, "gap:shoes");
       const inner = { top: box.y + 16, bottom: box.y + box.height - 16 };
       const lines = textInside(calls, box);
-      expect(lines.length).toBe(5);
+      // Fewer lines than the 5 that would overflow, but still the description and the product.
+      expect(lines.length).toBeGreaterThanOrEqual(2);
+      expect(lines.length).toBeLessThan(5);
       const lineHeight = 38;
       for (const line of lines) {
         expect(line.y - lineHeight / 2).toBeGreaterThanOrEqual(inner.top);

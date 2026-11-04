@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { checkComposition, type Category, type Outfit, type OutfitGap, type ShopProduct } from "@/contracts";
 import { MOCK_ITEMS } from "@/lib/mocks/fixtures";
 import { createOutfitsApi } from "./api";
-import { drawCollage } from "./collage-draw";
+import { drawCollage, fitGapText } from "./collage-draw";
 import { layoutCollage, wrapText, type Box, type CollageItem, type CollageLayout } from "./collage-layout";
 import { describeApiError } from "./copy";
 import { CutoutQueue, needsCutout, type CutoutDeps } from "./cutout-queue";
@@ -194,6 +194,34 @@ describe("drawCollage with gaps", () => {
     expect(text.slice(1).join(" ")).toContain("White leather");
     // Only the dress is drawn as an image: the product picture stays off the canvas.
     expect(calls.filter((c) => c.op === "drawImage")).toHaveLength(1);
+  });
+});
+
+describe("fitGapText", () => {
+  const measure = (_font: string, text: string) => text.length * 15;
+  const gapText = (description: string, productTitle: string | null) => ({ description, swatches: ["#fff"], productTitle });
+
+  it("short text fits at full size with its swatches", () => {
+    expect(fitGapText(gapText("White trainers", null), 200, 346, measure)).toMatchObject({
+      lines: ["White trainers"],
+      productLines: [],
+      showSwatches: true,
+      scale: 1,
+    });
+  });
+
+  it("text too tall for the slot shrinks, then loses lines, and always fits the height", () => {
+    const long = gapText("Chunky white leather trainers with a gum sole and padded collar", "Next Signature leather trainers in white");
+    for (const height of [400, 200, 150, 100]) {
+      const fit = fitGapText(long, height, 346, measure);
+      const lineHeight = 38 * fit.scale;
+      const total =
+        (fit.showSwatches ? 52 : 0) + fit.lines.length * lineHeight + (fit.productLines.length ? 12 : 0) + fit.productLines.length * lineHeight;
+      expect(total).toBeLessThanOrEqual(height);
+      expect(fit.lines.length).toBeGreaterThanOrEqual(1);
+      expect(fit.productLines.length).toBeGreaterThanOrEqual(1);
+    }
+    expect(fitGapText(long, 400, 346, measure).scale).toBe(1);
   });
 });
 

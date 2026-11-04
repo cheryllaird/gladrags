@@ -20,8 +20,10 @@ export const COLLAGE_STYLE = {
     swatchBorder: "#d4d4d4",
     swatchRadius: 18,
     text: "#525252",
-    font: "500 30px system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
-    smallFont: "400 24px system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
+    /** Description and product name sizes in px, at full size; a tight slot uses COMPACT_SCALE. */
+    fontSize: 30,
+    smallFontSize: 24,
+    fontFamily: "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
     lineHeight: 38,
   },
   shadow: { color: "rgba(0, 0, 0, 0.14)", blur: 18, offsetY: 8 },
@@ -184,16 +186,18 @@ function drawGap(ctx: CanvasRenderingContext2D, box: Box, gap: CollageGap) {
   ctx.stroke();
   ctx.setLineDash([]);
 
-  ctx.font = style.font;
-  const lines = wrapText(gap.description, textWidth, (s) => ctx.measureText(s).width, 3);
-  ctx.font = style.smallFont;
-  const productLines = gap.productTitle ? wrapText(gap.productTitle, textWidth, (s) => ctx.measureText(s).width, 2) : [];
+  const { lines, productLines, showSwatches, scale } = fitGapText(gap, inner.height, textWidth, (font, text) => {
+    ctx.font = font;
+    return ctx.measureText(text).width;
+  });
+  const fonts = gapFonts(scale);
+  const lineHeight = style.lineHeight * scale;
 
   // Centre the block: swatch row, description, product name.
-  const swatchSize = gap.swatches.length > 0 ? style.swatchRadius * 2 : 0;
-  const swatchGap = swatchSize ? 16 : 0;
-  const productGap = productLines.length ? 12 : 0;
-  const blockHeight = swatchSize + swatchGap + lines.length * style.lineHeight + productGap + productLines.length * style.lineHeight;
+  const swatchSize = showSwatches && gap.swatches.length > 0 ? style.swatchRadius * 2 : 0;
+  const swatchGap = swatchSize ? GAP_SPACING.swatch : 0;
+  const productGap = productLines.length ? GAP_SPACING.product : 0;
+  const blockHeight = swatchSize + swatchGap + lines.length * lineHeight + productGap + productLines.length * lineHeight;
   let y = inner.y + Math.max(0, (inner.height - blockHeight) / 2);
   const cx = inner.x + inner.width / 2;
 
@@ -216,20 +220,90 @@ function drawGap(ctx: CanvasRenderingContext2D, box: Box, gap: CollageGap) {
   ctx.fillStyle = style.text;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.font = style.font;
+  ctx.font = fonts.description;
   for (const line of lines) {
-    ctx.fillText(line, cx, y + style.lineHeight / 2, textWidth);
-    y += style.lineHeight;
+    ctx.fillText(line, cx, y + lineHeight / 2, textWidth);
+    y += lineHeight;
   }
   if (productLines.length) {
     y += productGap;
-    ctx.font = style.smallFont;
+    ctx.font = fonts.product;
     for (const line of productLines) {
-      ctx.fillText(line, cx, y + style.lineHeight / 2, textWidth);
-      y += style.lineHeight;
+      ctx.fillText(line, cx, y + lineHeight / 2, textWidth);
+      y += lineHeight;
     }
   }
   ctx.restore();
+}
+
+const GAP_SPACING = { swatch: 16, product: 12 } as const;
+
+/** Text size for a gap that doesn't fit at full size. */
+const COMPACT_SCALE = 0.8;
+
+function gapFonts(scale: number): { description: string; product: string } {
+  const { fontSize, smallFontSize, fontFamily } = COLLAGE_STYLE.gap;
+  return {
+    description: `500 ${Math.round(fontSize * scale)}px ${fontFamily}`,
+    product: `400 ${Math.round(smallFontSize * scale)}px ${fontFamily}`,
+  };
+}
+
+export interface GapTextFit {
+  lines: string[];
+  productLines: string[];
+  showSwatches: boolean;
+  /** 1 for full-size text, COMPACT_SCALE when that was needed to fit. */
+  scale: number;
+}
+
+/**
+ * How much of a gap's text fits its dashed box. The shoes slot is short, so
+ * a long description plus a product name may not all fit. In order of
+ * preference: more of the text first (3 description lines and 2 product
+ * lines, then fewer), each at full size and then smaller; the colour
+ * swatches are dropped only as a last resort. `measure(font, text)` is the
+ * canvas's measureText. Exported for tests.
+ */
+export function fitGapText(
+  gap: CollageGap,
+  availableHeight: number,
+  textWidth: number,
+  measure: (font: string, text: string) => number,
+): GapTextFit {
+  const style = COLLAGE_STYLE.gap;
+  const hasProduct = gap.productTitle !== null && gap.productTitle.trim() !== "";
+  const lineOptions: [number, number][] = hasProduct
+    ? [
+        [3, 2],
+        [3, 1],
+        [2, 1],
+        [1, 1],
+      ]
+    : [
+        [3, 0],
+        [2, 0],
+        [1, 0],
+      ];
+  let smallest: GapTextFit | null = null;
+  for (const showSwatches of [true, false]) {
+    const swatchHeight = showSwatches && gap.swatches.length > 0 ? style.swatchRadius * 2 + GAP_SPACING.swatch : 0;
+    for (const [maxLines, maxProductLines] of lineOptions) {
+      for (const scale of [1, COMPACT_SCALE]) {
+        const fonts = gapFonts(scale);
+        const lines = wrapText(gap.description, textWidth, (t) => measure(fonts.description, t), maxLines);
+        const productLines = hasProduct ? wrapText(gap.productTitle!, textWidth, (t) => measure(fonts.product, t), maxProductLines) : [];
+        const lineHeight = style.lineHeight * scale;
+        const height =
+          swatchHeight + lines.length * lineHeight + (productLines.length ? GAP_SPACING.product : 0) + productLines.length * lineHeight;
+        const fit = { lines, productLines, showSwatches, scale };
+        if (height <= availableHeight) return fit;
+        smallest = fit;
+      }
+    }
+  }
+  // Nothing fits (a tiny canvas): the smallest layout, centred.
+  return smallest!;
 }
 
 /** "Easy weekend" -> "gladrags-easy-weekend.png" */
