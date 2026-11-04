@@ -288,10 +288,13 @@ test.describe("batch links (QA)", () => {
     await page.goto("/add/link");
     const text = Array.from({ length: 1000 }, (_, i) => `https://shop.example.com/p/${i}`).join("\n");
     await page.getByLabel("Product links").fill(text);
-    await expect(page.getByText("40 different links found (the first 40; add the other 960 in another go).")).toBeVisible();
+    // Since review the box takes at most 20,000 characters, so a 31,000-character
+    // paste is cut short there; the rest is counted from what fits.
+    expect((await page.getByLabel("Product links").inputValue()).length).toBe(20_000);
+    await expect(page.getByText(/^40 different links found \(the first 40; add the other \d+ in another go\)\.$/)).toBeVisible();
     await checkPhoneLayout(page, "1,000 links pasted");
     await page.getByRole("button", { name: "Add 40 links" }).click();
-    await expect(page.getByText("You can add up to 40 links at once, so the other 960 weren't included.")).toBeVisible();
+    await expect(page.getByText(/^You can add up to 40 links at once, so the other \d+ weren't included\.$/)).toBeVisible();
     await expect(page.getByText("40 links need a screenshot", { exact: false })).toBeVisible({ timeout: 60_000 });
     expect(sent).toHaveLength(40);
     expect(sent[39]).toBe("https://shop.example.com/p/39");
@@ -339,6 +342,11 @@ test.describe("review list (QA)", () => {
     await page.route(
       (url) => url.pathname === "/api/items" && url.searchParams.get("needsReview") === "true",
       (route) => route.fulfill({ json: { items: waiting } }),
+    );
+    // Since review the banner counts the unfiltered list's own flags.
+    await page.route(
+      (url) => url.pathname === "/api/items" && !url.searchParams.has("needsReview"),
+      (route) => route.fulfill({ json: { items: items.map((i) => ({ ...i, needsReview: waiting.includes(i) })) } }),
     );
     await page.route("**/api/items/reviewed", async (route) => {
       const ids = route.request().postDataJSON().itemIds as string[];
@@ -399,8 +407,9 @@ test.describe("review list (QA)", () => {
   });
 
   test("expired drafts aren't shown or counted in the banner", async ({ page }) => {
+    // Nothing to review on the server: the list (which the banner counts) and the review list.
     await page.route(
-      (url) => url.pathname === "/api/items" && url.searchParams.get("needsReview") === "true",
+      (url) => url.pathname === "/api/items",
       (route) => route.fulfill({ json: { items: [] } }),
     );
     await page.goto("/wardrobe");
