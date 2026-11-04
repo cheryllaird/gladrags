@@ -387,6 +387,8 @@ test.describe("review list (QA)", () => {
           cutoutUrl: null,
           suggestedTags: null,
         });
+        // The tab is this user's, so the page doesn't clear the drafts as someone else's.
+        window.sessionStorage.setItem("gladrags:user", user);
         window.sessionStorage.setItem(
           key,
           JSON.stringify({
