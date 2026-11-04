@@ -32,8 +32,9 @@ import { checkPhoneLayout } from "./phone-layout";
 //   server's answer, never by making one up;
 // - put back what they change in shared settings (favourite shops) and
 //   outfit statuses;
-// - answer GET /api/items with an empty list only for the new-user
-//   checklist, the one state a shared, stocked store can't reach.
+// - answer GET /api/items and GET /api/outfits with empty lists only for
+//   the new-user checklist, the one state a shared, stocked store can't
+//   reach.
 
 const PHOTO = readFileSync(new URL("./fixtures/shirt.jpg", import.meta.url));
 // A recorded order email (an M&S-style confirmation forwarded from a phone),
@@ -205,6 +206,9 @@ test.describe("journey 1: build the wardrobe", () => {
     const emptyWardrobe = (route: Route) => (route.request().method() === "GET" ? route.fulfill({ json: { items: [] } }) : route.fallback());
     const wardrobeList = (url: URL) => isItemsList(url, null) || isItemsList(url, false);
     await page.route(wardrobeList, emptyWardrobe);
+    // ...and no outfits yet (other tests' outfits in the shared store would tick "Get your first outfit").
+    const noOutfits = (route: Route) => (route.request().method() === "GET" ? route.fulfill({ json: { outfits: [] } }) : route.fallback());
+    await page.route("**/api/outfits", noOutfits);
 
     await page.goto("/sign-in");
     await page.getByLabel("Email").fill("new.tester@example.com");
@@ -243,6 +247,7 @@ test.describe("journey 1: build the wardrobe", () => {
 
     // Back in the (real) wardrobe, it's there, showing its original.
     await page.unroute(wardrobeList, emptyWardrobe);
+    await page.unroute("**/api/outfits", noOutfits);
     await nav(page).getByRole("link", { name: "Wardrobe" }).click();
     await page.getByRole("searchbox", { name: "Search descriptions" }).fill(description);
     await expect(page.getByRole("link", { name: description })).toBeVisible();
