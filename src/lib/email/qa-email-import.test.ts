@@ -390,13 +390,13 @@ describe("bad and odd model replies", () => {
     await expectConsistent(t, outcome);
   });
 
-  // BUG (low; the contract's scrapedText, owned by foundations): control
+  // Was BUG (low), fixed on our side with cleanShopName (the contract's scrapedText is being fixed by the orchestrator): control
   // characters other than line breaks survive, and Postgres text columns
   // refuse NUL (U+0000). A model reply (or an injected email that steers
   // it) with a NUL in the shop name makes finish() fail on the real
   // database: the row stays "processing" and reads as failed (internal)
   // after 15 minutes, although its items were added.
-  it.fails("BUG: a NUL or other control character in the model's shop name never reaches the database", async () => {
+  it("a NUL or other control character in the model's shop name never reaches the database", async () => {
     const t = makeEmailDeps(network, { orderReplies: [reply([line()], { shopName: "North\u0000gate\u0007" })], taggerOutputs: [TAGS] });
     const outcome = await run(t);
     expect(outcome.shopName).not.toMatch(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/);

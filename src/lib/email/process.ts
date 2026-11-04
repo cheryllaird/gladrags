@@ -141,7 +141,7 @@ async function readAndAddItems(deps: EmailProcessingDeps, accepted: AcceptedEmai
 
   const order = result.data;
   const lines = order.items;
-  const orderInfo = { shopName: order.shopName, orderDate: order.orderDate };
+  const orderInfo = { shopName: cleanShopName(order.shopName), orderDate: order.orderDate };
   if (lines.length === 0) return failed("no_items_found", orderInfo);
 
   const outcomes = await mapWithConcurrency(lines, LINE_CONCURRENCY, (line) =>
@@ -207,6 +207,18 @@ async function addLine(deps: EmailProcessingDeps, userId: string, line: EmailLin
     console.error("Order email: couldn't add a line", describeError(error));
     return { added: false, reason: "internal" };
   }
+}
+
+/**
+ * The shop name as the model read it, safe to store: NUL and the other C0
+ * and C1 control characters out (Postgres text refuses NUL), whitespace
+ * collapsed, at most 80 characters (the column's limit), null if nothing
+ * is left.
+ */
+export function cleanShopName(name: string | null): string | null {
+  if (name === null) return null;
+  const clean = name.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 80).trim();
+  return clean === "" ? null : clean;
 }
 
 /** Run `work` over the items with at most `limit` at once, keeping the order of results. */
