@@ -23,8 +23,9 @@
  *   retries the webhook.
  * - receivedAt: when this request arrived. Postmark gives only the
  *   sender's Date header, which the sender chooses.
- * - auth: Postmark checks SPF and adds `Received-SPF` at the top of the
- *   headers. It doesn't report DKIM or DMARC. If the app is told to trust
+ * - auth: read only from Postmark's own headers, the block above the
+ *   second `Received` (its SMTP receipt); everything below came with the
+ *   message. Postmark checks SPF and adds `Received-SPF` there. It doesn't report DKIM or DMARC. If the app is told to trust
  *   an Authentication-Results authserv-id (INBOUND_EMAIL_AUTHSERV_ID), a
  *   header from it supplies SPF, DKIM and DMARC instead.
  *   With no DMARC result reported, `dmarc` is "none": judgeInboundEmail
@@ -32,12 +33,20 @@
  *   aligned with the From address, which is exactly the condition under
  *   which a DMARC check would pass. So this never accepts anything a real
  *   DMARC check would refuse.
- * - spam: SpamAssassin's X-Spam-Status and X-Spam-Score at the top.
+ * - spam: SpamAssassin's X-Spam-Status and X-Spam-Score from that block.
  * - Attachments are ignored (Postmark should also be set to drop them).
  */
 import "server-only";
 import { z } from "zod";
-import { firstHeader, parseReceivedSpf, parseSpamHeaders, trustedAuthenticationResults, type EmailHeader } from "./auth-headers";
+import {
+  domainOf,
+  firstHeader,
+  parseReceivedSpf,
+  parseSpamHeaders,
+  serviceHeaderBlock,
+  trustedAuthenticationResults,
+  type EmailHeader,
+} from "./auth-headers";
 import type { InboundEmailProvider, InboundWebhookRequest } from "./types";
 import { secretsEqual } from "./webhook-request";
 
@@ -119,10 +128,13 @@ export class PostmarkInboundProvider implements InboundEmailProvider {
       return parsed.success ? [parsed.data] : [];
     });
 
-    const trusted = trustedAuthenticationResults(headers, this.options.trustedAuthservIds ?? []);
-    const receivedSpf = parseReceivedSpf(firstHeader(headers, "Received-SPF"));
+    // Only Postmark's own headers count: those above the second Received
+    // (see serviceHeaderBlock). Anything lower came with the message.
+    const own = serviceHeaderBlock(headers);
+    const trusted = trustedAuthenticationResults(own, this.options.trustedAuthservIds ?? []);
+    const receivedSpf = parseReceivedSpf(firstHeader(own, "Received-SPF"));
     const spf = trusted?.spf ?? receivedSpf.result;
-    const spfDomain = trusted?.spf ? trusted.spfDomain : receivedSpf.domain;
+    const spfDomain = agreesWithReturnPath(trusted?.spf ? trusted.spfDomain : receivedSpf.domain, own);
 
     return {
       messageId: body.MessageID,
@@ -140,9 +152,21 @@ export class PostmarkInboundProvider implements InboundEmailProvider {
         // See the header comment: no reported DMARC check reads as "none".
         dmarc: trusted?.dmarc ?? "none",
       },
-      spam: parseSpamHeaders(headers),
+      spam: parseSpamHeaders(own),
     };
   }
+}
+
+/**
+ * A belt-and-braces check on the SPF domain: Postmark records the envelope
+ * sender as Return-Path in its own block, so if that names a different
+ * domain, the SPF domain can't be trusted (null, which refuses alignment).
+ * No Return-Path there leaves the domain as it was.
+ */
+function agreesWithReturnPath(spfDomain: string | null, own: readonly EmailHeader[]): string | null {
+  const returnPath = firstHeader(own, "Return-Path");
+  if (spfDomain === null || returnPath === undefined) return spfDomain;
+  return domainOf(returnPath) === spfDomain ? spfDomain : null;
 }
 
 /** For tests and docs: the Authorization header Postmark sends for a webhook URL with these credentials. */

@@ -342,11 +342,11 @@ describe("sender checks through the route", () => {
     expect(await listImports()).toEqual([expect.objectContaining({ status: "failed", error: "failed_checks" })]);
   });
 
-  // BUG (medium), end to end: see qa-email-import.test.ts. A MAIL FROM with
+  // Was BUG (medium), fixed; end to end: see qa-email-import.test.ts. A MAIL FROM with
   // a quoted local part makes SPF for the attacker's domain read as the
   // user's domain, so an email "From" the user, sent by the attacker, is
   // accepted and its items added to the user's wardrobe.
-  it.fails("BUG: SPF passed for evil.example can't be read as the user's domain through a quoted MAIL FROM", async () => {
+  it("SPF passed for evil.example can't be read as the user's domain through a quoted MAIL FROM", async () => {
     const spoof = 'pass (evil.example: 198.51.100.7 is authorized) identity=mailfrom; client-ip=198.51.100.7; helo=mx.evil.example; envelope-from="x; envelope-from=sam.tester@mail.example"@evil.example; receiver=p-pm-inbound';
     const headers = fixtureHeaders().map((h) => (h.Name === "Received-SPF" ? { ...h, Value: spoof } : h));
     await inbound.POST(webhook(postmarkPayload({ Headers: headers })));

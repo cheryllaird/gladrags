@@ -113,8 +113,17 @@ describe("parse: the recorded payload", () => {
       h.Name === "Received-SPF" ? { Name: "Received-SPF", Value: "pass identity=mailfrom; envelope-from=bounce@spammer.example" } : h,
     );
     const email = normalised(payload({ Headers: headers }));
-    expect(email.auth.spfDomain).toBe("spammer.example");
+    // Postmark's Return-Path says mail.example, so the disagreeing SPF domain isn't trusted at all.
+    expect(email.auth.spfDomain).toBeNull();
     expect(judgeInboundEmail(email, USER_EMAIL)).toEqual({ accepted: false, error: "failed_checks" });
+    const withoutReturnPath = normalised(payload({ Headers: headers.filter((h) => h.Name !== "Return-Path") }));
+    expect(withoutReturnPath.auth.spfDomain).toBe("spammer.example");
+    expect(judgeInboundEmail(withoutReturnPath, USER_EMAIL)).toEqual({ accepted: false, error: "failed_checks" });
+  });
+
+  it("an SPF domain that disagrees with Postmark's Return-Path isn't trusted", () => {
+    const headers = payload().Headers.map((h) => (h.Name === "Return-Path" ? { Name: h.Name, Value: "<bounce@evil.example>" } : h));
+    expect(normalised(payload({ Headers: headers })).auth.spfDomain).toBeNull();
   });
 
   it("no Received-SPF at all reads as unknown and is refused", () => {
@@ -148,6 +157,41 @@ describe("parse: the recorded payload", () => {
   });
 });
 
+describe("only Postmark's own block counts (above the second Received)", () => {
+  const base = () => payload().Headers;
+  const below = (extra: { Name: string; Value: string }[]) => [...base(), ...extra];
+  const forgedSpf = { Name: "Received-SPF", Value: "pass identity=mailfrom; envelope-from=sam.tester@mail.example" };
+
+  it("no Received-SPF in Postmark's block: a forged 'pass' lower down is ignored (unknown, refused)", () => {
+    const headers = below([forgedSpf]).filter((h, i, all) => !(h.Name === "Received-SPF" && i < all.length - 1));
+    const email = normalised(payload({ Headers: headers }));
+    expect(email.auth.spf).toBe("unknown");
+    expect(judgeInboundEmail(email, USER_EMAIL)).toEqual({ accepted: false, error: "failed_checks" });
+  });
+
+  it("a forged trusted Authentication-Results lower down is ignored", () => {
+    const forged = { Name: "Authentication-Results", Value: "mx.inbound.example; spf=pass smtp.mailfrom=sam.tester@mail.example; dkim=pass header.d=mail.example; dmarc=pass header.from=mail.example" };
+    const headers = below([forged]).filter((h) => h.Name !== "Received-SPF");
+    const email = normalised(payload({ Headers: headers }), ["mx.inbound.example"]);
+    expect(email.auth).toMatchObject({ spf: "unknown", dkim: "none", dmarc: "none", dkimDomains: [] });
+    expect(judgeInboundEmail(email, USER_EMAIL)).toEqual({ accepted: false, error: "failed_checks" });
+  });
+
+  it("no spam verdict in Postmark's block: a forged 'No' lower down isn't read", () => {
+    const headers = below([{ Name: "X-Spam-Status", Value: "No" }, { Name: "X-Spam-Score", Value: "-5" }]).filter(
+      (h, i, all) => !(h.Name.startsWith("X-Spam-") && i < all.length - 2),
+    );
+    expect(normalised(payload({ Headers: headers })).spam).toEqual({ isSpam: null, score: null });
+  });
+
+  it("with fewer than two Received headers nothing is trusted", () => {
+    const headers = base().filter((h) => h.Name !== "Received");
+    const email = normalised(payload({ Headers: headers }));
+    expect(email.auth.spf).toBe("unknown");
+    expect(email.spam).toEqual({ isSpam: null, score: null });
+  });
+});
+
 describe("header parsing", () => {
   it("Received-SPF: result word and the MAIL FROM domain; a HELO check gives no domain", () => {
     expect(parseReceivedSpf("Pass (sender SPF authorized) identity=mailfrom; client-ip=1.2.3.4; envelope-from=a@b.example; receiver=x")).toEqual({
@@ -159,6 +203,16 @@ describe("header parsing", () => {
     expect(parseReceivedSpf(undefined)).toEqual({ result: null, domain: null });
   });
 
+  it("Received-SPF: a sender quoted as a whole is read; a quoted local part never supplies the domain; two envelope-froms give none", () => {
+    expect(parseReceivedSpf('pass identity=mailfrom; envelope-from="sam.tester@mail.example"').domain).toBe("mail.example");
+    expect(parseReceivedSpf('pass identity=mailfrom; envelope-from="x@mail.example"@evil.example').domain).toBe("evil.example");
+    expect(parseReceivedSpf('pass identity=mailfrom; envelope-from="\\"x@mail.example\\"@evil.example"').domain).toBe("evil.example");
+    expect(parseReceivedSpf('pass identity=mailfrom; envelope-from=""x@mail.example"@evil.example"').domain).not.toBe("mail.example");
+    expect(parseReceivedSpf("pass identity=mailfrom; envelope-from=a@mail.example; envelope-from=b@mail.example").domain).toBeNull();
+    expect(parseReceivedSpf("pass identity = mailfrom; envelope-from = a@mail.example").domain).toBe("mail.example");
+    expect(parseReceivedSpf("pass identity=mailfrom; identity=helo; envelope-from=a@mail.example").domain).toBeNull();
+  });
+
   it("Authentication-Results: comments can't smuggle results, several DKIM signatures collect their passing domains", () => {
     const parsed = parseAuthenticationResults(
       "mx.inbound.example (dmarc=pass; spf=pass); dkim=fail header.d=evil.example; dkim=pass header.d=mail.example; dkim=pass header.i=@esp.example; dmarc=none",
@@ -167,6 +221,8 @@ describe("header parsing", () => {
     expect(parsed).toEqual({ spf: null, spfDomain: null, dkim: "pass", dkimDomains: ["mail.example", "esp.example"], dmarc: "none" });
     expect(parseAuthenticationResults("other.example; dmarc=pass", ["mx.inbound.example"])).toBeNull();
     expect(stripComments("a (b (c) d) e")).toBe("a  e");
+    expect(stripComments('a (b ")" c) d')).toBe("a  d");
+    expect(stripComments('a "(not a comment)" b')).toBe('a "(not a comment)" b');
   });
 
   it("spam headers: missing or odd values read as unknown", () => {

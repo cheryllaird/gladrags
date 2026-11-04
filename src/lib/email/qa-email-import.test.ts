@@ -246,7 +246,7 @@ describe("sender checks: the provider's topmost headers win over forged ones in 
     expect(parseReceivedSpf("pass (envelope-from=sam.tester@mail.example) identity=mailfrom; envelope-from=bounce@evil.example").domain).toBe("evil.example");
   });
 
-  // BUG (medium): parseReceivedSpf reads the first `envelope-from=` it can
+  // Was BUG (medium), fixed with a quote-aware tokenizer: parseReceivedSpf read the first `envelope-from=` it can
   // find, and the MAIL FROM is the attacker's to choose. A quoted local
   // part (valid in SMTP) can carry a second `envelope-from=` for the
   // victim's domain: the quoted-string branch of keyValues stops at the
@@ -255,19 +255,19 @@ describe("sender checks: the provider's topmost headers win over forged ones in 
   // (the attacker's own SPF record), but spfDomain reads as mail.example,
   // so a From of the victim's address is accepted with Postmark's DMARC
   // "none". Needs the forwarding token and the user's sign-in address.
-  it.fails("BUG: a quoted MAIL FROM local part can't make SPF for evil.example read as the user's domain", () => {
+  it("a quoted MAIL FROM local part can't make SPF for evil.example read as the user's domain", () => {
     const spoof = 'pass (evil.example: 198.51.100.7 is authorized) identity=mailfrom; client-ip=198.51.100.7; helo=mx.evil.example; envelope-from="x; envelope-from=sam.tester@mail.example"@evil.example; receiver=p-pm-inbound';
     expect(parseReceivedSpf(spoof).domain).not.toBe("mail.example");
     const email = normalised(payload({ Headers: withTopSpf(spoof) }));
     expect(judgeInboundEmail(email, USER_EMAIL)).toEqual({ accepted: false, error: "failed_checks" });
   });
 
-  // BUG (medium), same root cause in stripComments: it doesn't skip quoted
+  // Was BUG (medium), fixed: same root cause in stripComments: it doesn't skip quoted
   // strings, so a ")" inside a quoted MAIL FROM that Postmark echoes in its
   // comment ("Sender is authorized to use '...'", as in the recorded
   // fixture) closes the comment early and exposes an attacker-written
   // `envelope-from=` before the real one.
-  it.fails("BUG: a ')' in a MAIL FROM echoed inside the comment can't expose a forged envelope-from", () => {
+  it("a ')' in a MAIL FROM echoed inside the comment can't expose a forged envelope-from", () => {
     const mailFrom = '"a)envelope-from=sam.tester@mail.example;("@evil.example';
     const spoof = `pass (evil.example: Sender is authorized to use '${mailFrom}' in 'mfrom' identity (mechanism 'mx' matched)) receiver=p-pm-inbound; identity=mailfrom; envelope-from=${mailFrom}; helo=mx.evil.example; client-ip=198.51.100.7`;
     expect(parseReceivedSpf(spoof).domain).not.toBe("mail.example");
