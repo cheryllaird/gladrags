@@ -22,6 +22,7 @@ export function DraftReview({
   restoredTags = null,
   onSaved,
   onDiscard,
+  onImageError,
 }: {
   /** The signed-in user, so a draft kept on sign-out is only restored for them (see pending-add.ts). */
   userId: string | null;
@@ -30,6 +31,8 @@ export function DraftReview({
   restoredTags?: ItemTags | null;
   onSaved: (item: WardrobeItem) => void;
   onDiscard: () => void;
+  /** The draft's picture didn't load (its signed URL may have expired; drafts can't be re-signed). */
+  onImageError?: () => void;
 }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<unknown>(null);
@@ -59,7 +62,7 @@ export function DraftReview({
 
   return (
     <div className="space-y-5">
-      <ItemImage item={draft} alt="The item you're adding" priority className="mx-auto w-full max-w-48" />
+      <ItemImage item={draft} alt="The item you're adding" priority className="mx-auto w-full max-w-48" onError={onImageError} />
 
       {draft.suggestedTags === null ? (
         <Alert>

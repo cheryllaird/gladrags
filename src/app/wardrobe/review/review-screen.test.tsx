@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ItemDraft, WardrobeItem } from "@/contracts";
@@ -153,5 +153,29 @@ describe("ReviewScreen", () => {
     render(<ReviewScreen userId={USER} />);
     expect(await screen.findByText("All caught up")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Confirm all/ })).toBeNull();
+  });
+});
+
+describe("ReviewScreen: a draft whose photo has expired", () => {
+  it("shows 'This photo has expired' with Discard, which drops the draft", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.listItems).mockResolvedValue([]);
+    const draft: ItemDraft = {
+      source: "photo",
+      sourceUrl: null,
+      originalImageKey: `${USER}/1b000000-0000-4000-8000-000000000002.jpg`,
+      cutoutImageKey: null,
+      originalUrl: "/expired.jpg",
+      cutoutUrl: null,
+      suggestedTags: null,
+    };
+    keepBatchDraft(USER, draft);
+    const { container } = render(<ReviewScreen userId={USER} />);
+    await screen.findByRole("heading", { name: "Need tags (1)" });
+    fireEvent.error(container.querySelector('img[src="/expired.jpg"]')!);
+    expect(await screen.findByText(/This photo has expired/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Fill in tags" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: /^Discard/ }));
+    expect(await screen.findByText("All caught up")).toBeInTheDocument();
   });
 });

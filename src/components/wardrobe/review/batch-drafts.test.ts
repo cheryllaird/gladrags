@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ItemDraft } from "@/contracts";
 import { BATCH_DRAFTS_KEY, BATCH_DRAFT_MAX_AGE_MS, keepBatchDraft, readBatchDrafts, removeBatchDraft } from "./batch-drafts";
 
@@ -38,9 +38,22 @@ describe("batch drafts", () => {
     expect(readBatchDrafts(null)).toEqual([]);
   });
 
-  it("drops drafts old enough for their images to be cleaned up", () => {
+  it("drops drafts before their one-hour signed picture URL expires", () => {
+    expect(BATCH_DRAFT_MAX_AGE_MS).toBe(55 * 60 * 1000);
+    expect(BATCH_DRAFT_MAX_AGE_MS).toBeLessThan(60 * 60 * 1000);
     keepBatchDraft(USER, draft(USER, 1), 0);
-    expect(readBatchDrafts(USER, BATCH_DRAFT_MAX_AGE_MS + 1)).toEqual([]);
+    expect(readBatchDrafts(USER, 54 * 60 * 1000)).toHaveLength(1);
+    expect(readBatchDrafts(USER, 56 * 60 * 1000)).toEqual([]);
+  });
+
+  it("says whether the draft was kept", () => {
+    expect(keepBatchDraft(USER, draft(USER, 1))).toBe(true);
+    expect(keepBatchDraft(null, draft(USER, 2))).toBe(false);
+    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("full");
+    });
+    expect(keepBatchDraft(USER, draft(USER, 3))).toBe(false);
+    setItem.mockRestore();
   });
 
   it("reads tampered storage as no drafts", () => {

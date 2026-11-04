@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCheckIcon, CheckIcon, ChevronLeftIcon, ImageOffIcon, PencilIcon, PencilLineIcon } from "lucide-react";
+import { CheckCheckIcon, CheckIcon, ChevronLeftIcon, ImageOffIcon, PencilIcon, PencilLineIcon, Trash2Icon } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { ItemDraft, ItemTags, WardrobeItem } from "@/contracts";
@@ -41,6 +41,9 @@ export function ReviewScreen({ userId }: { userId: string | null }) {
   const [confirmingAll, setConfirmingAll] = useState(false);
   const [actionError, setActionError] = useState<unknown>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // Drafts whose picture failed to load: their signed URL expired, and a draft can't be re-signed.
+  const [expired, setExpired] = useState<ReadonlySet<string>>(new Set());
+  const markExpired = (draft: ItemDraft) => setExpired((current) => new Set(current).add(draft.originalImageKey));
 
   const reload = () => setAttempt((n) => n + 1);
   const { onImageError } = useSignedUrlRefresh({
@@ -169,6 +172,10 @@ export function ReviewScreen({ userId }: { userId: string | null }) {
               setNotice("Discarded.");
               go(null);
             }}
+            onImageError={() => {
+              markExpired(draft);
+              go(null);
+            }}
           />
         </PageBody>
       </>
@@ -233,15 +240,39 @@ export function ReviewScreen({ userId }: { userId: string | null }) {
               We couldn&apos;t tag these automatically, so they aren&apos;t in your wardrobe yet. Fill in the tags to save them.
             </p>
             <ul className="space-y-3">
-              {drafts.map((draft, index) => (
-                <li key={draft.originalImageKey} aria-label={`Item without tags ${index + 1}`} className="flex items-center gap-3 rounded-lg border p-3">
-                  <ItemImage item={draft} alt="" className="w-20 shrink-0" />
-                  <Button size="lg" variant="outline" className="flex-1" onClick={() => go({ kind: "draft", draft })}>
-                    <PencilLineIcon aria-hidden="true" />
-                    Fill in tags
-                  </Button>
-                </li>
-              ))}
+              {drafts.map((draft, index) =>
+                expired.has(draft.originalImageKey) ? (
+                  <li key={draft.originalImageKey} aria-label={`Item without tags ${index + 1}`} className="flex items-center gap-3 rounded-lg border p-3">
+                    <div className="bg-muted flex aspect-square w-20 shrink-0 items-center justify-center rounded-lg">
+                      <ImageOffIcon className="text-muted-foreground size-6" aria-hidden="true" />
+                    </div>
+                    <div className="min-w-0 flex-1 space-y-2">
+                      <p className="text-sm">This photo has expired. Discard it and add the photo again.</p>
+                      <Button
+                        size="lg"
+                        variant="outline"
+                        className="w-full"
+                        aria-label={`Discard expired item ${index + 1}`}
+                        onClick={() => {
+                          dropDraft(draft);
+                          setNotice("Discarded.");
+                        }}
+                      >
+                        <Trash2Icon aria-hidden="true" />
+                        Discard
+                      </Button>
+                    </div>
+                  </li>
+                ) : (
+                  <li key={draft.originalImageKey} aria-label={`Item without tags ${index + 1}`} className="flex items-center gap-3 rounded-lg border p-3">
+                    <ItemImage item={draft} alt="" className="w-20 shrink-0" onError={() => markExpired(draft)} />
+                    <Button size="lg" variant="outline" className="flex-1" onClick={() => go({ kind: "draft", draft })}>
+                      <PencilLineIcon aria-hidden="true" />
+                      Fill in tags
+                    </Button>
+                  </li>
+                ),
+              )}
             </ul>
           </section>
         )}

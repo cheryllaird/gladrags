@@ -12,8 +12,13 @@
  * our control. Every access is wrapped: with storage blocked (private
  * browsing) drafts simply aren't kept between pages.
  *
- * A draft's images are cleaned up a day after upload if never saved, so
- * an older draft is dropped when read.
+ * A draft's picture is a signed URL that lasts an hour (CONTRACTS.md
+ * section 2), and nothing re-signs it: a draft isn't an item, so there's
+ * no route to fetch it again. Drafts are therefore dropped after
+ * BATCH_DRAFT_MAX_AGE_MS, a little under the hour, rather than shown with a
+ * broken picture. (The images themselves are cleaned up a day after upload
+ * if never saved.) A picture that fails sooner anyway is shown as expired,
+ * with Discard (review-screen.tsx).
  */
 import { z } from "zod";
 import { ItemDraftSchema, type ItemDraft } from "@/contracts";
@@ -23,8 +28,8 @@ import { notifyStorageChange } from "@/lib/client/use-storage-value";
 
 export const BATCH_DRAFTS_KEY = `${SESSION_STORAGE_PREFIX}batch-drafts`;
 
-/** Unsaved images are cleaned up after a day; drop drafts well before then. */
-export const BATCH_DRAFT_MAX_AGE_MS = 20 * 60 * 60 * 1000;
+/** Drop drafts before their one-hour signed picture URL expires. */
+export const BATCH_DRAFT_MAX_AGE_MS = 55 * 60 * 1000;
 
 /** Most drafts kept: two batches' worth. */
 const MAX_KEPT = MAX_BATCH_SIZE * 2;
@@ -81,11 +86,16 @@ export function batchDraftsFromRaw(raw: string | null | undefined, userId: strin
   return parse(raw, userId, now).map((d) => d.draft);
 }
 
-/** Keep a draft to fill in later. Without a known user nothing is kept. */
-export function keepBatchDraft(userId: string | null, draft: ItemDraft, now: number = Date.now()): void {
-  if (!userId || !belongsTo(draft, userId)) return;
+/**
+ * Keep a draft to fill in later. Returns false if it couldn't be kept (no
+ * known user, or storage blocked or full): the batch screen then offers the
+ * fill-in straight away.
+ */
+export function keepBatchDraft(userId: string | null, draft: ItemDraft, now: number = Date.now()): boolean {
+  if (!userId || !belongsTo(draft, userId)) return false;
   const drafts = read(userId, now).filter((d) => d.draft.originalImageKey !== draft.originalImageKey);
   write(userId, [...drafts, { draft, addedAt: now }]);
+  return read(userId, now).some((d) => d.draft.originalImageKey === draft.originalImageKey);
 }
 
 /** Forget a draft once it's saved or discarded. */
