@@ -11,7 +11,10 @@
 import type { z } from "zod";
 import {
   ApiErrorSchema,
+  CUTOUT_UPLOAD_FIELDS,
+  ChooseGapProductRequestSchema,
   ItemResponseSchema,
+  ShopSearchResponseSchema,
   OutfitGenerationResponseSchema,
   OutfitListResponseSchema,
   OutfitRequestSchema,
@@ -27,6 +30,7 @@ import {
   type UpdateOutfitStatusRequest,
   type ItemResponse,
   type OutfitListResponse,
+  type Category,
 } from "@/contracts";
 
 export type ApiFailure = ApiError["error"];
@@ -60,14 +64,17 @@ export function createOutfitsApi(fetchImpl: FetchLike = (input, init) => fetch(i
   async function call<S extends z.ZodType>(
     schema: S,
     path: string,
-    init: { method?: string; body?: unknown } = {},
+    init: { method?: string; body?: unknown; form?: FormData } = {},
   ): Promise<ApiResult<z.output<S>>> {
     let response: Response;
+    // A multipart form sets its own content type (with the boundary).
+    const headers: Record<string, string> =
+      init.body === undefined ? { accept: "application/json" } : { accept: "application/json", "content-type": "application/json" };
     try {
       response = await fetchImpl(path, {
         method: init.method ?? "GET",
-        headers: init.body === undefined ? { accept: "application/json" } : { accept: "application/json", "content-type": "application/json" },
-        body: init.body === undefined ? undefined : JSON.stringify(init.body),
+        headers,
+        body: init.form ?? (init.body === undefined ? undefined : JSON.stringify(init.body)),
         cache: "no-store",
       });
     } catch {
@@ -128,6 +135,31 @@ export function createOutfitsApi(fetchImpl: FetchLike = (input, init) => fetch(i
     /** GET /api/outfits/:id: the outfit again, with freshly signed image URLs. */
     getOutfit(outfitId: string): Promise<ApiResult<OutfitResponse>> {
       return call(OutfitResponseSchema, `/api/outfits/${encodeURIComponent(outfitId)}`);
+    },
+
+    /**
+     * POST /api/outfits/:id/shop-search: "Find in my shops". Returns the
+     * outfit with each gap's shopResults filled. Counts one shop search.
+     */
+    findInShops(outfitId: string): Promise<ApiResult<OutfitResponse>> {
+      return call(ShopSearchResponseSchema, `/api/outfits/${encodeURIComponent(outfitId)}/shop-search`, { method: "POST" });
+    },
+
+    /** PUT /api/outfits/:id/gaps/:category: pick one of the gap's shop results, or clear the pick with null. */
+    chooseGapProduct(outfitId: string, category: Category, productUrl: string | null): Promise<ApiResult<OutfitResponse>> {
+      const checked = ChooseGapProductRequestSchema.safeParse({ productUrl });
+      if (!checked.success) return Promise.resolve(badRequest(checked.error));
+      return call(OutfitResponseSchema, `/api/outfits/${encodeURIComponent(outfitId)}/gaps/${encodeURIComponent(category)}`, {
+        method: "PUT",
+        body: checked.data,
+      });
+    },
+
+    /** PUT /api/items/:id/cutout: store the cut-out a collage just made (PNG). */
+    uploadCutout(itemId: string, cutout: Blob): Promise<ApiResult<ItemResponse>> {
+      const form = new FormData();
+      form.append(CUTOUT_UPLOAD_FIELDS.cutout, cutout, "cutout.png");
+      return call(ItemResponseSchema, `/api/items/${encodeURIComponent(itemId)}/cutout`, { method: "PUT", form });
     },
 
     /** GET /api/items/:id, for the anchor item. */

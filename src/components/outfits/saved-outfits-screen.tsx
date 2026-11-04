@@ -74,6 +74,13 @@ export function SavedOutfitsScreen() {
     else setErrors((e) => ({ ...e, [outfit.id]: result.error }));
   }
 
+  /** Keep the outfit as the server now has it (after a shop search or pick), with its status as shown. */
+  function replaceOutfit(fresh: Outfit) {
+    setState((s) =>
+      s.status === "ready" ? { ...s, outfits: s.outfits.map((o) => (o.id === fresh.id ? { ...fresh, status: o.status } : o)) } : s,
+    );
+  }
+
   /** "Reload pictures": fetch one outfit again for fresh image URLs. */
   async function reloadPictures(outfit: Outfit) {
     const result = await outfitsApi.getOutfit(outfit.id);
@@ -81,10 +88,7 @@ export function SavedOutfitsScreen() {
       setErrors((e) => ({ ...e, [outfit.id]: result.error }));
       return;
     }
-    const fresh = result.data.outfit;
-    setState((s) =>
-      s.status === "ready" ? { ...s, outfits: s.outfits.map((o) => (o.id === fresh.id ? { ...fresh, status: o.status } : o)) } : s,
-    );
+    replaceOutfit(result.data.outfit);
   }
 
   const visible = state.status === "ready" ? outfitsForFilter(state.outfits, filter, statuses) : [];
@@ -154,6 +158,7 @@ export function SavedOutfitsScreen() {
                     statusError={errors[outfit.id] ?? null}
                     onStatusChange={(update) => void changeStatus(outfit, update)}
                     onReloadPictures={() => reloadPictures(outfit)}
+                    onOutfitChange={replaceOutfit}
                     // A long saved list would otherwise hold a full-size canvas per outfit.
                     lazyCollage
                   />

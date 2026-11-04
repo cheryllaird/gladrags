@@ -17,6 +17,8 @@ export interface RequestDraft {
   customText: string;
   guidance: string;
   count: number;
+  /** "Include items from my shops": outfits may include one suggested shop item. */
+  includeShopItems: boolean;
 }
 
 export const EMPTY_DRAFT: RequestDraft = {
@@ -24,6 +26,7 @@ export const EMPTY_DRAFT: RequestDraft = {
   customText: "",
   guidance: "",
   count: OUTFIT_COUNT.default,
+  includeShopItems: false,
 };
 
 export type DraftResult =
@@ -62,6 +65,8 @@ export function draftToRequest(draft: RequestDraft, anchorItemId: string | null)
     count: draft.count,
     ...(guidance ? { guidance } : {}),
     ...(anchorItemId ? { anchorItemId } : {}),
+    // Left out when off: the contract reads a missing flag as false.
+    ...(draft.includeShopItems ? { includeShopItems: true } : {}),
   };
   // Belt and braces: the contract is the final word on what's valid.
   const checked = OutfitRequestSchema.safeParse(request);

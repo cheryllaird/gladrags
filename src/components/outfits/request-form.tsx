@@ -1,7 +1,8 @@
 "use client";
 
 import { useId } from "react";
-import { SparklesIcon, XIcon } from "lucide-react";
+import Link from "next/link";
+import { SparklesIcon, StoreIcon, XIcon } from "lucide-react";
 import {
   CUSTOM_STYLE_MAX_LENGTH,
   GUIDANCE_MAX_LENGTH,
@@ -55,6 +56,8 @@ export function RequestForm(props: RequestFormProps) {
     guidanceError: useId(),
     guidanceCount: useId(),
     countError: useId(),
+    shopItems: useId(),
+    shopItemsHint: useId(),
   };
   const update = (patch: Partial<RequestDraft>) => onDraftChange({ ...draft, ...patch });
   const fieldError = (field: DraftField) => (props.error?.field === field ? props.error.message : null);
@@ -171,6 +174,29 @@ export function RequestForm(props: RequestFormProps) {
           </p>
         )}
       </fieldset>
+
+      <div className="space-y-2 rounded-lg border p-3" data-testid="include-shop-items">
+        <label htmlFor={ids.shopItems} className="flex min-h-11 cursor-pointer items-center gap-3">
+          <StoreIcon aria-hidden className="text-muted-foreground size-5 shrink-0" />
+          <span className="flex-1 text-sm font-medium">Include items from my shops</span>
+          <input
+            id={ids.shopItems}
+            type="checkbox"
+            role="switch"
+            checked={draft.includeShopItems}
+            onChange={(e) => update({ includeShopItems: e.target.checked })}
+            aria-describedby={ids.shopItemsHint}
+            className="accent-primary size-6 shrink-0 cursor-pointer"
+          />
+        </label>
+        <p id={ids.shopItemsHint} className="text-muted-foreground text-xs leading-snug">
+          Each outfit may suggest one new piece to buy, even if you own something similar. You can then find it in your
+          favourite shops.
+        </p>
+        <Link href="/settings" prefetch={false} className="inline-flex min-h-11 items-center text-sm underline underline-offset-4">
+          Choose your shops
+        </Link>
+      </div>
 
       {/* Thumb-reachable: the main action sticks to the bottom of the screen. */}
       <div className="bg-background/95 sticky -mx-4 border-t px-4 pt-3 pb-3 backdrop-blur" style={STICKY_ACTION_STYLE}>

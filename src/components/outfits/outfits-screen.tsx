@@ -22,7 +22,7 @@ import { PAGE_BOTTOM_PADDING_STYLE } from "./layout";
 import { OutfitCard } from "./outfit-card";
 import { EMPTY_DRAFT, draftToRequest, type DraftField, type RequestDraft } from "./request-draft";
 import { RequestForm, type AnchorState } from "./request-form";
-import { ApiErrorNotice, IncompleteWardrobeNotice } from "./result-notices";
+import { ApiErrorNotice, IncompleteWardrobeNotice, MissingCategoriesNotice } from "./result-notices";
 
 /** One set of suggestions. Refining adds a new set; "Back" returns to the one before. */
 interface ResultSet {
@@ -141,6 +141,7 @@ export function OutfitsScreen({ initialAnchorId }: { initialAnchorId: string | n
     const details = [
       anchorItem ? `With your ${anchorItem.tags.description.toLowerCase()}` : null,
       request.guidance ? `“${request.guidance}”` : null,
+      request.includeShopItems ? "With items from your shops" : null,
     ].filter(Boolean);
     setSets([
       {
@@ -312,6 +313,8 @@ export function OutfitsScreen({ initialAnchorId }: { initialAnchorId: string | n
             <IncompleteWardrobeNotice result={current.response} onChangeRequest={() => setView("form")} />
           )}
 
+          {current?.response.status === "ok" && <MissingCategoriesNotice categories={current.response.missingCategories} />}
+
           {fewerThanAsked !== null && (
             <p className="text-muted-foreground text-sm" data-testid="fewer-outfits">
               {fewerOutfitsMessage(fewerThanAsked)}
@@ -335,6 +338,7 @@ export function OutfitsScreen({ initialAnchorId }: { initialAnchorId: string | n
                     statusError={statusErrors[outfit.id] ?? null}
                     onStatusChange={(update) => void changeStatus(outfit, update)}
                     onReloadPictures={() => reloadPictures(outfit)}
+                    onOutfitChange={(fresh) => setSets((s) => replaceOutfit(s, fresh))}
                     refineBusy={pending !== null}
                     onSwap={(item) =>
                       void runRefine(outfit, { kind: "swap", itemId: item.id }, `Swapped out the ${item.tags.description.toLowerCase()}`)
