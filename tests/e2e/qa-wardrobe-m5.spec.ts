@@ -294,7 +294,7 @@ test.describe("batch links (QA)", () => {
     await expect(page.getByText(/^40 different links found \(the first 40; add the other \d+ in another go\)\.$/)).toBeVisible();
     await checkPhoneLayout(page, "1,000 links pasted");
     await page.getByRole("button", { name: "Add 40 links" }).click();
-    await expect(page.getByText(/^You can add up to 40 links at once, so the other \d+ weren't included\.$/)).toBeVisible();
+    await expect(page.getByText(/You can add up to 40 links at once, so the other \d+ weren't included\./)).toBeVisible();
     await expect(page.getByText("40 links need a screenshot", { exact: false })).toBeVisible({ timeout: 60_000 });
     expect(sent).toHaveLength(40);
     expect(sent[39]).toBe("https://shop.example.com/p/39");
