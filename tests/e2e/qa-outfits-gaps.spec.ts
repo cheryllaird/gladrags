@@ -893,12 +893,9 @@ test.describe("Find in my shops, adversarial", () => {
     await expectFitsPhone(page, card);
   });
 
-  // BUG (low): the "Your pick" row shows the title in a plain inline span
-  // (gap-shop-panel.tsx, GapRow: <span className="font-medium">{product.title}</span>)
-  // without break-words, unlike the product card's title. A title with no
-  // spaces (a long SKU-style name) makes the whole page scroll sideways at 390 px.
-  test("BUG: a picked product with a long unbroken title doesn't make the page scroll sideways", async ({ page }) => {
-    test.fail();
+  // Was a BUG (fixed): the "Your pick" title had no break-words, so a title
+  // with no spaces made the whole page scroll sideways at 390 px.
+  test("a picked product with a long unbroken title doesn't make the page scroll sideways", async ({ page }) => {
     const [tshirt, jeans] = await getItems(page, [ID.tshirt, ID.jeans]);
     const product: Product = {
       shopId: "marks_and_spencer",

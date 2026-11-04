@@ -34,9 +34,9 @@ export function GapRow(props: { gap: OutfitGap; busy: boolean; onClear: () => vo
       </div>
       {product && (
         <div className="bg-muted/50 space-y-1 rounded-md p-2" data-testid="chosen-product">
-          <p className="text-xs">
+          <p className="min-w-0 text-xs break-words">
             <span className="text-muted-foreground">Your pick: </span>
-            <span className="font-medium">{product.title}</span>
+            <span className="font-medium break-words">{product.title}</span>
             <span className="text-muted-foreground">
               {" "}
               · {shopName(product)}
