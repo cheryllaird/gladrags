@@ -18,7 +18,8 @@ export const TimestampSchema = z.iso.datetime({ offset: true });
  * A short, single-line piece of user text (guidance, swap notes, reasons).
  * Trimmed, and line breaks (CR, LF, and Unicode's U+2028, U+2029 and NEL
  * U+0085) are not allowed so it can't smuggle extra prompt sections into
- * model requests.
+ * model requests. Other control characters (C0, including NUL, and DEL) are
+ * refused too: Postgres text columns reject NUL.
  */
 export function singleLineText(max: number) {
   return z
@@ -26,7 +27,8 @@ export function singleLineText(max: number) {
     .trim()
     .min(1, { error: "Can't be empty" })
     .max(max, { error: `Must be ${max} characters or fewer` })
-    .regex(/^[^\r\n\u2028\u2029\u0085]*$/, { error: "Must be a single line" });
+    .regex(/^[^\r\n\u2028\u2029\u0085]*$/, { error: "Must be a single line" })
+    .regex(/^[^\u0000-\u001f\u007f]*$/, { error: "Can't contain control characters" });
 }
 
 /** For optional text: "", whitespace-only and missing all become null. */
@@ -47,14 +49,17 @@ function dropLoneSurrogates(text: string): string {
 /**
  * Text scraped from a web page or an email (or returned by a model reading
  * one), on its way into a prompt or the database: whitespace (including
- * newlines) collapsed to single spaces, cut to `max` characters, and ""
+ * newlines) collapsed to single spaces, other control characters removed,
+ * cut to `max` characters, and ""
  * read as null. After that it must be a single line, like every other
  * prompt-bound text.
  */
 export function scrapedText(max: number) {
   return z.preprocess((value) => {
     if (typeof value !== "string") return emptyToNull(value);
-    const flat = dropLoneSurrogates(value.replace(/[\s\u0085]+/g, " ").trim().slice(0, max)).trim();
+    const flat = dropLoneSurrogates(
+      value.replace(/[\s\u0085]+/g, " ").replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, max),
+    ).trim();
     return flat === "" ? null : flat;
   }, singleLineText(max).nullable());
 }

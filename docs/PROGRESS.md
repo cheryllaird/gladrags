@@ -91,6 +91,7 @@ Decisions made by the orchestrator within Cheryl's choices (tell her at the chec
 - With "Include items from my shops" on, an outfit may have at most one shop item where the wardrobe could fill the slot; missing categories can always be gaps. Every outfit keeps at least one owned item.
 - Forwarded emails are accepted only from the user's sign-in address and only if they pass the email service's authentication checks.
 - Batch-added items are saved straight away as "to review" rather than held as drafts.
+- 2026-11-03: contract fix (orchestrator): `singleLineText` refuses and `scrapedText` strips C0 control characters and DEL, so a NUL in model or scraped text can't reach Postgres. Found by QA on C3.
 - 2026-10-31: gaps are judged around each outfit's own top, bottom or dress, so tops in a wardrobe with a dress but no bottoms still get outfits (with a bottom gap). Found by the reviewer; contract change applied on the integration branch.
 
 ## Handoff notes for a new session
