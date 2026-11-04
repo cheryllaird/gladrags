@@ -33,7 +33,6 @@ import { OutfitService } from "./service";
 import { PlaceholderThumbnailSource, ResizingThumbnailSource } from "./thumbnails";
 import type { WardrobeEntry } from "./types";
 
-const WORK: StyleChoice = { kind: "preset", presetId: "work" };
 /** No formality band: every item passes the filter, so shapes are exact. */
 const ANY: StyleChoice = { kind: "custom", text: "anything" };
 const AUTUMN = new Date("2026-10-25T12:00:00Z");
@@ -237,7 +236,7 @@ describe("wardrobe shapes", () => {
 // ---------------------------------------------------------------------------
 
 const SHOES: GapDescription = { category: "shoes", subcategory: "trainers", colours: ["white"], description: "White leather trainers" };
-const COAT: GapDescription = { category: "outerwear", subcategory: "coat", colours: ["camel"], description: "Camel wool coat" };
+const COAT: GapDescription = { category: "outerwear", subcategory: "coat", colours: ["beige"], description: "Camel wool coat" };
 const JEANS: GapDescription = { category: "bottom", subcategory: "jeans", colours: ["blue"], description: "Blue straight jeans" };
 const DRESS: GapDescription = { category: "dress_jumpsuit", subcategory: "dress", colours: ["black"], description: "Black midi dress" };
 const named = (o: { itemIds: string[]; gaps?: GapDescription[] }, name = "Pick") => ({ ...o, name, reason: "Because" });
