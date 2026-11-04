@@ -29,6 +29,12 @@ export const IDS = {
 
 const tagged = MOCK_ITEMS.map(({ id, tags }) => ({ id, tags }));
 
+/** The tags of the items in these outfits, once each, for pass 2. */
+function itemsIn(outfits: readonly { itemIds: string[] }[]) {
+  const ids = [...new Set(outfits.flatMap((o) => o.itemIds))];
+  return ids.map((id) => tagged.find((i) => i.id === id)!);
+}
+
 function thumbnailsFor(itemIds: string[]) {
   return itemIds.map((itemId) => {
     const colour = MOCK_ITEMS.find((i) => i.id === itemId)!.tags.colours[0]!;
@@ -84,6 +90,7 @@ export function workFinalInput(): FinalPickInput {
   return {
     request: { style: { kind: "preset", presetId: "work" }, guidance: "no heels" },
     avoidPairs: [],
+    items: itemsIn(shortlist.map((itemIds) => ({ itemIds }))),
     shortlist: shortlist.map((itemIds) => ({ itemIds, gaps: [], thumbnails: thumbnailsFor(itemIds) })),
     count: 3,
   };
@@ -103,6 +110,7 @@ export function swapFinalInput(): FinalPickInput {
       previousItemIds: [IDS.shirt, IDS.chinos, IDS.loafers],
       feedback: { kind: "swap", itemId: IDS.loafers },
     },
+    items: itemsIn(shortlist.map((itemIds) => ({ itemIds }))),
     shortlist: shortlist.map((itemIds) => ({ itemIds, gaps: [], thumbnails: thumbnailsFor(itemIds) })),
     count: 3,
   };
@@ -178,6 +186,7 @@ export function shopItemsFinalInput(): FinalPickInput {
   return {
     request: { style: { kind: "preset", presetId: "smart_casual" }, includeShopItems: true },
     avoidPairs: [],
+    items: itemsIn(shortlist),
     shortlist: shortlist.map((o) => ({ ...o, thumbnails: thumbnailsFor(o.itemIds) })),
     count: 3,
   };

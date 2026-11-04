@@ -103,6 +103,13 @@ export interface ShortlistGap {
 
 export interface FinalPickInput extends RankingContext {
   /**
+   * The tags of every shortlisted item. Pass 2 sends them along with the
+   * photos, so an item without a photo (it still needs one, or its
+   * thumbnail failed) is judged by its tags, and pass 2 knows each item even
+   * when pass 1 was skipped.
+   */
+  items: RankingItem[];
+  /**
    * Shortlisted outfits with a small (~256 px) thumbnail of each item that
    * has a picture (its cut-out, or the original when there's no cut-out),
    * and the outfit's gap slots.

@@ -189,6 +189,16 @@ describe("pass 2 with shop items (recorded fixtures)", () => {
   });
 });
 
+describe("pass 2 sends tags", () => {
+  it("lists every shortlisted item's tags once, by ref, alongside the photos", () => {
+    const input = shopItemsFinalInput();
+    const { params, refs } = buildFinalPickPrompt(input);
+    const data = userData(params) as { items: { ref: string; description: string }[] };
+    expect(data.items.map((i) => i.ref)).toEqual(refs.refsOf([IDS.shirt, IDS.chinos, IDS.loafers, IDS.dress, IDS.tshirt, IDS.jeans, IDS.trainers]));
+    expect(data.items[0]!.description).toBe(MOCK_ITEMS.find((i) => i.id === IDS.shirt)!.tags.description);
+  });
+});
+
 describe("refinement of an outfit with gaps", () => {
   it("sends the previous outfit's gaps with it", () => {
     const input = noShoesShortlistInput();

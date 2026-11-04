@@ -237,6 +237,7 @@ export async function runOutfitPipeline(input: PipelineInput, deps: PipelineDeps
     call: () =>
       ranking.pickFinal({
         ...context,
+        items: shortlistItems.map(({ id, tags }) => ({ id, tags })),
         shortlist: shortlist.map(({ itemIds, gaps }) => ({
           itemIds,
           gaps,

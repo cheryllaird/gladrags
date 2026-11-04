@@ -386,6 +386,9 @@ export function buildFinalPickPrompt(input: FinalPickInput): BuiltPrompt {
 
   const data = {
     ...contextForPrompt(input, refs, withGaps),
+    // Tags for every shortlisted item: the only description of an item
+    // without a photo, and cheap (about 60 tokens an item).
+    items: input.items.filter((item) => refs.refsOf([item.id]).length > 0).map((item) => ({ ref: refs.ref(item.id), ...item.tags })),
     shortlist: input.shortlist.map((o) =>
       withGaps
         ? {

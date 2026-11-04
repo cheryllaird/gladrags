@@ -14,8 +14,9 @@ export interface ThumbnailSource {
   /**
    * A ~256 px picture of each item's cut-out (or its original when there's
    * no cut-out), by item ID. An item without a picture (`image` null: it
-   * still needs a photo) or whose picture can't be loaded is left out, and
-   * ranking goes ahead with its tags only.
+   * still needs a photo) or whose picture can't be loaded is left out;
+   * pass 2 sends every shortlisted item's tags as well, so the model
+   * judges such an item by its tags alone.
    */
   getThumbnails(items: readonly WardrobeEntry[]): Promise<Map<string, ImageInput>>;
 }

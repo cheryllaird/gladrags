@@ -383,12 +383,10 @@ describe("needsPhoto items are never sent as images", () => {
     expect(labels).toHaveLength(2);
   });
 
-  // BUG (QA): thumbnails.ts says an item without a picture is ranked "with its
-  // tags only", but pass 2's prompt carries no tags at all (refs and photos
-  // only). With few candidates pass 1 is skipped, so the model never learns
-  // anything about the waiting item, yet must name the outfit and describe
-  // its gaps around it.
-  it.fails("BUG: when pass 1 is skipped, pass 2 still tells the model what a picture-less item is (its tags)", async () => {
+  // Was BUG (QA, it.fails): pass 2's prompt carried no tags, so with pass 1
+  // skipped the model knew nothing about a picture-less item. Fixed: pass 2
+  // sends every shortlisted item's tags.
+  it("when pass 1 is skipped, pass 2 still tells the model what a picture-less item is (its tags)", async () => {
     const waiting = { ...entry(3, "bottom", { description: "Olive cargo trousers" }), image: null };
     const items = [entry(1, "top"), entry(2, "shoes"), waiting];
     const requests: GenerateContentParameters[] = [];
