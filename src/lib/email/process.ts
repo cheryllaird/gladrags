@@ -71,8 +71,16 @@ export const EMAIL_PROCESSING_BUDGET_MS = 240_000;
 /** Lines handled at once: the shops' servers and Gemini answer in parallel. */
 export const LINE_CONCURRENCY = 3;
 
-/** No new line starts with less than this left: fetching and tagging one takes about this long at worst. */
-export const MIN_TIME_FOR_A_LINE_MS = 30_000;
+/**
+ * The longest one line can take: finding its picture (LINE_IMAGE_BUDGET_MS,
+ * 20 s) plus tagging it with one retry (two attempts of up to 20 s,
+ * TAGGING_ATTEMPT_TIMEOUT_MS). No new line starts with less than this left,
+ * so a line that starts always has time to finish inside the budget.
+ */
+export const MIN_TIME_FOR_A_LINE_MS = 60_000;
+
+/** Time kept back from a line's picture search for tagging it (two attempts). */
+const TAGGING_RESERVE_MS = 40_000;
 
 type LineOutcome = { added: true } | { added: false; reason: EmailImportError };
 
@@ -166,7 +174,7 @@ async function addLine(deps: EmailProcessingDeps, userId: string, line: EmailLin
   };
 
   try {
-    const budget = Math.min(LINE_IMAGE_BUDGET_MS, deadline - clock() - MIN_TIME_FOR_A_LINE_MS / 2);
+    const budget = Math.min(LINE_IMAGE_BUDGET_MS, deadline - clock() - TAGGING_RESERVE_MS);
     const found = budget > 0 ? await findProductImage(deps.images, line, deps.network, budget) : { image: null, product: null };
     const hints: TextTaggingHints = {
       title: line.name,

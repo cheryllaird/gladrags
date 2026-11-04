@@ -297,3 +297,12 @@ describe("limits", () => {
     expect(most).toBe(3);
   });
 });
+
+describe("line time", () => {
+  it("a line needs its picture budget plus two tagging attempts, and that's what's kept back", async () => {
+    const { LINE_IMAGE_BUDGET_MS } = await import("@/lib/link-import/product-image");
+    const { TAGGING_ATTEMPT_TIMEOUT_MS } = await import("@/lib/ai/gemini-tagging");
+    expect(MIN_TIME_FOR_A_LINE_MS).toBe(60_000);
+    expect(MIN_TIME_FOR_A_LINE_MS).toBeGreaterThanOrEqual(LINE_IMAGE_BUDGET_MS + 2 * TAGGING_ATTEMPT_TIMEOUT_MS);
+  });
+});
