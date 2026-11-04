@@ -5,97 +5,113 @@
 // NOT a signed-in route: no session cookie is involved, and the proxy
 // skips session handling for /api/inbound/ (src/proxy.ts). Its only
 // authentication is the provider's signature or credentials, checked
-// against INBOUND_EMAIL_WEBHOOK_SECRET in constant time over the raw body
-// BEFORE anything is parsed. withApiHandler's cross-site check still runs
+// against INBOUND_EMAIL_WEBHOOK_SECRET in constant time BEFORE anything is
+// parsed (for Postmark: HTTP Basic credentials in the webhook URL; see
+// src/lib/email/postmark.ts). withApiHandler's cross-site check still runs
 // and passes: server-to-server posts send no Origin or Sec-Fetch-Site.
-// Nothing here may act on a browser session, so CSRF doesn't apply.
+// Nothing here acts on a browser session, so CSRF doesn't apply.
 //
-// The real version (link-import):
-// 1. Refuse bodies over INBOUND_WEBHOOK_MAX_BYTES without buffering them:
-//    a Content-Length over the limit is refused before reading, and the
-//    body stream is read with a running byte count that stops at the limit
-//    (Content-Length can be missing or wrong). Then verify the signature
-//    (401 unauthorized if it fails); parse with the provider adapter into
-//    InboundEmailSchema (400 if it can't).
-// 2. Find the user from the token in a recipient address (tokenFromAddress
-//    with getForwardingAddressConfig(); look it up with the admin client).
-//    Unknown token: answer { received: true } and record nothing.
-// 3. Skip a redelivery (same user and message_hash, a SHA-256 of messageId).
-// 4. judgeInboundEmail(email, user's sign-in address). Refused: record a
-//    failed email_imports row with its error code, nothing else.
-// 5. reserveAction(user, "email_import"), then extract line items with the
-//    model (OrderEmailModelOutputSchema, metered as "email_extraction"; the
-//    text cut to EMAIL_PROMPT_TEXT_MAX first),
-//    then for each line: fetch the image (the email's image link, else the
-//    product page via the add-by-link fetcher), store it, tag it, count an
-//    item_ingest, and save it with source "email" and needs_review = true
-//    (or a placeholder image and needs_photo = true when there's no usable
-//    picture). Stop at the daily item cap (skippedCount, error daily_cap_reached).
-// 6. Update the email_imports row (status, counts, shop name, order date)
-//    and drop the email. Always answer { received: true } once the
-//    signature checks out, so the service doesn't retry; a 5xx makes it retry.
+// 1. Refuse bodies over INBOUND_WEBHOOK_MAX_BYTES without buffering them,
+//    verify the credentials (401), have the adapter normalise the email and
+//    check it against InboundEmailSchema. Refusals that can never succeed
+//    (too large, unreadable, no recipient) answer 403, which stops
+//    Postmark's retries; bad credentials stay 401, so they're retried.
+// 2-5. Quick steps (src/lib/email/receive.ts): find the user by the
+//    token, skip a redelivery, judge the sender and checks, count the
+//    email against emails_per_day. Refused emails are recorded without
+//    their content; an unknown token leaves no trace.
+// Then answer { received: true } at once, and read the email and add its
+// items after the response (src/lib/email/process.ts), within a time
+// budget under maxDuration.
+//
+// Why after the response: reading the email takes one or two model calls,
+// then each line needs its picture fetched and tagged, which together can
+// take minutes for a big order, while email services wait only a short
+// time for an answer and retry when they don't get one. Next's after()
+// keeps the function running once the answer is sent (on Vercel, up to
+// maxDuration). The trade-off: if the function is stopped part-way, the
+// email is gone (it's never stored) and the import shows as failed after
+// 15 minutes, rather than being retried by the service. Errors on our side
+// BEFORE the answer (database down) still answer 5xx, so the service
+// retries those.
 //
 // Mock mode: the body is InboundEmailSchema JSON, with no signature. An
 // email to the mock user's forwarding address from mock.user@gladrags.test
 // with passing checks adds two "to review" items (one needing a photo). A
-// redelivery (same messageId) is skipped, as the real one must.
+// redelivery (same messageId) is skipped, as the real one is.
+import { after } from "next/server";
 import { InboundEmailSchema, InboundEmailWebhookResponseSchema, INBOUND_WEBHOOK_MAX_BYTES, judgeInboundEmail, tokenFromAddress } from "@/contracts";
 import { ApiException } from "@/lib/api/errors";
 import { jsonResponse, withApiHandler } from "@/lib/api/http";
 import { MOCK_USER } from "@/lib/auth/session";
+import { getEmailProcessingDeps } from "@/lib/email/deps";
+import { processAcceptedEmail } from "@/lib/email/process";
+import { getInboundEmailProvider } from "@/lib/email/providers";
+import { receiveInboundEmail } from "@/lib/email/receive";
+import { BodyTooLargeError, readBodyCapped } from "@/lib/email/webhook-request";
 import { isMockMode } from "@/lib/env";
-import { getForwardingAddressConfig, getInboundWebhookSecret } from "@/lib/env.server";
+import { getForwardingAddressConfig } from "@/lib/env.server";
 import * as mock from "@/lib/mocks/store";
 import { getUsageGuard } from "@/lib/usage";
 import { CapReachedError } from "@/lib/usage/errors";
 
-/** Extraction plus several image fetches and tagging calls. */
-export const maxDuration = 60;
+/**
+ * Seconds the function may run, the answer plus processing after it
+ * (EMAIL_PROCESSING_BUDGET_MS is 240 s of this). 300 s is the most Vercel
+ * allows on the Hobby plan with Fluid compute (the default for new projects).
+ */
+export const maxDuration = 300;
 
 const received = () => jsonResponse(InboundEmailWebhookResponseSchema, { received: true });
 
-const tooLarge = () => new ApiException("bad_request", "That email is too large");
-
 /**
- * The body as text, refusing more than `maxBytes` without buffering it all:
- * checks Content-Length first, then counts bytes as the stream arrives.
+ * A request that can never succeed, however often it's sent: 403, because
+ * Postmark stops retrying an inbound webhook that answers 403 (any other
+ * failure is retried for hours). Bad credentials stay 401, so a
+ * misconfigured secret is retried once it's fixed.
  */
-async function readBodyCapped(request: Request, maxBytes: number): Promise<string> {
-  const declared = Number(request.headers.get("content-length"));
-  if (Number.isFinite(declared) && declared > maxBytes) throw tooLarge();
-  if (!request.body) return "";
-  const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > maxBytes) {
-      await reader.cancel();
-      throw tooLarge();
-    }
-    chunks.push(value);
+const permanentRefusal = (message: string) => new ApiException("forbidden", message);
+
+async function readBody(request: Request, tooLarge: (message: string) => ApiException): Promise<Uint8Array> {
+  try {
+    return await readBodyCapped(request, INBOUND_WEBHOOK_MAX_BYTES);
+  } catch (error) {
+    if (error instanceof BodyTooLargeError) throw tooLarge("That email is too large");
+    throw error;
   }
-  const body = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    body.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return new TextDecoder().decode(body);
 }
 
 export const POST = withApiHandler(async (request) => {
-  if (!isMockMode()) {
-    getInboundWebhookSecret(); // 500 server_misconfigured until the secret is set
-    throw new ApiException("not_implemented", "Order email import isn't built yet");
+  // Mock mode takes the normalised email straight from a developer, so its refusals stay 400.
+  if (isMockMode()) return mockInbound(await readBody(request, (message) => new ApiException("bad_request", message)));
+
+  // 500 server_misconfigured until the secret and provider are set.
+  const provider = getInboundEmailProvider();
+  const rawBody = await readBody(request, permanentRefusal);
+  if (!(await provider.verify({ headers: request.headers, rawBody }))) {
+    throw new ApiException("unauthorized", "The webhook credentials are missing or wrong");
   }
 
-  const raw = await readBodyCapped(request, INBOUND_WEBHOOK_MAX_BYTES);
+  let normalised: unknown;
+  try {
+    normalised = provider.parse(rawBody);
+  } catch {
+    throw permanentRefusal("That isn't an email the app can read");
+  }
+  // Includes an email with no usable recipient (To is required).
+  const parsed = InboundEmailSchema.safeParse(normalised);
+  if (!parsed.success) throw permanentRefusal("That isn't an email the app can read");
+
+  const deps = getEmailProcessingDeps();
+  const accepted = await receiveInboundEmail(deps, parsed.data, getForwardingAddressConfig());
+  if (accepted) after(() => processAcceptedEmail(deps, accepted));
+  return received();
+});
+
+async function mockInbound(rawBody: Uint8Array) {
   let json: unknown;
   try {
-    json = JSON.parse(raw);
+    json = JSON.parse(new TextDecoder().decode(rawBody));
   } catch {
     throw new ApiException("bad_request", "The request body must be JSON");
   }
@@ -122,4 +138,4 @@ export const POST = withApiHandler(async (request) => {
   }
   mock.addMockEmailImport(email.receivedAt);
   return received();
-});
+}

@@ -332,10 +332,14 @@ describe("outside mock mode", () => {
     vi.stubEnv("GLADRAGS_MOCK_MODE", "false");
   });
 
-  it("the inbound webhook refuses to run without its secret, then is not built yet", async () => {
+  it("the inbound webhook refuses to run without its secret and provider, then refuses an unsigned post", async () => {
+    vi.stubEnv("INBOUND_EMAIL_PROVIDER", "postmark");
     vi.stubEnv("INBOUND_EMAIL_WEBHOOK_SECRET", "");
     await expectError(await inboundEmail.POST(inbound()), 500, "server_misconfigured");
     vi.stubEnv("INBOUND_EMAIL_WEBHOOK_SECRET", "x".repeat(32));
-    await expectError(await inboundEmail.POST(inbound()), 501, "not_implemented");
+    vi.stubEnv("INBOUND_EMAIL_PROVIDER", "");
+    await expectError(await inboundEmail.POST(inbound()), 500, "server_misconfigured");
+    vi.stubEnv("INBOUND_EMAIL_PROVIDER", "postmark");
+    await expectError(await inboundEmail.POST(inbound()), 401, "unauthorized");
   });
 });

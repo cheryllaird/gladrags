@@ -103,8 +103,13 @@ const ALL_CASES: [string, () => Promise<Response>][] = [
   ],
 ];
 
-/** Built by ingestion (C2). */
+/** Built by ingestion (C2) and link-import (C3; tested in src/lib/email/ and src/app/api/email-routes.test.ts). */
 const BUILT = new Set([
+  "GET /api/settings",
+  "PUT /api/settings",
+  "POST /api/settings/forwarding-address",
+  "GET /api/email-imports",
+  "POST /api/items/link/cutout { saveForReview: true }",
   "POST /api/items/reviewed",
   "PUT /api/items/:id/cutout",
   "PUT /api/items/:id/photo",
@@ -167,8 +172,10 @@ describe("the inbound webhook outside mock mode", () => {
 
   it("needs no session: it never asks for the signed-in user", async () => {
     session.signedIn = false;
+    vi.stubEnv("INBOUND_EMAIL_PROVIDER", "postmark");
     vi.stubEnv("INBOUND_EMAIL_WEBHOOK_SECRET", "s".repeat(32));
-    await expectError(await post(), "not_implemented");
+    // Unsigned, so refused by the webhook's own check, not by sign-in.
+    await expectError(await post(), "unauthorized");
     expect(session.calls).toBe(0);
   });
 
@@ -178,9 +185,10 @@ describe("the inbound webhook outside mock mode", () => {
   });
 
   it("never serves mock data, even for a perfect mock-mode email", async () => {
+    vi.stubEnv("INBOUND_EMAIL_PROVIDER", "postmark");
     vi.stubEnv("INBOUND_EMAIL_WEBHOOK_SECRET", "s".repeat(64));
     const res = await post();
-    expect(res.status).toBe(501);
+    expect(res.status).toBe(401);
     expect(await res.text()).not.toContain("received");
   });
 

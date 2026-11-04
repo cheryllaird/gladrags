@@ -16,16 +16,19 @@
  *    stored in step 1 as untrusted hints, return the draft.
  */
 import "server-only";
-import { STORAGE_BUCKETS, UPLOAD_FIELDS, imageKeyBelongsTo, type ItemDraft } from "@/contracts";
+import { STORAGE_BUCKETS, UPLOAD_FIELDS, imageKeyBelongsTo, type BatchAddResponse, type ItemDraft } from "@/contracts";
 import type { ImageInput } from "@/lib/ai/types";
 import { ApiException } from "@/lib/api/errors";
 import type { LinkCutoutUpload } from "@/lib/api/upload";
 import { SIGNED_URL_TTL_SECONDS } from "@/lib/images/server";
 import { CUTOUT_RULES, checkUploadedCutout, cleanImage } from "@/lib/ingestion/images";
+import { DuplicateImageKeyError, type ItemRepository } from "@/lib/ingestion/items-repository";
 import { newImageKey, type ImageStorage } from "@/lib/ingestion/storage";
 import { suggestTags, type TaggingDeps } from "@/lib/ingestion/tagging";
+import { saveItemForReview } from "@/lib/ingestion/wardrobe";
 import type { ImageStore } from "@/lib/outfits/thumbnails";
 import { isAiPausedError } from "@/lib/usage/errors";
+import type { UsageReservation } from "@/lib/usage/guard";
 import type { LinkImportRepository, OpenLinkImport } from "./repository";
 
 export interface LinkCutoutDeps extends TaggingDeps {
@@ -33,6 +36,8 @@ export interface LinkCutoutDeps extends TaggingDeps {
   /** Reads the stored step-1 image back (admin client). */
   imageStore: ImageStore;
   linkImports: LinkImportRepository;
+  /** Batch-added items are saved here as "to review" (the signed-in user's client, so RLS applies). */
+  items: ItemRepository;
 }
 
 function importGone(): ApiException {
@@ -40,6 +45,15 @@ function importGone(): ApiException {
 }
 
 export async function finishLinkImport(deps: LinkCutoutDeps, userId: string, upload: LinkCutoutUpload): Promise<ItemDraft> {
+  return (await finishLinkImportCounted(deps, userId, upload)).draft;
+}
+
+/** finishLinkImport, also handing back the item's count so a later step can give it back. */
+async function finishLinkImportCounted(
+  deps: LinkCutoutDeps,
+  userId: string,
+  upload: LinkCutoutUpload,
+): Promise<{ draft: ItemDraft; counted: UsageReservation }> {
   // 1. Caps.
   await deps.usage.assertCanStart(userId, "item_ingest");
 
@@ -100,7 +114,7 @@ export async function finishLinkImport(deps: LinkCutoutDeps, userId: string, upl
     const cutoutUrl = cutoutKey ? cutoutUrls.get(cutoutKey) : null;
     if (!originalUrl || cutoutUrl === undefined) throw new Error("Couldn't sign the new images' URLs");
 
-    return {
+    const draft: ItemDraft = {
       source: "link",
       sourceUrl: claimed.sourceUrl,
       originalImageKey: originalKey,
@@ -109,6 +123,7 @@ export async function finishLinkImport(deps: LinkCutoutDeps, userId: string, upl
       cutoutUrl,
       suggestedTags,
     };
+    return { draft, counted };
   } catch (error) {
     // The original stays: it belongs to the import, and the cleanup job
     // removes it if no item ever uses it.
@@ -120,6 +135,51 @@ export async function finishLinkImport(deps: LinkCutoutDeps, userId: string, upl
       await counted.cancel().catch(() => {});
       await deps.linkImports.release(userId, originalKey).catch(() => {});
     }
+    throw error;
+  }
+}
+
+/**
+ * Step 2 of a batch add (several links pasted at once; `saveForReview` in
+ * the meta). Same steps as finishLinkImport, then the item is saved
+ * straight away with its suggested tags and marked "to review". If tagging
+ * failed twice there are no tags to save, so the draft comes back for the
+ * review list to show (CONTRACTS.md section 5, "Several links at once").
+ *
+ * Caps for a batch: the phone runs the links one after another. Step 1
+ * checks the item cap before fetching anything (and counts a link fetch),
+ * and this step counts the item, so once today's items are used up the
+ * next link's step 1 answers 429 items_per_day without fetching, and the
+ * phone stops there.
+ */
+export async function finishLinkImportForReview(deps: LinkCutoutDeps, userId: string, upload: LinkCutoutUpload): Promise<BatchAddResponse> {
+  const { draft, counted } = await finishLinkImportCounted(deps, userId, upload);
+  const tags = draft.suggestedTags;
+  if (!tags) return { status: "draft", draft };
+
+  try {
+    const item = await saveItemForReview(deps, userId, {
+      source: "link",
+      sourceUrl: draft.sourceUrl,
+      originalImageKey: draft.originalImageKey,
+      cutoutImageKey: draft.cutoutImageKey,
+      tags,
+    });
+    return { status: "saved", item };
+  } catch (error) {
+    // Another item already uses these images (a save of the same draft won
+    // the race): it exists, so nothing is undone.
+    if (error instanceof DuplicateImageKeyError) throw new ApiException("bad_request", "That item has already been saved");
+    // Saving failed on our side: the user got no item, so give the count
+    // back, remove the cut-out (only this attempt used it) and reopen the
+    // import so pasting the link again within its hour isn't needed. The
+    // original stays: it belongs to the import, and the orphaned-image
+    // cleanup removes it if the import is never finished. Reopening is
+    // safe because claiming is one statement; if the insert did go through
+    // after all, a retry is refused as "already saved".
+    await counted.cancel().catch(() => {});
+    if (draft.cutoutImageKey) await deps.storage.remove(STORAGE_BUCKETS.cutouts, [draft.cutoutImageKey]).catch(() => {});
+    await deps.linkImports.release(userId, draft.originalImageKey).catch(() => {});
     throw error;
   }
 }

@@ -1,7 +1,8 @@
+import { createGeminiOrderEmailProvider } from "./gemini-order-email";
 import { createGeminiRankingProvider } from "./gemini-ranking";
 import { createGeminiShopSearchProvider } from "./gemini-shop-search";
 import { createGeminiTaggingProvider } from "./gemini-tagging";
-import type { RankingProvider, ShopSearchProvider, TaggingProvider } from "./types";
+import type { OrderEmailProvider, RankingProvider, ShopSearchProvider, TaggingProvider } from "./types";
 
 export * from "./types";
 export { canTagFromText } from "./tagging-input";
@@ -21,4 +22,9 @@ export function getRankingProvider(): RankingProvider {
 /** Gemini with Google Search grounding, for "Find in my shops". Throws ConfigError if GEMINI_API_KEY isn't set. */
 export function getShopSearchProvider(): ShopSearchProvider {
   return createGeminiShopSearchProvider();
+}
+
+/** Gemini reading order emails (text only). Throws ConfigError if GEMINI_API_KEY isn't set. */
+export function getOrderEmailProvider(): OrderEmailProvider {
+  return createGeminiOrderEmailProvider();
 }

@@ -5,9 +5,11 @@
 import "server-only";
 import { getTaggingProvider } from "@/lib/ai";
 import { getServerImageProcessor } from "@/lib/images/server";
+import { SupabaseItemRepository } from "@/lib/ingestion/items-repository";
 import { SupabaseImageStorage } from "@/lib/ingestion/storage";
 import { SupabaseImageStore } from "@/lib/outfits/thumbnails";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 import { getUsageGuard } from "@/lib/usage";
 import type { LinkCutoutDeps } from "./finish-link";
 import type { LinkImportDeps } from "./import-link";
@@ -26,7 +28,8 @@ export function getLinkImportDeps(): LinkImportDeps {
   };
 }
 
-export function getLinkCutoutDeps(): LinkCutoutDeps {
+/** Batch-added items are saved with the signed-in user's client, so RLS applies to the insert. */
+export async function getLinkCutoutDeps(): Promise<LinkCutoutDeps> {
   const admin = createAdminClient();
   return {
     images: getServerImageProcessor(),
@@ -35,5 +38,6 @@ export function getLinkCutoutDeps(): LinkCutoutDeps {
     linkImports: new SupabaseLinkImportRepository(admin),
     tagger: getTaggingProvider(),
     usage: getUsageGuard(),
+    items: new SupabaseItemRepository(await createClient()),
   };
 }

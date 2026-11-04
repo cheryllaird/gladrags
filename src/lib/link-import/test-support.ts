@@ -119,11 +119,12 @@ export function makeLinkDeps(network: NetworkDeps, { taggerOutputs = [] as unkno
       return image;
     },
   };
+  const items = new InMemoryItemRepository(clock);
   return {
     images: new SharpImageProcessor(),
     storage,
     imageStore,
-    items: new InMemoryItemRepository(clock),
+    items,
     linkImports: new InMemoryLinkImportRepository(clock),
     tagger: fakeTagger as TaggingProvider,
     fakeTagger,

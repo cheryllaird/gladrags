@@ -76,8 +76,46 @@ export function getForwardingAddressConfig(): ForwardingAddressConfig | null {
  */
 export function getInboundWebhookSecret(): string {
   return parseEnv(
-    z.object({ INBOUND_EMAIL_WEBHOOK_SECRET: z.string().min(32) }),
+    z.object({
+      // The .env.example placeholder is long enough, so it's refused by name.
+      INBOUND_EMAIL_WEBHOOK_SECRET: z
+        .string()
+        .min(32)
+        .refine((secret) => !secret.startsWith("replace-me"), { error: "Still the placeholder from .env.example" }),
+    }),
     { INBOUND_EMAIL_WEBHOOK_SECRET: process.env.INBOUND_EMAIL_WEBHOOK_SECRET },
     "Inbound email webhook secret",
   ).INBOUND_EMAIL_WEBHOOK_SECRET;
+}
+
+/** Inbound email services the webhook has an adapter for (src/lib/email/). */
+export const INBOUND_EMAIL_PROVIDERS = ["postmark"] as const;
+export type InboundEmailProviderName = (typeof INBOUND_EMAIL_PROVIDERS)[number];
+
+/**
+ * Which inbound email service posts to the webhook (INBOUND_EMAIL_PROVIDER),
+ * and the Authentication-Results authserv-ids to trust
+ * (INBOUND_EMAIL_AUTHSERV_ID, optional, comma-separated: the receiving
+ * service's own host name, e.g. "mx.cloudflare.net"). Throws ConfigError
+ * for a missing or unknown provider.
+ */
+export function getInboundEmailProviderConfig(): { provider: InboundEmailProviderName; trustedAuthservIds: string[] } {
+  const env = parseEnv(
+    z.object({
+      INBOUND_EMAIL_PROVIDER: z.string().trim().toLowerCase().pipe(z.enum(INBOUND_EMAIL_PROVIDERS)),
+      INBOUND_EMAIL_AUTHSERV_ID: z
+        .string()
+        .trim()
+        .toLowerCase()
+        .regex(/^([a-z0-9.-]+)(\s*,\s*[a-z0-9.-]+)*$/)
+        .optional(),
+    }),
+    {
+      INBOUND_EMAIL_PROVIDER: process.env.INBOUND_EMAIL_PROVIDER,
+      INBOUND_EMAIL_AUTHSERV_ID: process.env.INBOUND_EMAIL_AUTHSERV_ID || undefined,
+    },
+    "Inbound email provider",
+  );
+  const trustedAuthservIds = env.INBOUND_EMAIL_AUTHSERV_ID ? env.INBOUND_EMAIL_AUTHSERV_ID.split(",").map((id) => id.trim()) : [];
+  return { provider: env.INBOUND_EMAIL_PROVIDER, trustedAuthservIds };
 }
