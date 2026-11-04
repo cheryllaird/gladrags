@@ -13,7 +13,9 @@
 //
 // 1. Refuse bodies over INBOUND_WEBHOOK_MAX_BYTES without buffering them,
 //    verify the credentials (401), have the adapter normalise the email and
-//    check it against InboundEmailSchema (400).
+//    check it against InboundEmailSchema. Refusals that can never succeed
+//    (too large, unreadable, no recipient) answer 403, which stops
+//    Postmark's retries; bad credentials stay 401, so they're retried.
 // 2-5. Quick steps (src/lib/email/receive.ts): find the user by the
 //    token, skip a redelivery, judge the sender and checks, count the
 //    email against emails_per_day. Refused emails are recorded without
@@ -62,21 +64,30 @@ export const maxDuration = 300;
 
 const received = () => jsonResponse(InboundEmailWebhookResponseSchema, { received: true });
 
-async function readBody(request: Request): Promise<Uint8Array> {
+/**
+ * A request that can never succeed, however often it's sent: 403, because
+ * Postmark stops retrying an inbound webhook that answers 403 (any other
+ * failure is retried for hours). Bad credentials stay 401, so a
+ * misconfigured secret is retried once it's fixed.
+ */
+const permanentRefusal = (message: string) => new ApiException("forbidden", message);
+
+async function readBody(request: Request, tooLarge: (message: string) => ApiException): Promise<Uint8Array> {
   try {
     return await readBodyCapped(request, INBOUND_WEBHOOK_MAX_BYTES);
   } catch (error) {
-    if (error instanceof BodyTooLargeError) throw new ApiException("bad_request", "That email is too large");
+    if (error instanceof BodyTooLargeError) throw tooLarge("That email is too large");
     throw error;
   }
 }
 
 export const POST = withApiHandler(async (request) => {
-  if (isMockMode()) return mockInbound(await readBody(request));
+  // Mock mode takes the normalised email straight from a developer, so its refusals stay 400.
+  if (isMockMode()) return mockInbound(await readBody(request, (message) => new ApiException("bad_request", message)));
 
   // 500 server_misconfigured until the secret and provider are set.
   const provider = getInboundEmailProvider();
-  const rawBody = await readBody(request);
+  const rawBody = await readBody(request, permanentRefusal);
   if (!(await provider.verify({ headers: request.headers, rawBody }))) {
     throw new ApiException("unauthorized", "The webhook credentials are missing or wrong");
   }
@@ -85,10 +96,11 @@ export const POST = withApiHandler(async (request) => {
   try {
     normalised = provider.parse(rawBody);
   } catch {
-    throw new ApiException("bad_request", "That isn't an email the app can read");
+    throw permanentRefusal("That isn't an email the app can read");
   }
+  // Includes an email with no usable recipient (To is required).
   const parsed = InboundEmailSchema.safeParse(normalised);
-  if (!parsed.success) throw new ApiException("bad_request", "That isn't an email the app can read");
+  if (!parsed.success) throw permanentRefusal("That isn't an email the app can read");
 
   const deps = getEmailProcessingDeps();
   const accepted = await receiveInboundEmail(deps, parsed.data, getForwardingAddressConfig());

@@ -139,11 +139,13 @@ describe("POST /api/inbound/email (Postmark)", () => {
     expect(fake.email.imports.rows.size).toBe(0);
   });
 
-  it("refuses a malformed or oversized body (400) once the credentials check out", async () => {
-    expect(await errorCode(await inbound.POST(webhook("not json")))).toBe("bad_request");
-    expect(await errorCode(await inbound.POST(webhook(postmarkPayload({ FromFull: { Email: "not an address" } }))))).toBe("bad_request");
+  it("refuses a malformed, oversized or recipient-less body with 403 (Postmark then stops retrying) once the credentials check out", async () => {
+    expect(await errorCode(await inbound.POST(webhook("not json")))).toBe("forbidden");
+    expect(await errorCode(await inbound.POST(webhook(postmarkPayload({ FromFull: { Email: "not an address" } }))))).toBe("forbidden");
+    const noTo = postmarkPayload({ ToFull: [], CcFull: [], BccFull: [], OriginalRecipient: "" });
+    expect(await errorCode(await inbound.POST(webhook(noTo)))).toBe("forbidden");
     const big = webhook(postmarkPayload({ TextBody: "x".repeat(2 * 1024 * 1024) }));
-    expect(await errorCode(await inbound.POST(big))).toBe("bad_request");
+    expect(await errorCode(await inbound.POST(big))).toBe("forbidden");
   });
 
   it("an email to an unknown token is answered and leaves no trace", async () => {

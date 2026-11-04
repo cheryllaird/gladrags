@@ -204,7 +204,7 @@ describe("webhook body", () => {
       },
     });
     const res = await inbound.POST(webhook(stream, { headers: { "content-length": String(TWO_MB + 1) } }));
-    expect(await errorCode(res)).toBe("bad_request");
+    expect(await errorCode(res)).toBe("forbidden");
     // At most the stream's own read-ahead; the body wasn't consumed.
     expect(pulled).toBeLessThanOrEqual(2);
     expectNoTrace();
@@ -213,7 +213,7 @@ describe("webhook body", () => {
   it("a lying Content-Length (small) over a big body is cut off at the limit", async () => {
     const big = JSON.stringify(postmarkPayload({ TextBody: "x".repeat(TWO_MB) }));
     const res = await inbound.POST(webhook(big, { headers: { "content-length": "100" } }));
-    expect(await errorCode(res)).toBe("bad_request");
+    expect(await errorCode(res)).toBe("forbidden");
     expectNoTrace();
   });
 
@@ -227,7 +227,7 @@ describe("webhook body", () => {
       },
     });
     const res = await inbound.POST(webhook(stream));
-    expect(await errorCode(res)).toBe("bad_request");
+    expect(await errorCode(res)).toBe("forbidden");
     expect(sent).toBeLessThan(TWO_MB + 4 * 64 * 1024);
     expectNoTrace();
   });
@@ -248,10 +248,10 @@ describe("webhook body", () => {
     ["missing MessageID", JSON.stringify({ ...postmarkPayload(), MessageID: undefined })],
     ["an empty MessageID", JSON.stringify(postmarkPayload({ MessageID: "" }))],
     ["a FromFull that's a string", JSON.stringify(postmarkPayload({ FromFull: "sam.tester@mail.example" }))],
-  ])("malformed (%s): 400, nothing recorded", async (_label, body) => {
+  ])("malformed (%s): 403 so Postmark stops retrying, nothing recorded", async (_label, body) => {
     const res = await inbound.POST(webhook(body));
-    expect(res.status).toBe(400);
-    expect(await errorCode(res)).toBe("bad_request");
+    expect(res.status).toBe(403);
+    expect(await errorCode(res)).toBe("forbidden");
     expectNoTrace();
   });
 
