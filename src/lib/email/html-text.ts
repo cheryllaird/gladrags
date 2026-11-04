@@ -16,7 +16,7 @@ import { decodeEntities } from "@/lib/link-import/html";
 const MAX_LINK_LENGTH = 2048;
 
 /** Elements whose contents are never text the reader sees. */
-const DROPPED_ELEMENTS = /<(script|style|head|title|noscript|template|svg|object|iframe)\b[^>]*>[\s\S]*?<\/\1\s*>/gi;
+const DROPPED_ELEMENTS = new Set(["script", "style", "head", "title", "noscript", "template", "svg", "object", "iframe"]);
 
 /** Tags that start a new line. */
 const BLOCK_TAGS = /^(p|div|br|tr|li|ul|ol|table|tbody|thead|tfoot|h[1-6]|section|article|header|footer|blockquote|hr|center|dl|dt|dd|pre)$/i;
@@ -50,30 +50,73 @@ function flatten(text: string): string {
 
 /** Text between tags: entities decoded, HTML's own line breaks are just spaces. */
 function inlineText(raw: string): string {
-  return flatten(decodeEntities(raw.replace(/<[^>]*$/, "")).replace(/[\r\n]+/g, " "));
+  return flatten(decodeEntities(raw).replace(/[\r\n]+/g, " "));
 }
+
+const TAG_NAME = /^[a-zA-Z][a-zA-Z0-9-]*/;
 
 /**
  * The HTML as text: one block per line, `[link: URL]` after a link's
  * words and `[image: ALT URL]` for each picture.
+ *
+ * One forward scan, so hostile HTML (thousands of unclosed "<script" or
+ * "<!--") costs linear time: every search starts where the last one
+ * ended, and anything left unclosed drops the rest of the email.
  */
 export function htmlToText(html: string): string {
-  const withoutComments = html.replace(/<!--[\s\S]*?-->/g, " ").replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, " ")
-    // <!DOCTYPE ...> and <?xml ...?> declarations.
-    .replace(/<[!?][^>]*>/g, " ");
-  const withoutHidden = withoutComments.replace(DROPPED_ELEMENTS, " ");
-
+  const lower = html.toLowerCase();
   const out: string[] = [];
   const pendingLinks: string[] = [];
-  const tagPattern = /<\/?([a-zA-Z][a-zA-Z0-9-]*)\b[^>]*>/g;
-  let last = 0;
-  for (const match of withoutHidden.matchAll(tagPattern)) {
-    out.push(inlineText(withoutHidden.slice(last, match.index)));
-    last = match.index + match[0].length;
-    const tag = match[0];
-    const name = match[1]!.toLowerCase();
-    const closing = tag.startsWith("</");
+  // `i`: where the current run of text started; `from`: where to look for the next "<".
+  let i = 0;
+  let from = 0;
+  while (i < html.length) {
+    const lt = html.indexOf("<", from);
+    if (lt < 0) {
+      out.push(inlineText(html.slice(i)));
+      break;
+    }
+    const next = html[lt + 1];
+    const closing = next === "/";
+    const isMarkup = next === "!" || next === "?";
+    const nameMatch = isMarkup ? null : TAG_NAME.exec(html.slice(lt + (closing ? 2 : 1), lt + (closing ? 2 : 1) + 64));
+    if (!isMarkup && !nameMatch) {
+      // A "<" that doesn't start a tag is just text: keep scanning the same run.
+      from = lt + 1;
+      continue;
+    }
+    out.push(inlineText(html.slice(i, lt)));
 
+    // Comments, CDATA, <!DOCTYPE ...> and <?xml ...?>: skipped whole.
+    const skipTo = (closer: string, from: number) => {
+      const at = html.indexOf(closer, from);
+      return at < 0 ? html.length : at + closer.length;
+    };
+    if (html.startsWith("<!--", lt)) {
+      i = from = skipTo("-->", lt + 4);
+      continue;
+    }
+    if (html.startsWith("<![CDATA[", lt)) {
+      i = from = skipTo("]]>", lt + 9);
+      continue;
+    }
+    if (isMarkup || !nameMatch) {
+      i = from = skipTo(">", lt + 2);
+      continue;
+    }
+
+    const tagEnd = html.indexOf(">", lt);
+    if (tagEnd < 0) break; // an unclosed tag: drop the rest
+    const tag = html.slice(lt, tagEnd + 1);
+    const name = nameMatch[0].toLowerCase();
+    i = from = tagEnd + 1;
+
+    if (!closing && DROPPED_ELEMENTS.has(name)) {
+      const close = lower.indexOf(`</${name}`, i);
+      i = from = close < 0 ? html.length : skipTo(">", close);
+      out.push(" ");
+      continue;
+    }
     if (name === "a" && !closing) {
       const href = usableLink(attribute(tag, "href"));
       if (href) pendingLinks.push(href);
@@ -92,7 +135,6 @@ export function htmlToText(html: string): string {
       out.push("\n");
     }
   }
-  out.push(inlineText(withoutHidden.slice(last)));
 
   return tidy(out.join(""));
 }

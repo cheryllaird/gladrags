@@ -26,6 +26,20 @@ describe("htmlToText", () => {
     expect(htmlToText("<p>Fig &amp; Cedar&nbsp;&pound;8‮</p>")).toBe("Fig & Cedar £8");
   });
 
+  it("runs in linear time on hostile HTML (unclosed scripts, comments and tags)", () => {
+    for (const unit of ["<script>", "<!--", "<a href='x'", "<<<", "<style", "<p "]) {
+      const hostile = unit.repeat(200_000 / unit.length);
+      const started = performance.now();
+      htmlToText(hostile);
+      expect(performance.now() - started).toBeLessThan(500);
+    }
+  });
+
+  it("inline tags don't split words; an unclosed script drops the rest", () => {
+    expect(htmlToText("<p>Fig<span>s</span> and <b>dates</b></p>")).toBe("Figs and dates");
+    expect(htmlToText("<p>Shirt</p><script>var x = 1; <p>hidden")).toBe("Shirt");
+  });
+
   it("copes with broken HTML", () => {
     expect(htmlToText("<p>Shirt<td>£10<a href='https://shop.example/p'>see")).toBe("Shirt | £10see");
   });
