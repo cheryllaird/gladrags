@@ -2,7 +2,7 @@
 
 Maintained by the orchestrator (main Claude Code session). Source of truth for scope: `docs/SPEC.md`.
 
-**Current status:** Milestone 5: Cheryl sent her first notes (2026-10-30). Spec updated with her decisions; round 1 of fixes in progress (see Milestone 5). Gemini is still on the free tier.
+**Current status:** Milestone 5 round 1: all builder branches (C1–C6) merged into `claude/cheryl-test-feedback-5xw3vb` (a13e15b; 4,129 unit tests, lint, typecheck and build green). Journey tests (C7) and security re-check (C8) running; then a preview for Cheryl. Migration 7 must be applied in Supabase first. Gemini is still on the free tier.
 
 Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 
@@ -81,8 +81,8 @@ Integration branch for this round: `claude/cheryl-test-feedback-5xw3vb` (started
 | C4 | Gaps in candidates/ranking/validation; "include shop items"; shop search (Gemini + Google Search, domain filter, page check via link fetcher); shop search cap | outfit-engine | `m5/outfit-gaps` | ☑ merged. Review: approved with 9 minor → 7 fixed (rest to C8 / live Gemini fixtures). QA: 123 tests, 2 medium + 1 low, fixed. e2e 84/84 on fixes. | C1 |
 | C5 | Batch photo and link add, Review N new items list, get-started checklist, forwarding address + favourite shops in settings, wardrobe shows originals | wardrobe-ui | `m5/wardrobe-ui` | ☑ merged. Review: changes needed (drafts outliving signed URLs) + 10 minor → fixed, re-approved at c5e8647. QA: ~150 tests, 1 medium + 5 low, fixed. | C1 (mocks) |
 | C6 | Gap placeholders in collages, cut-out on first collage use + upload, "Include items from my shops", "Find in my shops" product cards, add bought product by link | outfit-ui | `m5/outfit-ui` | ☑ merged. Review: approved with 7 minor → fixed. QA: 112 tests, 2 low, fixed. e2e 289/289 (QA run). | C1 (mocks) |
-| C7 | Journey tests updated (add without cut-out, batch add, email import with fixture, gaps from one item, shop search with mocked provider) | qa | `m5/journeys` | ☐ | C2–C6 |
-| C8 | Security re-check: inbound webhook, email content handling, shop search links, privacy note | security | | ☐ | C3, C4 |
+| C7 | Journey tests updated (add without cut-out, batch add, email import with fixture, gaps from one item, shop search with mocked provider) | qa | `m5/journeys` | ◐ running on a13e15b | C2–C6 |
+| C8 | Security re-check: inbound webhook, email content handling, shop search links, privacy note | security | | ◐ running on a13e15b | C3, C4 |
 | C9 | Preview deploy, checkpoint report to Cheryl | orchestrator | | ☐ | C7, C8 |
 
 Decisions made by the orchestrator within Cheryl's choices (tell her at the checkpoint):
