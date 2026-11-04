@@ -272,12 +272,23 @@ export async function runOutfitPipeline(input: PipelineInput, deps: PipelineDeps
     onCall: (call) => deps.recordAiCost("ranking_final", call),
     provider: ranking.name,
   });
-  // Complete outfits first (a stable sort keeps the model's order otherwise).
-  const outfits = picked
-    .map((o): RankedOutfit => ({ itemIds: o.itemIds, gaps: o.gaps ?? [], name: o.name, reason: o.reason }))
-    .sort((a, b) => a.gaps.length - b.gaps.length)
-    .slice(0, input.count);
-  return { status: "ok", outfits, missingCategories };
+  const ranked = picked.map((o): RankedOutfit => ({ itemIds: o.itemIds, gaps: o.gaps ?? [], name: o.name, reason: o.reason }));
+  return { status: "ok", outfits: completeFirst(ranked, input.count, includeShopItems), missingCategories };
+}
+
+/**
+ * The final order: complete outfits first (a stable sort keeps the
+ * model's order otherwise), cut to `count`. With "Include items from my
+ * shops" on, the cut never drops every outfit with a gap: the model's best
+ * one takes the last place, so the shop item the user asked for is shown.
+ */
+export function completeFirst(ranked: readonly RankedOutfit[], count: number, includeShopItems: boolean): RankedOutfit[] {
+  const outfits = [...ranked].sort((a, b) => a.gaps.length - b.gaps.length).slice(0, count);
+  if (includeShopItems && outfits.length > 0 && !outfits.some((o) => o.gaps.length > 0)) {
+    const bestWithGap = ranked.find((o) => o.gaps.length > 0);
+    if (bestWithGap) return [...outfits.slice(0, count - 1), bestWithGap];
+  }
+  return outfits;
 }
 
 /** The contract's schema for one outfit in each pass's reply. */

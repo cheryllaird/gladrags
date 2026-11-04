@@ -19,8 +19,9 @@ import {
 import { entry, wardrobe } from "@/test/outfit-helpers";
 import { seededRandom } from "./candidates";
 import { MockRankingProvider } from "./mock-ranking";
-import { runOutfitPipeline, type PipelineDeps, type PipelineInput } from "./pipeline";
+import { completeFirst, runOutfitPipeline, type PipelineDeps, type PipelineInput } from "./pipeline";
 import { PlaceholderThumbnailSource } from "./thumbnails";
+import type { RankedOutfit } from "./types";
 
 const CASUAL: StyleChoice = { kind: "preset", presetId: "casual" };
 const WORK: StyleChoice = { kind: "preset", presetId: "work" };
@@ -164,5 +165,24 @@ describe("thumbnails", () => {
     const withWaiting = finals[0]!.shortlist.find((o) => o.itemIds.includes(waiting.id))!;
     expect(withWaiting.thumbnails.map((t) => t.itemId)).not.toContain(waiting.id);
     expect(withWaiting.thumbnails.length).toBe(withWaiting.itemIds.length - 1);
+  });
+});
+
+describe("completeFirst (pure)", () => {
+  const own = (name: string): RankedOutfit => ({ itemIds: [W.top1], gaps: [], name, reason: "r" });
+  const gap = (name: string): RankedOutfit => ({ itemIds: [W.top1], gaps: [{ ...TRAINERS_GAP, colours: [...TRAINERS_GAP.colours] }], name, reason: "r" });
+
+  it("puts complete outfits first, keeping the model's order within each group", () => {
+    expect(completeFirst([gap("G1"), own("A"), gap("G2"), own("B")], 4, false).map((o) => o.name)).toEqual(["A", "B", "G1", "G2"]);
+  });
+
+  it("without shop items, the cut may drop every gap outfit", () => {
+    expect(completeFirst([gap("G1"), own("A"), own("B"), own("C")], 3, false).map((o) => o.name)).toEqual(["A", "B", "C"]);
+  });
+
+  it("with shop items, the model's best gap outfit keeps the last place", () => {
+    expect(completeFirst([own("A"), gap("G1"), own("B"), own("C"), gap("G2")], 3, true).map((o) => o.name)).toEqual(["A", "B", "G1"]);
+    expect(completeFirst([own("A"), own("B")], 3, true).map((o) => o.name)).toEqual(["A", "B"]);
+    expect(completeFirst([gap("G1")], 1, true).map((o) => o.name)).toEqual(["G1"]);
   });
 });
