@@ -14,6 +14,10 @@ import { fakeBackgroundRemoverForFile } from "./helpers";
 // The spec's five core journeys (docs/SPEC.md, "Users and core journeys"),
 // end to end across the integrated app: each starts at the front door and
 // moves through the real navigation, on a 390 px phone against mock mode.
+// The milestone 5 versions (get-started checklist, batch adds, order
+// emails, gaps, shop search, collage-time cut-outs) are in
+// journeys-m5.spec.ts; this file keeps the single-item journeys, the
+// missing-category notice and account deletion.
 //
 // No route is intercepted except where noted, to force a state the shared
 // mock store can't reach safely (missing category, account deletion).

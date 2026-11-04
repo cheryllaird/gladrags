@@ -1163,11 +1163,13 @@ async function watchItem(
 }
 
 test.describe("cut-out queue in the browser", () => {
-  test("one item at a time across collages: the blazer isn't downloaded until the coat's upload finishes; each once", async ({
+  test("one item at a time across collages: the second item isn't downloaded until the first one's upload finishes; each once", async ({
     page,
   }) => {
     await optInToCutouts(page);
     const { coat, blazer } = await answerWithUncutItems(page);
+    // Collages draw side by side, so either item may be first in the queue.
+    // Both uploads are held; whichever starts first must hold up the other.
     let release!: () => void;
     const hold = new Promise<void>((r) => (release = r));
     const coatSeen = await watchItem(
@@ -1180,23 +1182,28 @@ test.describe("cut-out queue in the browser", () => {
       page,
       blazer.id,
       blazer.originalUrl as string,
+      { hold },
     );
 
     await askForCasual(page);
     await expect(cards(page)).toHaveCount(3);
     for (const i of [0, 1, 2])
       await expectCollageReadyAndExportable(cards(page).nth(i));
-    await expect.poll(() => coatSeen.uploads).toBe(1);
+    await expect.poll(() => coatSeen.uploads + blazerSeen.uploads).toBe(1);
     await page.waitForTimeout(500);
-    // The first job (the coat) holds the line: nothing else has started.
-    expect(blazerSeen.originalFetches).toBe(0);
-    expect(blazerSeen.uploads).toBe(0);
+    // The first job holds the line: nothing else has started.
+    const [first, second] =
+      coatSeen.uploads === 1 ? [coatSeen, blazerSeen] : [blazerSeen, coatSeen];
+    expect(first.originalFetches).toBe(1);
+    expect(second.originalFetches).toBe(0);
+    expect(second.uploads).toBe(0);
     release();
-    await expect.poll(() => blazerSeen.uploads).toBe(1);
+    await expect.poll(() => second.uploads).toBe(1);
     await page.waitForTimeout(300);
     expect(coatSeen.originalFetches).toBe(1);
     expect(coatSeen.uploads).toBe(1);
     expect(blazerSeen.originalFetches).toBe(1);
+    expect(blazerSeen.uploads).toBe(1);
     // No error notices from failed uploads.
     await expect(page.getByTestId("api-error")).toHaveCount(0);
   });
