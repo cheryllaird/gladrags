@@ -19,10 +19,11 @@
  * The model only suggests links. Code decides which are kept, and every
  * product's title, price and image come from the shop's own page.
  *
- * If AI pauses before the model call, nothing was searched, so the count
- * is given back (as the outfit routes do). A search whose model calls fail
- * twice is `ai_failed` and stays counted: those calls cost money, and the
- * daily cap is what bounds that.
+ * The count is given back only if no model call was made (AI paused before
+ * the first one). Once a call has been made it stays counted, whatever
+ * happens next: a search whose model calls fail twice is `ai_failed`, and
+ * the daily cap is what bounds the cost. With no favourite shops the
+ * search is refused (`bad_request`) before anything is counted.
  */
 import {
   SHOPS_BY_ID,
@@ -39,7 +40,6 @@ import {
 import type { ShopSearchProvider } from "@/lib/ai/types";
 import { callWithValidation } from "@/lib/ai/validate";
 import { ApiException, notFound } from "@/lib/api/errors";
-import { isAiPausedError } from "@/lib/usage/errors";
 import type { UsageGuard, UsageReservation } from "@/lib/usage/guard";
 import { SHOP_PAGE_BUDGET_MS, SHOP_PAGE_CHECKS_PER_GAP, SHOP_PAGE_CONCURRENCY } from "./config";
 import type { OutfitRepository } from "./repository";
@@ -132,12 +132,20 @@ export class ShopSearchService {
     }
     await usage.assertCanStart(userId, "shop_search");
     const favouriteShopIds = await repository.getFavouriteShopIds(userId);
+    // Every link would be dropped, so don't pay for a search. (The database
+    // requires at least one shop; this guards a missing or emptied list.)
+    if (favouriteShopIds.length === 0) {
+      throw new ApiException("bad_request", "Choose your shops first: pick at least one in Settings.");
+    }
     const shops = favouriteShopIds.map((id) => SHOPS_BY_ID[id]);
     // Made before counting, so a missing API key isn't counted as a search.
     const provider = this.deps.provider();
 
     const counted: UsageReservation = await usage.reserveAction(userId, "shop_search");
     const gapCategories = new Set(outfit.gaps.map((g) => g.category));
+    const meter = usage.meterAiCalls(userId, "shop_grounding", provider.name);
+    // Whether a model call was made (and so may be billed), even one that failed.
+    let modelCalled = false;
     let result;
     try {
       result = await callWithValidation(
@@ -154,14 +162,19 @@ export class ShopSearchService {
             reply.gaps.length > 0 && !reply.gaps.some((g) => gapCategories.has(g.category))
               ? `Results only for gaps the outfit doesn't have: ${reply.gaps.map((g) => g.category).join(", ")}`
               : null,
-          ...usage.meterAiCalls(userId, "shop_grounding", provider.name),
+          beforeCall: meter.beforeCall,
+          onCall: async (call) => {
+            modelCalled = true;
+            await meter.onCall(call);
+          },
           provider: provider.name,
         },
       );
     } catch (error) {
-      // AI paused before the call (another request took the month to the
-      // cap): nothing was searched, so give today's count back.
-      if (isAiPausedError(error)) await counted.cancel().catch(() => {});
+      // AI paused before any model call (another request took the month to
+      // the cap): nothing was searched or paid for, so give today's count
+      // back. Once a call has been made it stays counted.
+      if (!modelCalled) await counted.cancel().catch(() => {});
       throw error;
     }
     if (!result.ok) {
@@ -171,7 +184,12 @@ export class ShopSearchService {
 
     const products = await this.checkPages(candidatePages(result.data, gapCategories, favouriteShopIds));
     const searchedAt = this.now().toISOString();
-    const gaps: OutfitGap[] = outfit.gaps.map((gap) => ({
+    // Re-read just before writing: the user may have picked a product (on an
+    // earlier search's results) while this one ran. Only the results and the
+    // search time change; each gap keeps its current pick.
+    const current = await repository.getOutfit(userId, outfit.id);
+    if (!current) throw notFound("That outfit");
+    const gaps: OutfitGap[] = current.gaps.map((gap) => ({
       ...gap,
       shopResults: products.get(gap.category) ?? [],
       searchedAt,

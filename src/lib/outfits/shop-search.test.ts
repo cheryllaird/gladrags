@@ -212,6 +212,55 @@ describe("search", () => {
   });
 });
 
+describe("search: races and paid calls", () => {
+  it("keeps a product the user picked while the search was running", async () => {
+    const outfit = gapOutfit();
+    const picked: ShopProduct = { shopId: "next", title: "Picked meanwhile", url: "https://www.next.co.uk/meanwhile", priceText: "£25", imageUrl: null };
+    const check = pages.check.bind(pages);
+    let done = false;
+    pages.check = async (candidate, timeoutMs) => {
+      if (!done) {
+        done = true;
+        const now = mock.getOutfit(outfit.id)!;
+        mock.setOutfitGaps(outfit.id, now.gaps.map((g) => (g.category === "shoes" ? { ...g, shopProduct: picked } : g)));
+      }
+      return check(candidate, timeoutMs);
+    };
+    try {
+      const found = await service().search(USER, outfit.id);
+      expect(found.gaps[0]!.shopProduct).toEqual(picked);
+      expect(found.gaps[0]!.shopResults).toHaveLength(3);
+      expect(mock.getOutfit(outfit.id)!.gaps[0]!.shopProduct).toEqual(picked);
+    } finally {
+      pages.check = check;
+    }
+  });
+
+  it("keeps the search counted when AI pauses after a paid call (before the retry)", async () => {
+    replies = [shopSearchReply("prose")];
+    const paying: GeminiContentGenerator = {
+      async generateContent() {
+        calls++;
+        // Another request takes the month to the cap while this call runs.
+        await store.record({ userId: null, kind: "tagging", costPence: MONTHLY_AI_SPEND_CAP_PENCE, provider: "gemini" });
+        return { text: shopSearchReply("prose") };
+      },
+    };
+    const svc = new ShopSearchService({
+      repository: new MockOutfitRepository(),
+      usage: new UsageGuard(store, undefined, () => NOW),
+      provider: () => new GeminiShopSearchProvider(paying, "test-model"),
+      pages,
+      now: () => NOW,
+    });
+    const error = await svc.search(USER, gapOutfit().id).catch((e: unknown) => e);
+    expect((error as CapReachedError).cap).toBe("monthly_ai_spend");
+    expect(calls).toBe(1);
+    expect(count("shop_search")).toBe(1);
+    expect(count("shop_grounding")).toBe(1);
+  });
+});
+
 describe("candidatePages (pure)", () => {
   it("keeps favourite-shop https links for the outfit's gaps only, without repeats, at most 5 per gap", () => {
     const many = Array.from({ length: 8 }, (_, n) => ({ url: `https://www.next.co.uk/p/${n}`, title: null }));

@@ -243,11 +243,13 @@ describe("favourite shops, caps, AI pause, failures", () => {
     if (!(found instanceof Error)) for (const g of (found as Outfit).gaps) expect(g.shopResults).toEqual([]);
   });
 
-  // BUG (QA, low): with no favourite shops every link is dropped, yet the
-  // grounded call (the dearest one, 3p) is still made and the search counted.
-  it.fails("BUG: with no favourite shops, the model isn't called and nothing is counted", async () => {
+  // Was BUG (QA, low, it.fails): the grounded call was made and counted
+  // with no shops to keep links from. Fixed: bad_request before anything.
+  it("with no favourite shops, the model isn't called and nothing is counted", async () => {
     mock.setFavouriteShops([] as ShopId[]);
-    await service().search(USER, gapOutfit().id).catch(() => undefined);
+    const error = (await service().search(USER, gapOutfit().id).catch((e: unknown) => e)) as ApiException;
+    expect(error.code).toBe("bad_request");
+    expect(error.message).toContain("Choose your shops first");
     expect(calls).toBe(0);
     expect(count("shop_search")).toBe(0);
   });
