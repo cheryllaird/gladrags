@@ -117,10 +117,16 @@ export function ReviewScreen({ userId }: { userId: string | null }) {
     setActionError(null);
     setNotice(null);
     setConfirmingAll(true);
-    try {
-      await markItemsReviewed(items.map((item) => item.id));
-      const confirmed = new Set(items.map((item) => item.id));
+    const dropConfirmed = (ids: readonly string[]) => {
+      const confirmed = new Set(ids);
       setState((s) => (s.kind === "ready" ? { ...s, items: s.items.filter((item) => !confirmed.has(item.id)) } : s));
+    };
+    try {
+      // Each chunk the server confirms leaves the list at once, so a later failure only leaves the rest.
+      await markItemsReviewed(
+        items.map((item) => item.id),
+        dropConfirmed,
+      );
       setNotice(items.length === 1 ? "Confirmed 1 item." : `Confirmed all ${items.length} items.`);
       window.scrollTo({ top: 0 });
     } catch (error) {

@@ -122,9 +122,9 @@ describe("review list: Confirm all", () => {
     expect(screen.getByRole("button", { name: /Confirm all/ })).toBeEnabled();
   });
 
-  // Low, reported: the first 100 were confirmed on the server, but the list
-  // (and its count) still shows all 150 until it's reloaded.
-  it.fails("after a part-way failure, the list drops the items the server already confirmed", async () => {
+  // Fixed after review: the first 100 were confirmed on the server, but the
+  // list (and its count) used to show all 150 until it was reloaded.
+  it("after a part-way failure, the list drops the items the server already confirmed", async () => {
     const user = userEvent.setup();
     stubFetch(manyItems(150), { failReviewedChunk: 2 });
     render(<ReviewScreen userId={USER} />);

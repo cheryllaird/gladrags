@@ -70,10 +70,13 @@ describe("ReviewScreen", () => {
 
   it("'Confirm all' sends every listed item at once, then says all caught up", async () => {
     const user = userEvent.setup();
-    vi.mocked(api.markItemsReviewed).mockResolvedValue(3);
+    vi.mocked(api.markItemsReviewed).mockImplementation(async (ids, onChunkDone) => {
+      onChunkDone?.([...ids]);
+      return ids.length;
+    });
     render(<ReviewScreen userId={USER} />);
     await user.click(await screen.findByRole("button", { name: "Confirm all 3" }));
-    expect(api.markItemsReviewed).toHaveBeenCalledWith([A.id, B.id, EMAIL.id]);
+    expect(api.markItemsReviewed).toHaveBeenCalledWith([A.id, B.id, EMAIL.id], expect.any(Function));
     expect(await screen.findByText("All caught up")).toBeInTheDocument();
     expect(screen.getByText("Confirmed all 3 items.")).toBeInTheDocument();
   });

@@ -199,15 +199,22 @@ export async function markItemReviewed(id: string): Promise<WardrobeItem> {
 
 /**
  * POST /api/items/reviewed: "Confirm all". Sent in chunks of
- * MAX_ITEMS_PER_REVIEW; returns how many the server marked.
+ * MAX_ITEMS_PER_REVIEW; returns how many the server marked. `onChunkDone`
+ * hears each chunk the server confirmed, so if a later chunk fails the
+ * screen can still drop the ones that went through.
  */
-export async function markItemsReviewed(itemIds: readonly string[]): Promise<number> {
+export async function markItemsReviewed(
+  itemIds: readonly string[],
+  onChunkDone?: (confirmedIds: string[]) => void,
+): Promise<number> {
   const unique = [...new Set(itemIds)];
   let updated = 0;
   for (let start = 0; start < unique.length; start += MAX_ITEMS_PER_REVIEW) {
-    const body = MarkItemsReviewedRequestSchema.parse({ itemIds: unique.slice(start, start + MAX_ITEMS_PER_REVIEW) });
+    const chunk = unique.slice(start, start + MAX_ITEMS_PER_REVIEW);
+    const body = MarkItemsReviewedRequestSchema.parse({ itemIds: chunk });
     const result = await apiRequest(MarkItemsReviewedResponseSchema, "/api/items/reviewed", jsonInit("POST", body));
     updated += result.updated;
+    onChunkDone?.(chunk);
   }
   return updated;
 }
