@@ -29,7 +29,7 @@ export function batchSummaryCopy(kind: BatchKind, states: readonly BatchEntrySta
     stopped = copy.kind;
     title = copy.title;
     const added = s.saved === 1 ? "1 was added" : `${s.saved} were added`;
-    lines.push(`${added} before it stopped; the other ${plural(s.notAdded, kind)} weren't.`);
+    lines.push(`${added} before it stopped; the other ${plural(s.notAdded, kind)} ${s.notAdded === 1 ? "wasn't" : "weren't"}.`);
     lines.push(copy.message);
   } else {
     title = s.saved === s.total ? `All ${plural(s.total, kind)} added` : "Done";

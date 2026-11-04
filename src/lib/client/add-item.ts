@@ -101,7 +101,12 @@ export function linkFromShare(params: { url?: string | null; text?: string | nul
 export const MAX_BATCH_SIZE = 40;
 
 const LINK_PATTERN = /https?:\/\/[^\s<>"'`]+/gi;
-const TRAILING_PUNCTUATION = /[.,;:!?'"*>\]}]+$/;
+/**
+ * Punctuation a sentence (or a phone's autocorrect) leaves after a link:
+ * ASCII, curly quotes, guillemets, an ellipsis character, and full-width
+ * and CJK sentence marks.
+ */
+const TRAILING_PUNCTUATION = /[.,;:!?'"*>\]}\u2018\u2019\u201A\u201B\u201C\u201D\u201E\u201F\u2026\u00AB\u00BB\u2039\u203A\u3001\u3002\uFF01\uFF0C\uFF1A\uFF1B\uFF1F]+$/;
 
 /** Drop punctuation a sentence put after a link, keeping a ")" that closes a "(" inside it. */
 function trimLink(raw: string): string {
@@ -119,24 +124,56 @@ function trimLink(raw: string): string {
 }
 
 /**
- * Every http(s) link in pasted text (one per line, or a block of text with
- * links in it), in order, without duplicates. Two links count as the same
- * when they're the same address once parsed (case of the host, a missing
- * "/" path). At most MAX_BATCH_SIZE; `extra` says how many more there were.
+ * Cut a link at a non-ASCII character stuck to its host ("https://a.example“and"):
+ * shop hosts are ASCII, so it's the start of the next word, not part of the link.
+ */
+function cutAtNonAsciiHost(link: string): string {
+  const hostStart = link.indexOf("://") + 3;
+  const hostEnd = link.slice(hostStart).search(/[/?#]/);
+  const host = hostEnd === -1 ? link.slice(hostStart) : link.slice(hostStart, hostStart + hostEnd);
+  // eslint-disable-next-line no-control-regex -- matching anything outside ASCII
+  const bad = host.search(/[^\x00-\x7F]/);
+  return bad === -1 ? link : link.slice(0, hostStart + bad);
+}
+
+/** Query parameters that only track where a link was shared from. */
+const TRACKING_PARAM = /^(utm_.*|fbclid|gclid|gbraid|wbraid|msclkid|mc_eid|mc_cid)$/i;
+
+/**
+ * What makes two links the same product page: the parsed address without
+ * its #fragment or tracking parameters. Only for spotting duplicates; the
+ * link itself is sent as pasted.
+ */
+export function linkDedupeKey(link: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(link);
+  } catch {
+    return null;
+  }
+  url.hash = "";
+  for (const name of [...url.searchParams.keys()]) if (TRACKING_PARAM.test(name)) url.searchParams.delete(name);
+  return url.href;
+}
+
+/**
+ * Every http(s) link in pasted text (one per line, a comma-separated list,
+ * or a block of text with links in it), in order, without duplicates. Two
+ * links count as the same when they're the same address once parsed (case
+ * of the host, a missing "/" path), ignoring any #fragment and tracking
+ * parameters (utm_*, fbclid, gclid…); the first one pasted is kept as it
+ * was. At most MAX_BATCH_SIZE; `extra` says how many more there were.
  */
 export function extractLinks(text: string): { links: string[]; extra: number } {
   const seen = new Set<string>();
   const links: string[] = [];
-  for (const match of text.matchAll(LINK_PATTERN)) {
-    const parsed = SourceUrlSchema.safeParse(trimLink(match[0]));
+  // "a,https://b": a comma straight before a link separates two links.
+  const separated = text.replace(/,(?=https?:\/\/)/gi, " ");
+  for (const match of separated.matchAll(LINK_PATTERN)) {
+    const parsed = SourceUrlSchema.safeParse(trimLink(cutAtNonAsciiHost(match[0])));
     if (!parsed.success) continue;
-    let key: string;
-    try {
-      key = new URL(parsed.data).href;
-    } catch {
-      continue;
-    }
-    if (seen.has(key)) continue;
+    const key = linkDedupeKey(parsed.data);
+    if (key === null || seen.has(key)) continue;
     seen.add(key);
     links.push(parsed.data);
   }

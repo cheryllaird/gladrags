@@ -56,3 +56,9 @@ describe("batchEntryLabel", () => {
     expect(batchEntryLabel(notAdded)).toBe("Not added");
   });
 });
+
+describe("batchSummaryCopy, one left over", () => {
+  it("says 'the other 1 photo wasn't'", () => {
+    expect(batchSummaryCopy("photo", [saved, notAdded], cap).lines[0]).toBe("1 was added before it stopped; the other 1 photo wasn't.");
+  });
+});

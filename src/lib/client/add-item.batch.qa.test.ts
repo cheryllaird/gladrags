@@ -89,8 +89,8 @@ describe("extractLinks: messy pasted text", () => {
     ]);
   });
 
-  // Low, reported: a comma-separated list with no spaces ("a,b") reads as one link.
-  it.fails("splits links joined by a comma with no space", () => {
+  // Fixed after review: a comma-separated list with no spaces ("a,b") used to read as one link.
+  it("splits links joined by a comma with no space", () => {
     expect(extractLinks("https://a.example/1,https://b.example/2").links).toEqual(["https://a.example/1", "https://b.example/2"]);
   });
 
@@ -103,10 +103,13 @@ describe("extractLinks: messy pasted text", () => {
     expect(extractLinks(`${link}\n${link}\n${link}.`).links).toEqual([link]);
   });
 
-  it("keeps links that differ only in tracking parameters as separate links (current behaviour)", () => {
-    // Recorded, not endorsed: the same product pasted from an email and from a
-    // browser runs twice and adds two items. Reported to the orchestrator.
-    expect(extractLinks("https://shop.example/p/1\nhttps://shop.example/p/1?utm_source=email").links).toHaveLength(2);
+  it("treats links that differ only in tracking parameters or a #fragment as one, keeping the first as pasted", () => {
+    // Fixed after review: the same product pasted from an email and from a browser used to run twice.
+    expect(
+      extractLinks("https://shop.example/p/1\nhttps://shop.example/p/1?utm_source=email&fbclid=x#reviews\nhttps://shop.example/p/1?gclid=y").links,
+    ).toEqual(["https://shop.example/p/1"]);
+    // Other parameters still make a different page.
+    expect(extractLinks("https://shop.example/p/1?size=10\nhttps://shop.example/p/1?size=12").links).toHaveLength(2);
   });
 
   it("never returns a non-http(s) scheme", () => {
@@ -158,8 +161,8 @@ describe("extractLinks: messy pasted text", () => {
   });
 
   // Phones autocorrect quotes to curly ones and Notes adds an ellipsis
-  // character; these end up glued to the link. Known bug, reported.
-  it.fails("drops curly quotes and an ellipsis character after a link", () => {
+  // character; these end up glued to the link. Fixed after review.
+  it("drops curly quotes and an ellipsis character after a link", () => {
     expect(extractLinks("“https://a.example/p” and https://b.example/q… and https://c.example/r’").links).toEqual([
       "https://a.example/p",
       "https://b.example/q",
@@ -233,8 +236,8 @@ describe("photo batches", () => {
     expect(summariseBatch(states)).toMatchObject({ saved: 1, notAdded: 1 });
   });
 
-  // Copy bug, reported: "the other 1 photo weren't."
-  it.fails("says 'wasn't' when one photo wasn't added", async () => {
+  // Copy bug, fixed after review: it used to say "the other 1 photo weren't."
+  it("says 'wasn't' when one photo wasn't added", async () => {
     const { states, stoppedBy } = await addPhotosForReview([photo("a.jpg"), photo("cap.jpg")], () => {}, deps());
     expect(batchSummaryCopy("photo", states, stoppedBy).lines[0]).not.toMatch(/1 photo weren't/);
   });

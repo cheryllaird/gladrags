@@ -291,3 +291,13 @@ describe("linkFromShare", () => {
     expect(linkFromShare({ url: "", text: "hello" })).toBe("");
   });
 });
+
+describe("extractLinks after review", () => {
+  it("cuts off non-ASCII characters stuck to the host", () => {
+    expect(extractLinks("https://a.example“and https://b.exampleé/p").links).toEqual(["https://a.example", "https://b.example"]);
+  });
+
+  it("strips guillemets and full-width punctuation", () => {
+    expect(extractLinks("«https://a.example/p» https://b.example/q。").links).toEqual(["https://a.example/p", "https://b.example/q"]);
+  });
+});
