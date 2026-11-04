@@ -230,7 +230,7 @@ The rule is one shared function, `checkComposition(ownedCategories, gapCategorie
 - `anchorItemId`: build every outfit around this item (optional)
 - `guidance`: e.g. "no heels" (optional, one line, up to 200 characters)
 - `count`: 3 to 5, default 4
-- `includeShopItems` **(M5)**: "Include items from my shops" (optional, default false). Outfits may then include **one** suggested shop item even where the wardrobe could fill the slot. **Until the outfit engine's milestone 5 branch (C4) merges, the live engine stores this flag on the request but ignores it**: outfits come back complete and without gaps. Mock mode already answers with gaps (section 1).
+- `includeShopItems` **(M5)**: "Include items from my shops" (optional, default false). Outfits may then include **one** suggested shop item even where the wardrobe could fill the slot. The live engine honours it (C4); refinements carry it over.
 
 ### Gaps (M5)
 A gap is a slot the wardrobe doesn't fill. The model describes the item that would complete the look:
@@ -343,11 +343,11 @@ The session cookie is `httpOnly` and `SameSite=Lax` (section 9), and on top of t
 ### Wardrobe items (built; owner: ingestion)
 | Route | Send | Get back |
 | --- | --- | --- |
-| `GET /api/items?category=&colour=&occasion=&q=&needsReview=` | All filters optional; `q` searches descriptions. **(M5)** `needsReview=true` lists only items still "to review" (the review list; its length is the banner's N); `false` only reviewed ones. *Stub for the filter.* | `{ items: WardrobeItem[] }` |
+| `GET /api/items?category=&colour=&occasion=&q=&needsReview=` | All filters optional; `q` searches descriptions. **(M5)** `needsReview=true` lists only items still "to review" (the review list; its length is the banner's N); `false` only reviewed ones. | `{ items: WardrobeItem[] }` |
 | `POST /api/items` | `{ source, sourceUrl, originalImageKey, cutoutImageKey (or null), tags, tagsEdited }`. `source` is `photo` or `link`. | `201 { item }`, never "to review" (the user just reviewed it) |
 | `GET /api/items/:id` | | `{ item }` |
-| `PATCH /api/items/:id` | `{ tags }` (all of them), **(M5)** or `{ reviewed: true }` to confirm the suggested tags as they are, or both. *Stub for `reviewed` alone.* | `{ item }`. Sending `tags` sets `tagsEdited: true`. **(M5)** Every PATCH clears `needsReview`. |
-| `POST /api/items/reviewed` | **(M5)** `{ itemIds }` (1 to 100): "Confirm all" in the review list. IDs that aren't the user's are ignored. *Stub (ingestion).* | `{ updated }`: how many were the user's |
+| `PATCH /api/items/:id` | `{ tags }` (all of them), **(M5)** or `{ reviewed: true }` to confirm the suggested tags as they are, or both. | `{ item }`. Sending `tags` sets `tagsEdited: true`. **(M5)** Every PATCH clears `needsReview`. |
+| `POST /api/items/reviewed` | **(M5)** `{ itemIds }` (1 to 100): "Confirm all" in the review list. IDs that aren't the user's are ignored. | `{ updated }`: how many were the user's |
 | `DELETE /api/items/:id` | | `{ deleted: true }`. Also deletes its images and the outfits that used it. |
 | `PUT /api/items/:id/cutout` | **(M5)** Multipart, file `cutout` (below). Built (ingestion). | `{ item }` with its `cutoutUrl` |
 | `PUT /api/items/:id/photo` | **(M5)** Multipart, file `original` (below). Built (ingestion). | `{ item }` with `needsPhoto: false` |
@@ -370,7 +370,7 @@ On the phone:
 | `original` | yes | JPEG, PNG or WebP; ≤ 1600 px; ≤ 1.5 MB |
 | `cutout` | no | **(M5) Deprecated.** PNG with transparency; ≤ 1600 px; ≤ 2.5 MB. Still accepted and checked as before, so the current add screen keeps working until the new one ships; then it's removed. |
 | `sourceUrl` | no | Set for the screenshot fallback from add-by-link, so the item keeps its link |
-| `saveForReview` | no | **(M5)** `true` for a batch add (several photos): save the item straight away as "to review" instead of returning a draft. Default `false`. *Stub outside mock mode.* |
+| `saveForReview` | no | **(M5)** `true` for a batch add (several photos): save the item straight away as "to review" instead of returning a draft. Default `false`. |
 
 On the server:
 1. Check the daily item cap, and count this item: tagging happens in this request.
@@ -420,7 +420,7 @@ The server:
 4. Claims the import in one database statement. **Each import can be tagged only once**, so replaying step 2 can't run Gemini again; if the claim fails, any stored cut-out is removed.
 5. Counts the item against the daily cap.
 6. Tags the original (or the cut-out), using the product title, brand and colour **it stored in step 1** as hints. It never uses data the phone sends back.
-7. Returns `{ draft }`, exactly as add-by-photo does, or for a batch add `{ status: "saved", item }` / `{ status: "draft", draft }`. *Stub outside mock mode for the batch add.*
+7. Returns `{ draft }`, exactly as add-by-photo does, or for a batch add `{ status: "saved", item }` / `{ status: "draft", draft }`.
 
 **Several links at once (M5).** The phone splits the pasted text into links and runs both steps for each, one after another, with `saveForReview: true`. Links that need the screenshot fallback are listed at the end.
 
@@ -436,8 +436,8 @@ Android can "share" a product page straight to the installed app; it opens `/add
 | `GET /api/outfits/:id` | | `{ outfit }` |
 | `PATCH /api/outfits/:id` | `{ status: "saved" }`, `"liked"`, `"suggested"`, or `{ status: "rejected", reason? }` | `{ outfit }`. Rejecting also records feedback. |
 | `POST /api/outfits/:id/refine` | `{ kind: "swap", itemId }` or `{ kind: "guidance", text }` | Same as `POST /api/outfits`. The new outfits carry `parentOutfitId` and the parent's `includeShopItems`. |
-| `POST /api/outfits/:id/shop-search` | **(M5)** Nothing. "Find in my shops". *Stub (outfit-engine).* | `{ outfit }` with each gap's `shopResults` filled |
-| `PUT /api/outfits/:id/gaps/:category` | **(M5)** `{ productUrl }` (one of that gap's `shopResults`), or `{ productUrl: null }` to clear. *Stub (outfit-engine).* | `{ outfit }` with the gap's `shopProduct` set |
+| `POST /api/outfits/:id/shop-search` | **(M5)** Nothing. "Find in my shops". | `{ outfit }` with each gap's `shopResults` filled |
+| `PUT /api/outfits/:id/gaps/:category` | **(M5)** `{ productUrl }` (one of that gap's `shopResults`), or `{ productUrl: null }` to clear. | `{ outfit }` with the gap's `shopProduct` set |
 
 An **Outfit** is `{ id, request, name, reason, itemIds, items (full WardrobeItems, same order), gaps, status, parentOutfitId, createdAt }`. The collage uses `items`, and **(M5)** draws each gap in its slot as a dashed placeholder with its description, or with the chosen product's name. Shop pictures appear on the product cards only, never on the collage (decision 6, section 11). `gaps` is empty for a complete outfit (and for every outfit saved before milestone 5).
 
@@ -547,9 +547,9 @@ Before starting work, every route that uses AI asks the usage guard whether it's
 
 **Checking and counting are one atomic step.** Counting an action (`reserveAction`) and reserving a Gemini call's cost (`reserveAiCost`, or `meterAiCalls` for `callWithValidation`) each go through one database function, `reserve_usage`. It locks (per user for the daily caps, and once for everyone for spend), counts, and records the row only if the cap allows it. Requests sent at the same moment queue behind each other, so a burst can't overshoot a daily cap or the monthly cap. `pnpm db:verify` proves this with 30 calls fired at once. The check is "reached, not approached": a call is allowed while the month is under £5.
 
-**How far past £5 the month can go.** Each call reserves its estimate first. When it returns, the real cost replaces the estimate. A real cost is only used if it's a number of zero or more, and it's recorded at most at **3 times the estimate** (a log line says so when that happens, which means the estimates need raising). So the month can end up over £5 by at most one call's estimate (0.5p), plus up to 2 × its estimate (1p at most) for each call that was already running when the cap was reached. At tester scale that's a few pence at worst.
+**How far past £5 the month can go.** Each call reserves its estimate first. When it returns, the real cost replaces the estimate. A real cost is only used if it's a number of zero or more, and it's recorded at most at **3 times the estimate** (a log line says so when that happens, which means the estimates need raising). So the month can end up over £5 by at most one call's estimate (3p, a shop search, since milestone 5), plus up to 2 × its estimate (6p at most) for each call that was already running when the cap was reached. At tester scale that's still well under £1 at worst.
 
-If AI pauses after a request has been counted but before its model call (another request reached the cap in between), the user gets nothing, so the count is given back: in add-by-photo, in outfit requests and refinements, and in add-by-link step 2, which also reopens the import so the link needn't be pasted again (it still expires an hour after step 1).
+If AI pauses after a request has been counted but before its model call (another request reached the cap in between), the user gets nothing, so the count is given back: in add-by-photo, in outfit requests and refinements and in shop searches (only if no model call was made yet; a pause between two paid calls keeps the count), and in add-by-link step 2, which also reopens the import so the link needn't be pasted again (it still expires an hour after step 1).
 
 In add-by-link step 2 the item is counted before the import is claimed. If the claim then fails (the link was already added, or a double tap lost the race), the count is given back.
 
