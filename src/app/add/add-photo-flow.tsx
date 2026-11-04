@@ -20,7 +20,15 @@ import { usePreviewUrl } from "@/components/wardrobe/add/use-preview-url";
 import { useBatch, type BatchState } from "@/components/wardrobe/add/use-batch";
 import { useRestorePendingAdd } from "@/components/wardrobe/add/use-restore-pending-add";
 import { addingBlockedBy, useUsage } from "@/components/wardrobe/add/use-usage";
-import { ADD_STAGE_LABELS, MAX_BATCH_SIZE, addByPhoto, addPhotosForReview, type AddResult, type AddStage } from "@/lib/client/add-item";
+import {
+  ADD_STAGE_LABELS,
+  MAX_BATCH_SIZE,
+  addByPhoto,
+  addPhotosForReview,
+  type AddResult,
+  type AddStage,
+  type BatchEntryState,
+} from "@/lib/client/add-item";
 import { ApiClientError } from "@/lib/client/api";
 
 const PHOTO_STEPS = (["preparing", "uploading"] as const).map((id) => ({ id, label: ADD_STAGE_LABELS[id] }));
@@ -45,7 +53,7 @@ export function AddPhotoFlow({ userId }: { userId: string | null }) {
   const [preview, setPreview] = usePreviewUrl();
   const { usage, refresh: refreshUsage } = useUsage();
   const blocked = addingBlockedBy(usage);
-  const { batch, run: runBatch, clear: clearBatch } = useBatch(userId);
+  const { batch, run: runBatch, setRow, clear: clearBatch } = useBatch(userId, "photo");
   // Shown after signing in again, if the session expired mid-add.
   const [restored, setRestored] = useState<"draft" | "photo_lost" | null>(null);
 
@@ -85,7 +93,7 @@ export function AddPhotoFlow({ userId }: { userId: string | null }) {
     await runBatch(
       chosen.map((_, i) => `Photo ${i + 1}`),
       files.length - chosen.length,
-      (onChange) => addPhotosForReview(chosen, onChange),
+      (onChange, signal) => addPhotosForReview(chosen, onChange, undefined, signal),
     );
     refreshUsage();
   }
@@ -133,7 +141,7 @@ export function AddPhotoFlow({ userId }: { userId: string | null }) {
 
         {step.kind === "processing" && <ProgressSteps steps={PHOTO_STEPS} current={step.stage} preview={preview} />}
 
-        {step.kind === "batch" && batch && <PhotoBatch batch={batch} onAddMore={backToChoose} />}
+        {step.kind === "batch" && batch && <PhotoBatch batch={batch} userId={userId} onRowChange={setRow} onAddMore={backToChoose} />}
 
         {step.kind === "review" && (
           <DraftReview
@@ -165,7 +173,17 @@ export function AddPhotoFlow({ userId }: { userId: string | null }) {
   );
 }
 
-function PhotoBatch({ batch, onAddMore }: { batch: BatchState; onAddMore: () => void }) {
+function PhotoBatch({
+  batch,
+  userId,
+  onRowChange,
+  onAddMore,
+}: {
+  batch: BatchState;
+  userId: string | null;
+  onRowChange: (index: number, state: BatchEntryState) => void;
+  onAddMore: () => void;
+}) {
   const reviewable = batch.rows.some((row) => row.state.kind === "saved" || row.state.kind === "draft");
   return (
     <>
@@ -179,6 +197,8 @@ function PhotoBatch({ batch, onAddMore }: { batch: BatchState; onAddMore: () => 
       )}
       <BatchProgress
         kind="photo"
+        userId={userId}
+        onRowChange={onRowChange}
         rows={batch.rows}
         running={batch.running}
         stoppedBy={batch.stoppedBy}

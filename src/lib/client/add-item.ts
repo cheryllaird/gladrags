@@ -221,36 +221,50 @@ export interface BatchOutcome {
   states: BatchEntryState[];
   /** The error that stopped the batch early, or null if every entry was tried. */
   stoppedBy: unknown;
+  /** True if `signal` aborted it (the user left the screen): the rest are "not added". */
+  aborted: boolean;
 }
 
 function fromBatchResponse(response: BatchAddResponse): BatchEntryState {
   return response.status === "saved" ? { kind: "saved", item: response.item } : { kind: "draft", draft: response.draft };
 }
 
-/** Run `processOne` for each input in turn, reporting every change; stop early on a stopsBatch error. */
+/**
+ * Run `processOne` for each input in turn, reporting every change; stop
+ * early on a stopsBatch error, or when `signal` aborts (checked before each
+ * entry, so the one in flight finishes).
+ */
 async function runBatch<T>(
   inputs: readonly T[],
   processOne: (input: T, onStage: (stage: BatchStage) => void) => Promise<BatchEntryState>,
   onChange: (index: number, state: BatchEntryState) => void,
+  signal?: AbortSignal,
 ): Promise<BatchOutcome> {
   const states: BatchEntryState[] = inputs.map(() => ({ kind: "pending", stage: "waiting" }));
   const set = (index: number, state: BatchEntryState) => {
     states[index] = state;
     onChange(index, state);
   };
+  const stopFrom = (index: number) => {
+    for (let rest = index; rest < inputs.length; rest++) set(rest, { kind: "not_added" });
+  };
   for (let index = 0; index < inputs.length; index++) {
+    if (signal?.aborted) {
+      stopFrom(index);
+      return { states, stoppedBy: null, aborted: true };
+    }
     try {
       set(index, await processOne(inputs[index]!, (stage) => set(index, { kind: "pending", stage })));
     } catch (error) {
       if (stopsBatch(error)) {
         // This one and the rest weren't added; the summary says why once.
-        for (let rest = index; rest < inputs.length; rest++) set(rest, { kind: "not_added" });
-        return { states, stoppedBy: error };
+        stopFrom(index);
+        return { states, stoppedBy: error, aborted: false };
       }
       set(index, { kind: "failed", error });
     }
   }
-  return { states, stoppedBy: null };
+  return { states, stoppedBy: null, aborted: false };
 }
 
 /** Several photos: each resized and uploaded in turn with saveForReview. */
@@ -258,6 +272,7 @@ export function addPhotosForReview(
   files: readonly File[],
   onChange: (index: number, state: BatchEntryState) => void,
   deps: PipelineDeps = defaultDeps(),
+  signal?: AbortSignal,
 ): Promise<BatchOutcome> {
   return runBatch(
     files,
@@ -268,6 +283,7 @@ export function addPhotosForReview(
       return fromBatchResponse(await deps.uploadPhotoForReview({ original }));
     },
     onChange,
+    signal,
   );
 }
 
@@ -282,6 +298,7 @@ export function addLinksForReview(
   links: readonly string[],
   onChange: (index: number, state: BatchEntryState) => void,
   deps: PipelineDeps = defaultDeps(),
+  signal?: AbortSignal,
 ): Promise<BatchOutcome> {
   return runBatch(
     links,
@@ -295,6 +312,7 @@ export function addLinksForReview(
       return fromBatchResponse(await deps.finishLinkForReview(imported.originalImageKey));
     },
     onChange,
+    signal,
   );
 }
 

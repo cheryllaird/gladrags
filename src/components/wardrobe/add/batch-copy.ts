@@ -18,7 +18,12 @@ export interface BatchSummaryCopy {
 }
 
 /** What the end-of-batch summary says. */
-export function batchSummaryCopy(kind: BatchKind, states: readonly BatchEntryState[], stoppedBy: unknown): BatchSummaryCopy {
+export function batchSummaryCopy(
+  kind: BatchKind,
+  states: readonly BatchEntryState[],
+  stoppedBy: unknown,
+  options: { unkeptDrafts?: number } = {},
+): BatchSummaryCopy {
   const s = summariseBatch(states);
   const lines: string[] = [];
   let title: string;
@@ -38,8 +43,12 @@ export function batchSummaryCopy(kind: BatchKind, states: readonly BatchEntrySta
   if (!stoppedBy && s.saved > 0) {
     lines.push(`${s.saved === 1 ? "1 item is" : `${s.saved} items are`} in your wardrobe, marked to review.`);
   }
-  if (s.drafts > 0) {
-    lines.push(`${s.drafts === 1 ? "1 couldn't" : `${s.drafts} couldn't`} be tagged automatically: fill in the tags in the review list.`);
+  const unkept = Math.min(options.unkeptDrafts ?? 0, s.drafts);
+  if (s.drafts - unkept > 0) {
+    lines.push(`${s.drafts - unkept} couldn't be tagged automatically: fill in the tags in the review list.`);
+  }
+  if (unkept > 0) {
+    lines.push(`${unkept} couldn't be tagged automatically, and this browser won't let us keep ${unkept === 1 ? "it" : "them"} for later: fill in the tags below now.`);
   }
   if (s.needsScreenshot > 0) {
     lines.push(`${plural(s.needsScreenshot, "link")} need${s.needsScreenshot === 1 ? "s" : ""} a screenshot: the site couldn't be read. Add them below.`);

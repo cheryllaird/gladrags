@@ -32,6 +32,7 @@ import {
   finishLinkImport,
   type AddResult,
   type AddStage,
+  type BatchEntryState,
 } from "@/lib/client/add-item";
 import { ApiClientError, importLink } from "@/lib/client/api";
 
@@ -92,7 +93,7 @@ export function AddLinkFlow({
   const [preview, setPreview] = usePreviewUrl();
   const { usage, refresh: refreshUsage } = useUsage();
   const blocked = addingBlockedBy(usage);
-  const { batch, run: runBatch, setRow, clear: clearBatch } = useBatch(userId);
+  const { batch, run: runBatch, setRow, clear: clearBatch } = useBatch(userId, "link");
   const found = extractLinks(url);
   const id = useId();
   // Shown after signing in again, if the session expired mid-add.
@@ -152,7 +153,7 @@ export function AddLinkFlow({
   async function startBatch(links: string[], extra: number) {
     setRestored(null);
     go({ kind: "batch" });
-    await runBatch(links.map(linkLabel), extra, (onChange) => addLinksForReview(links, onChange));
+    await runBatch(links.map(linkLabel), extra, (onChange, signal) => addLinksForReview(links, onChange, undefined, signal));
     refreshUsage();
   }
 
@@ -240,6 +241,7 @@ export function AddLinkFlow({
                 autoCorrect="off"
                 spellCheck={false}
                 rows={3}
+                maxLength={20000}
                 placeholder="https://shop.example.com/…"
                 className="max-h-64 min-h-24 text-base break-all"
                 value={url}
@@ -318,6 +320,8 @@ export function AddLinkFlow({
               const row = batch.rows[index]?.state;
               if (row?.kind === "needs_screenshot") void batchScreenshot(index, file, { sourceUrl: row.sourceUrl, message: row.message });
             }}
+            userId={userId}
+            onRowChange={setRow}
             onAddMore={reset}
           />
         )}
@@ -367,10 +371,14 @@ function linkLabel(link: string): string {
 function LinkBatch({
   batch,
   onScreenshot,
+  userId,
+  onRowChange,
   onAddMore,
 }: {
   batch: BatchState;
   onScreenshot: (index: number, file: File) => void;
+  userId: string | null;
+  onRowChange: (index: number, state: BatchEntryState) => void;
   onAddMore: () => void;
 }) {
   const reviewable = batch.rows.some((row) => row.state.kind === "saved" || row.state.kind === "draft");
@@ -386,6 +394,8 @@ function LinkBatch({
       )}
       <BatchProgress
         kind="link"
+        userId={userId}
+        onRowChange={onRowChange}
         rows={batch.rows}
         running={batch.running}
         stoppedBy={batch.stoppedBy}

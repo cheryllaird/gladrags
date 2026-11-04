@@ -301,3 +301,29 @@ describe("extractLinks after review", () => {
     expect(extractLinks("«https://a.example/p» https://b.example/q。").links).toEqual(["https://a.example/p", "https://b.example/q"]);
   });
 });
+
+describe("aborting a batch (the user left the screen)", () => {
+  it("finishes the photo in flight, then marks the rest not added", async () => {
+    const controller = new AbortController();
+    const d = deps({
+      uploadPhotoForReview: vi.fn(async () => {
+        controller.abort();
+        return SAVED;
+      }),
+    });
+    const outcome = await addPhotosForReview([photo("a.jpg"), photo("b.jpg"), photo("c.jpg")], () => {}, d, controller.signal);
+    expect(outcome.aborted).toBe(true);
+    expect(outcome.stoppedBy).toBeNull();
+    expect(outcome.states.map((s) => s.kind)).toEqual(["saved", "not_added", "not_added"]);
+    expect(d.uploadPhotoForReview).toHaveBeenCalledTimes(1);
+  });
+
+  it("a link batch checks the signal before each link too", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const d = deps();
+    const outcome = await addLinksForReview(["https://a.example/p"], () => {}, d, controller.signal);
+    expect(outcome.states.map((s) => s.kind)).toEqual(["not_added"]);
+    expect(d.importLink).not.toHaveBeenCalled();
+  });
+});
