@@ -55,6 +55,11 @@ export interface GeminiListPrice {
  */
 export const GEMINI_MODEL_PRICES: Readonly<Record<string, GeminiListPrice>> = {
   "gemini-3.8-flash": { inputUsdPerMillionTokens: 0.5, outputUsdPerMillionTokens: 3.0 },
+  // Fallback while gemini-3.8-flash is overloaded on the free tier (503s,
+  // 2026-11-04). Its own price couldn't be checked from here, so it's booked
+  // at gemini-3.8-flash's rate: an older model shouldn't cost more, so the
+  // cap overcounts rather than undercounts. Confirm before testers join.
+  "gemini-3.6-flash": { inputUsdPerMillionTokens: 0.5, outputUsdPerMillionTokens: 3.0 },
 };
 
 /** Safety margin on top of list prices, so the cap errs on the side of stopping early. */
