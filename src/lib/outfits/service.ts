@@ -186,7 +186,7 @@ export class OutfitService {
       ranking_final: usage.meterAiCalls(userId, "ranking_final"),
     };
 
-    const counted: { reservation: UsageReservation | null } = { reservation: null };
+    const counted: { reservation: UsageReservation | null; modelCalled: boolean } = { reservation: null, modelCalled: false };
     let result;
     try {
       result = await runOutfitPipeline(
@@ -202,13 +202,18 @@ export class OutfitService {
             counted.reservation = await usage.reserveAction(userId, "outfit_request");
           },
           beforeAiCall: (kind) => meters[kind].beforeCall(),
-          recordAiCost: (kind, call) => meters[kind].onCall(call),
+          recordAiCost: (kind, call) => {
+            counted.modelCalled = true;
+            return meters[kind].onCall(call);
+          },
         },
       );
     } catch (error) {
       // AI paused before a model call (another request took the month to
       // the cap): the user gets no outfits, so give today's count back.
-      if (counted.reservation && isAiPausedError(error)) await counted.reservation.cancel().catch(() => {});
+      // Only if no model call was made: once pass 1 has run (and may be
+      // billed), a pause before pass 2 keeps the request counted.
+      if (counted.reservation && !counted.modelCalled && isAiPausedError(error)) await counted.reservation.cancel().catch(() => {});
       throw error;
     }
 

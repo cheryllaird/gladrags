@@ -177,6 +177,20 @@ describe("caps", () => {
     expect((await service.updateStatus(USER, outfit!.id, { status: "saved" })).status).toBe("saved");
   });
 
+  it("keeps the request counted when AI pauses after pass 1 was made (it may be billed)", async () => {
+    const shortlist = ranking.shortlist.bind(ranking);
+    ranking.shortlist = async (input) => {
+      const call = await shortlist(input);
+      await store.record({ userId: null, kind: "tagging", costPence: MONTHLY_AI_SPEND_CAP_PENCE, provider: "gemini" });
+      return call;
+    };
+    const error = await service.generate(USER, { style: { kind: "preset", presetId: "work" }, count: 3 }).catch((e: unknown) => e);
+    expect((error as CapReachedError).cap).toBe("monthly_ai_spend");
+    expect(ranking.shortlists).toHaveLength(1);
+    expect(ranking.finals).toHaveLength(0);
+    expect(count("outfit_request")).toBe(1);
+  });
+
   it("records the cost of every model call", async () => {
     await service.generate(USER, { style: { kind: "preset", presetId: "work" }, count: 3 });
     const costed = store.events.filter((e) => e.kind === "ranking_shortlist" || e.kind === "ranking_final");
