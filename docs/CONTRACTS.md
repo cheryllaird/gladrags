@@ -599,7 +599,7 @@ Environment variables (see `.env.example`):
 | `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL |
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | `sb_publishable_…`: safe in the browser, RLS applies |
 | `SUPABASE_SECRET_KEY` | `sb_secret_…`: server only, bypasses RLS. Only one server-only module reads it. |
-| `NEXT_PUBLIC_SITE_URL` | The deployed URL, for links in sign-in emails |
+| `NEXT_PUBLIC_SITE_URL` | Optional. An extra origin the CSRF check accepts as this site's (e.g. a custom domain). Sign-in email links always go back to the address the sign-in was requested from, because the PKCE link only works there; Supabase's Redirect URLs allowlist must include that address (a wildcard such as `https://gladrags-*-cheryllairds-projects.vercel.app/**` covers every preview). |
 | `GEMINI_API_KEY` | Gemini |
 | `GEMINI_MODEL` | Optional. Gemini model for tagging and ranking; defaults to `gemini-3.8-flash`. Must have known prices (`GEMINI_MODEL_PRICES`), otherwise startup fails with a config error. |
 | `GLADRAGS_MOCK_MODE` | `true` only for local UI work. Refused on Vercel and in production builds. |

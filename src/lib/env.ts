@@ -95,12 +95,3 @@ export function hasSupabaseEnv(): boolean {
     return false;
   }
 }
-
-/**
- * Public base URL for links in emails (the magic link). Falls back to the
- * request's origin when NEXT_PUBLIC_SITE_URL isn't set.
- */
-export function getSiteUrl(requestOrigin: string): string {
-  const fromEnv = process.env.NEXT_PUBLIC_SITE_URL;
-  return fromEnv && z.url().safeParse(fromEnv).success ? fromEnv.replace(/\/$/, "") : requestOrigin;
-}

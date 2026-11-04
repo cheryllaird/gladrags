@@ -286,11 +286,13 @@ describe("POST /api/auth/magic-link (allowlist)", () => {
     expect(callback.searchParams.get("next")).toBe("/outfits?style=work");
   });
 
-  it("uses NEXT_PUBLIC_SITE_URL for the email link when set", async () => {
-    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://gladrags-preview.vercel.app/");
+  it("links back to the origin the request came from, even when NEXT_PUBLIC_SITE_URL names another", async () => {
+    // The PKCE code verifier cookie only exists on the requesting origin, so a
+    // link to any other address (e.g. an older preview) can never work.
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://gladrags-old-preview.vercel.app/");
     await magicLink.POST(json("/api/auth/magic-link", "POST", { email: "tester@example.com" }));
     const args = fake.signInWithOtp.mock.calls[0]![0] as { options: { emailRedirectTo: string } };
-    expect(args.options.emailRedirectTo).toBe("https://gladrags-preview.vercel.app/auth/callback");
+    expect(args.options.emailRedirectTo).toBe(`${BASE}/auth/callback`);
   });
 
   it("rejects an off-site next before checking the allowlist", async () => {

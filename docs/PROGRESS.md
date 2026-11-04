@@ -2,7 +2,7 @@
 
 Maintained by the orchestrator (main Claude Code session). Source of truth for scope: `docs/SPEC.md`.
 
-**Current status:** Milestone 5 round 1 done and on a preview (2026-11-04): https://gladrags-git-claude-cheryl-test-fe-1c492c-cheryllairds-projects.vercel.app. Waiting for Cheryl: apply migration 7, then test. The magic link in the sign-in email points at `NEXT_PUBLIC_SITE_URL` (the old branch's preview), so type the code instead, or set `NEXT_PUBLIC_SITE_URL` for this branch in Vercel. Email import needs Postmark; shop search and tagging need the Gemini paid tier. Gemini is still on the free tier.
+**Current status:** Milestone 5 round 1 done and on a preview (2026-11-04): https://gladrags-git-claude-cheryl-test-fe-1c492c-cheryllairds-projects.vercel.app. Waiting for Cheryl: apply migration 7, then test. Sign-in links now return to the address they were requested from (fixed 2026-11-04); Supabase's Redirect URLs must allow the preview address. Email import needs Postmark; shop search and tagging need the Gemini paid tier. Gemini is still on the free tier.
 
 Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 
@@ -107,6 +107,7 @@ Decisions made by the orchestrator within Cheryl's choices (tell her at the chec
 - With "Include items from my shops" on, an outfit may have at most one shop item where the wardrobe could fill the slot; missing categories can always be gaps. Every outfit keeps at least one owned item.
 - Forwarded emails are accepted only from the user's sign-in address and only if they pass the email service's authentication checks.
 - Batch-added items are saved straight away as "to review" rather than held as drafts.
+- 2026-11-04: sign-in links failed on the new preview ("code challenge does not match previously saved code verifier"): the magic link went to `NEXT_PUBLIC_SITE_URL`, the old branch's preview, but the PKCE verifier cookie lives on the origin that asked. Fix (orchestrator): the link always goes back to the requesting origin; `getSiteUrl` removed. Supabase's Redirect URLs must allow each preview address.
 - 2026-11-03: contract fix (orchestrator): `singleLineText` refuses and `scrapedText` strips C0 control characters and DEL, so a NUL in model or scraped text can't reach Postgres. Found by QA on C3.
 - 2026-10-31: gaps are judged around each outfit's own top, bottom or dress, so tops in a wardrobe with a dress but no bottoms still get outfits (with a bottom gap). Found by the reviewer; contract change applied on the integration branch.
 
