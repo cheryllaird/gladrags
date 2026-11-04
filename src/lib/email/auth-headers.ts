@@ -247,8 +247,9 @@ function valuesOf(params: readonly HeaderParam[], key: string): string[] {
  *
  * The domain is the envelope sender's (what DMARC aligns), and only for the
  * MAIL FROM identity: a HELO check says nothing about the sender. A header
- * with more than one `envelope-from` (or `identity`) is ambiguous and gives
- * no domain, which fails safe (SPF can't then vouch for the From address).
+ * with more than one `envelope-from` (or `identity`), or an envelope sender
+ * with quotes, spaces or other oddities inside (envelopeDomain), gives no
+ * domain, which fails safe (SPF can't then vouch for the From address).
  */
 export function parseReceivedSpf(value: string | undefined): { result: string | null; domain: string | null } {
   if (!value) return { result: null, domain: null };
@@ -259,7 +260,35 @@ export function parseReceivedSpf(value: string | undefined): { result: string | 
   const identity = valuesOf(params, "identity");
   if (envelopeFrom.length !== 1 || identity.length > 1) return { result, domain: null };
   const isMailFrom = identity.length === 0 || identity[0]!.toLowerCase() === "mailfrom";
-  return { result, domain: isMailFrom ? domainOf(envelopeFrom[0]) : null };
+  // Quotes anywhere in the header, other than one pair wrapping the
+  // envelope-from value, mean a quoted local part (refused) or a value the
+  // tokenizer may have split wrongly: no domain.
+  const quotes = (value.match(/"/g) ?? []).length;
+  const wrapped = /^"[^"]*"$/.test(envelopeFrom[0]!.trim());
+  if (quotes !== 0 && !(quotes === 2 && wrapped)) return { result, domain: null };
+  return { result, domain: isMailFrom ? envelopeDomain(envelopeFrom[0]!) : null };
+}
+
+/**
+ * The domain of an `envelope-from` value, refusing anything quoted inside
+ * (orchestrator decision: real users don't have quoted local parts, and a
+ * service that doesn't escape inner quotes makes them ambiguous, e.g.
+ * `""x@mail.example;"@evil.example"`). The only quotes allowed are one
+ * pair wrapping the whole value, with no quote or backslash inside.
+ */
+export function envelopeDomain(value: string): string | null {
+  let address = value.trim();
+  if (address.includes('"')) {
+    const inner = address.slice(1, -1);
+    if (!(address.length >= 2 && address.startsWith('"') && address.endsWith('"')) || inner.includes('"') || inner.includes("\\")) return null;
+    address = inner;
+  }
+  if (/[\s;()\\<>"]/.test(address.replace(/^<(.*)>$/s, "$1"))) return null;
+  // A real sender: a non-empty local part before the only "@".
+  const bare = address.replace(/^<(.*)>$/s, "$1");
+  const at = bare.indexOf("@");
+  if (at < 1 || at !== bare.lastIndexOf("@")) return null;
+  return domainOf(bare);
 }
 
 /**

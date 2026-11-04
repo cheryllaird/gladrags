@@ -103,7 +103,10 @@ async function judgeAndCount(deps: ReceiveDeps, importId: string, user: Forwardi
     }
     // Over today's email cap. Record it, unless the day's rows are already at their limit.
     const since = new Date(Date.parse(email.receivedAt) - DAY_MS);
-    if ((await deps.imports.countSince(user.userId, since)) > MAX_IMPORT_ROWS_PER_DAY) {
+    // The count includes this email's own row (made by `start`), so with
+    // `>` the table keeps exactly MAX_IMPORT_ROWS_PER_DAY rows a day.
+    const rowsToday = await deps.imports.countSince(user.userId, since);
+    if (rowsToday > MAX_IMPORT_ROWS_PER_DAY) {
       await deps.imports.abandon(importId);
       return null;
     }

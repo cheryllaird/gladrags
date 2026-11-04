@@ -158,14 +158,15 @@ export class PostmarkInboundProvider implements InboundEmailProvider {
 }
 
 /**
- * A belt-and-braces check on the SPF domain: Postmark records the envelope
- * sender as Return-Path in its own block, so if that names a different
- * domain, the SPF domain can't be trusted (null, which refuses alignment).
- * No Return-Path there leaves the domain as it was.
+ * A second check on the SPF domain, failing closed: Postmark records the
+ * envelope sender as Return-Path in its own block, and the SPF domain is
+ * trusted only if that Return-Path is there, has no quotes (quoted local
+ * parts are refused outright), and names the same domain. Otherwise null,
+ * which refuses alignment.
  */
 function agreesWithReturnPath(spfDomain: string | null, own: readonly EmailHeader[]): string | null {
   const returnPath = firstHeader(own, "Return-Path");
-  if (spfDomain === null || returnPath === undefined) return spfDomain;
+  if (spfDomain === null || returnPath === undefined || returnPath.includes('"')) return null;
   return domainOf(returnPath) === spfDomain ? spfDomain : null;
 }
 

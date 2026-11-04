@@ -116,8 +116,9 @@ describe("parse: the recorded payload", () => {
     // Postmark's Return-Path says mail.example, so the disagreeing SPF domain isn't trusted at all.
     expect(email.auth.spfDomain).toBeNull();
     expect(judgeInboundEmail(email, USER_EMAIL)).toEqual({ accepted: false, error: "failed_checks" });
+    // No Return-Path in Postmark's block: fails closed, no SPF domain at all.
     const withoutReturnPath = normalised(payload({ Headers: headers.filter((h) => h.Name !== "Return-Path") }));
-    expect(withoutReturnPath.auth.spfDomain).toBe("spammer.example");
+    expect(withoutReturnPath.auth.spfDomain).toBeNull();
     expect(judgeInboundEmail(withoutReturnPath, USER_EMAIL)).toEqual({ accepted: false, error: "failed_checks" });
   });
 
@@ -192,6 +193,62 @@ describe("only Postmark's own block counts (above the second Received)", () => {
   });
 });
 
+describe("B3: quoted envelope senders written without escaping", () => {
+  const spoofs = {
+    semicolon: 'pass (evil.example: 198.51.100.7 is authorized) identity=mailfrom; client-ip=198.51.100.7; envelope-from=""x@mail.example;"@evil.example"; helo=mx.evil.example',
+    space: 'pass (evil.example: 198.51.100.7 is authorized) identity=mailfrom; client-ip=198.51.100.7; envelope-from=""x@mail.example "@evil.example"; helo=mx.evil.example',
+  };
+  const returnPaths = {
+    "naming evil.example": '<"x@mail.example;"@evil.example>',
+    "naming mail.example": "<sam.tester@mail.example>",
+    missing: null,
+  };
+
+  for (const [shape, spoof] of Object.entries(spoofs)) {
+    it(`${shape}: parses to no domain`, () => {
+      expect(parseReceivedSpf(spoof).domain).toBeNull();
+    });
+    for (const [label, returnPath] of Object.entries(returnPaths)) {
+      it(`${shape}, Return-Path ${label}: refused`, () => {
+        const headers = payload()
+          .Headers.filter((h) => h.Name !== "Return-Path")
+          .map((h) => (h.Name === "Received-SPF" ? { Name: h.Name, Value: spoof } : h));
+        if (returnPath) headers.unshift({ Name: "Return-Path", Value: returnPath });
+        const email = normalised(payload({ Headers: headers }));
+        expect(email.auth.spfDomain).not.toBe("mail.example");
+        expect(judgeInboundEmail(email, USER_EMAIL)).toEqual({ accepted: false, error: "failed_checks" });
+      });
+    }
+  }
+
+  it("a Return-Path with quotes is refused even when the SPF domain looks right", () => {
+    const headers = payload().Headers.map((h) => (h.Name === "Return-Path" ? { Name: h.Name, Value: '<"sam"@mail.example>' } : h));
+    expect(normalised(payload({ Headers: headers })).auth.spfDomain).toBeNull();
+  });
+
+  it("fuzz: a random quoted local part on evil.example never yields mail.example, however it's written", () => {
+    const frags = ["(", ")", '\\"', "\\\\", ";", " ", "'", "=", "envelope-from=v@mail.example", "@mail.example", "x", "<", ">", ",", '"'];
+    let seed = 12345;
+    const random = () => ((seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31);
+    const fragment = (n: number) => Array.from({ length: n }, () => frags[Math.floor(random() * frags.length)]).join("");
+    const escape = (a: string) => a.replace(/[\\"]/g, (c) => `\\${c}`);
+    const shapes = [
+      (a: string) => `pass (mail.example: Sender is authorized to use '${a}' in 'mfrom' identity (m)) receiver=p; identity=mailfrom; envelope-from="${a}"; helo=h`,
+      (a: string) => `pass (mail.example: Sender is authorized to use '${a}' in 'mfrom' identity (m)) receiver=p; identity=mailfrom; envelope-from="${escape(a)}"; helo=h`,
+      (a: string) => `Pass (mailfrom) identity=mailfrom; client-ip=1.2.3.4; helo=h; envelope-from=<${a}>; receiver=p`,
+      (a: string) => `pass identity=mailfrom; envelope-from=${a}`,
+    ];
+    for (let k = 0; k < 20_000; k++) {
+      const address = `"${fragment(1 + Math.floor(random() * 7))}"@evil.example`;
+      for (const shape of shapes) {
+        const domain = parseReceivedSpf(shape(address)).domain;
+        if (domain !== null && domain !== "evil.example") throw new Error(`${address} read as ${domain}`);
+        expect(domain).not.toBe("mail.example");
+      }
+    }
+  });
+});
+
 describe("header parsing", () => {
   it("Received-SPF: result word and the MAIL FROM domain; a HELO check gives no domain", () => {
     expect(parseReceivedSpf("Pass (sender SPF authorized) identity=mailfrom; client-ip=1.2.3.4; envelope-from=a@b.example; receiver=x")).toEqual({
@@ -205,8 +262,9 @@ describe("header parsing", () => {
 
   it("Received-SPF: a sender quoted as a whole is read; a quoted local part never supplies the domain; two envelope-froms give none", () => {
     expect(parseReceivedSpf('pass identity=mailfrom; envelope-from="sam.tester@mail.example"').domain).toBe("mail.example");
-    expect(parseReceivedSpf('pass identity=mailfrom; envelope-from="x@mail.example"@evil.example').domain).toBe("evil.example");
-    expect(parseReceivedSpf('pass identity=mailfrom; envelope-from="\\"x@mail.example\\"@evil.example"').domain).toBe("evil.example");
+    // Quoted local parts are refused outright (orchestrator decision): no domain.
+    expect(parseReceivedSpf('pass identity=mailfrom; envelope-from="x@mail.example"@evil.example').domain).toBeNull();
+    expect(parseReceivedSpf('pass identity=mailfrom; envelope-from="\\"x@mail.example\\"@evil.example"').domain).toBeNull();
     expect(parseReceivedSpf('pass identity=mailfrom; envelope-from=""x@mail.example"@evil.example"').domain).not.toBe("mail.example");
     expect(parseReceivedSpf("pass identity=mailfrom; envelope-from=a@mail.example; envelope-from=b@mail.example").domain).toBeNull();
     expect(parseReceivedSpf("pass identity = mailfrom; envelope-from = a@mail.example").domain).toBe("mail.example");
