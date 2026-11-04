@@ -50,6 +50,7 @@ export type FetchFailure =
   | "http_status" // not 2xx (403 from a bot wall, 404...)
   | "wrong_type" // e.g. a PDF where a page was expected
   | "insecure_redirect" // https -> http
+  | "redirect_refused" // the caller's allowRedirect said no
   | "network";
 
 export class SafeFetchError extends Error {
@@ -130,6 +131,12 @@ export interface SafeFetchOptions {
   /** The whole fetch, redirects included. */
   totalTimeoutMs: number;
   maxRedirects?: number;
+  /**
+   * Optional extra rule for each redirect target, after the usual checks
+   * and before it's fetched. Return false to stop with `redirect_refused`.
+   * Shop search uses it to stay on the shop's own website.
+   */
+  allowRedirect?(url: URL): boolean;
 }
 
 export interface SafeFetchResult {
@@ -342,6 +349,9 @@ export async function safeFetch(input: string | URL, options: SafeFetchOptions, 
       const next = check(hop.location, url);
       if (url.protocol === "https:" && next.protocol === "http:") {
         throw new SafeFetchError("insecure_redirect", "The link redirects from a secure page to an insecure one");
+      }
+      if (options.allowRedirect && !options.allowRedirect(next)) {
+        throw new SafeFetchError("redirect_refused", "The link redirects somewhere it isn't allowed to go");
       }
       url = next;
     }

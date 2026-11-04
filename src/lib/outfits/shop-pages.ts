@@ -4,8 +4,8 @@
  *
  * Every page goes through link-import's safe fetcher (SSRF checks, size
  * and time limits) and product parser, the same as add-by-link. A page is
- * kept only if it loads, is still on the same favourite shop's website
- * after redirects, and reads as a product with a title. Title, price and
+ * kept only if it loads, never redirects off the same favourite shop's
+ * website (such a redirect isn't followed), and reads as a product with a title. Title, price and
  * image come from the page, never from the model.
  *
  * Time is bounded: pages are fetched in parallel (SHOP_PAGE_CONCURRENCY at
@@ -28,7 +28,16 @@ export class SafeFetchShopPageChecker implements ShopPageChecker {
     if (timeoutMs <= 0) return null;
     let page;
     try {
-      page = await safeFetch(candidate.url, { ...PAGE_FETCH, totalTimeoutMs: Math.min(PAGE_FETCH.totalTimeoutMs, timeoutMs) }, this.network);
+      page = await safeFetch(
+        candidate.url,
+        {
+          ...PAGE_FETCH,
+          totalTimeoutMs: Math.min(PAGE_FETCH.totalTimeoutMs, timeoutMs),
+          // Never follow a redirect off this shop's website (not even to fetch it).
+          allowRedirect: (url) => shopForUrl(url.href, [candidate.shopId]) !== null,
+        },
+        this.network,
+      );
     } catch (error) {
       if (error instanceof SafeFetchError) {
         console.warn("Shop search: page not fetched", { failure: error.failure });

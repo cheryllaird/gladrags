@@ -130,10 +130,12 @@ describe.runIf(hasOpenssl())("SafeFetchShopPageChecker over https", () => {
   it.each([
     ["off the shop", "https://evil.example/p"],
     ["to another shop", "https://www.zara.com/p"],
-  ])("a redirect %s is dropped", async (_label, target) => {
+  ])("a redirect %s is dropped, and never followed", async (_label, target) => {
     routes.set("www.next.co.uk/p", to(target));
     routes.set(`${new URL(target).host}/p`, page(productPage()));
     expect(await check("https://www.next.co.uk/p")).toBeNull();
+    // safeFetch's allowRedirect stops it before the off-shop host is fetched.
+    expect(hits).toEqual(["www.next.co.uk/p"]);
   });
 
   it.each([
