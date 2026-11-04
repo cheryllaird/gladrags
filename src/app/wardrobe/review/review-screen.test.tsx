@@ -62,7 +62,7 @@ describe("ReviewScreen", () => {
     vi.mocked(api.markItemReviewed).mockResolvedValue({ ...A, needsReview: false });
     render(<ReviewScreen userId={USER} />);
     const card = await screen.findByRole("listitem", { name: A.tags.description });
-    await user.click(within(card).getByRole("button", { name: "Looks right" }));
+    await user.click(within(card).getByRole("button", { name: /^Looks right/ }));
     expect(api.markItemReviewed).toHaveBeenCalledWith(A.id);
     expect(screen.queryByRole("listitem", { name: A.tags.description })).toBeNull();
     expect(screen.getByRole("heading", { name: "To review (2)" })).toBeInTheDocument();
@@ -95,7 +95,7 @@ describe("ReviewScreen", () => {
     vi.mocked(api.updateItemTags).mockImplementation(async (_id, tags) => ({ ...A, tags, needsReview: false }));
     render(<ReviewScreen userId={USER} />);
     const card = await screen.findByRole("listitem", { name: A.tags.description });
-    await user.click(within(card).getByRole("button", { name: "Edit tags" }));
+    await user.click(within(card).getByRole("button", { name: /^Edit tags/ }));
     const description = screen.getByRole("textbox", { name: /Description/ });
     await user.clear(description);
     await user.type(description, "My favourite tee");
@@ -110,7 +110,7 @@ describe("ReviewScreen", () => {
     vi.mocked(api.markItemReviewed).mockResolvedValue({ ...A, needsReview: false });
     render(<ReviewScreen userId={USER} />);
     const card = await screen.findByRole("listitem", { name: A.tags.description });
-    await user.click(within(card).getByRole("button", { name: "Edit tags" }));
+    await user.click(within(card).getByRole("button", { name: /^Edit tags/ }));
     await user.click(screen.getByRole("button", { name: "Save tags" }));
     expect(api.updateItemTags).not.toHaveBeenCalled();
     expect(api.markItemReviewed).toHaveBeenCalledWith(A.id);
@@ -180,5 +180,14 @@ describe("ReviewScreen: a draft whose photo has expired", () => {
     expect(screen.queryByRole("button", { name: "Fill in tags" })).toBeNull();
     await user.click(screen.getByRole("button", { name: /^Discard/ }));
     expect(await screen.findByText("All caught up")).toBeInTheDocument();
+  });
+});
+
+describe("ReviewScreen accessibility", () => {
+  it("each card's buttons are named with the item, starting with their visible text", async () => {
+    render(<ReviewScreen userId={USER} />);
+    expect(await screen.findByRole("button", { name: `Looks right: ${A.tags.description}` })).toHaveTextContent("Looks right");
+    expect(screen.getByRole("button", { name: `Edit tags: ${B.tags.description}` })).toHaveTextContent("Edit tags");
+    expect(screen.getByRole("button", { name: `Add a photo: ${EMAIL.tags.description}` })).toHaveTextContent("Add a photo");
   });
 });

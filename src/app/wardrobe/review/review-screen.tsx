@@ -365,15 +365,21 @@ function ReviewCard({
             <ImageOffIcon className="size-4 shrink-0" aria-hidden="true" />
             No picture came with this one.
           </p>
-          <AddPhotoButton itemId={item.id} onAdded={onPhotoAdded} onError={onError} className="w-full" />
+          <AddPhotoButton
+            itemId={item.id}
+            accessibleName={`Add a photo: ${tags.description}`}
+            onAdded={onPhotoAdded}
+            onError={onError}
+            className="w-full"
+          />
         </div>
       )}
       <div className="grid grid-cols-2 gap-2">
-        <Button variant="outline" size="lg" disabled={busy} onClick={onEdit}>
+        <Button variant="outline" size="lg" disabled={busy} onClick={onEdit} aria-label={`Edit tags: ${tags.description}`}>
           <PencilIcon aria-hidden="true" />
           Edit tags
         </Button>
-        <Button size="lg" disabled={busy} onClick={onConfirm}>
+        <Button size="lg" disabled={busy} onClick={onConfirm} aria-label={`Looks right: ${tags.description}`}>
           <CheckIcon aria-hidden="true" />
           Looks right
         </Button>

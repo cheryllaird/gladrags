@@ -107,3 +107,18 @@ describe("SettingsScreen", () => {
     expect(screen.getByRole("button", { name: "Save shops" })).toBeDisabled();
   });
 });
+
+describe("SettingsScreen after review", () => {
+  it("doesn't list or fetch email imports when email import isn't set up", async () => {
+    vi.mocked(api.getSettings).mockResolvedValue({ ...SETTINGS, forwardingAddress: null });
+    render(<SettingsScreen email={null} />);
+    await screen.findByText(/Email import isn't set up yet/);
+    expect(screen.queryByRole("heading", { name: "Recent order emails" })).toBeNull();
+    expect(api.listEmailImports).not.toHaveBeenCalled();
+  });
+
+  it("the Refresh button's name starts with its visible text", async () => {
+    render(<SettingsScreen email={null} />);
+    expect(await screen.findByRole("button", { name: /^Refresh/ })).toHaveTextContent("Refresh");
+  });
+});

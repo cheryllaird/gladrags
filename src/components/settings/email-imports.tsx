@@ -34,7 +34,7 @@ export function EmailImports() {
         <h2 id="imports-heading" className="flex-1 font-semibold">
           Recent order emails
         </h2>
-        <Button variant="ghost" size="sm" className="min-h-11" onClick={reload} aria-label="Check for new order emails">
+        <Button variant="ghost" size="sm" className="min-h-11" onClick={reload} aria-label="Refresh the list of order emails">
           <RefreshCwIcon aria-hidden="true" />
           Refresh
         </Button>

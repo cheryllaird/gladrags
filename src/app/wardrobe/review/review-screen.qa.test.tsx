@@ -162,7 +162,7 @@ describe("review list: one at a time", () => {
     stubFetch(items, { failPatch: true });
     render(<ReviewScreen userId={USER} />);
     const card = await screen.findByRole("listitem", { name: "Item number 1" });
-    await user.click(within(card).getByRole("button", { name: "Looks right" }));
+    await user.click(within(card).getByRole("button", { name: /^Looks right/ }));
     expect(await screen.findByText("Something went wrong on our side.")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "To review (2)" })).toBeInTheDocument();
   });
@@ -173,10 +173,10 @@ describe("review list: one at a time", () => {
     render(<ReviewScreen userId={USER} />);
     for (const [n, left] of [[1, 2], [2, 1]] as const) {
       const card = await screen.findByRole("listitem", { name: `Item number ${n}` });
-      await user.click(within(card).getByRole("button", { name: "Looks right" }));
+      await user.click(within(card).getByRole("button", { name: /^Looks right/ }));
       expect(await screen.findByRole("heading", { name: `To review (${left})` })).toBeInTheDocument();
     }
-    await user.click(within(screen.getByRole("listitem", { name: "Item number 3" })).getByRole("button", { name: "Looks right" }));
+    await user.click(within(screen.getByRole("listitem", { name: "Item number 3" })).getByRole("button", { name: /^Looks right/ }));
     expect(await screen.findByText("All caught up")).toBeInTheDocument();
   });
 });

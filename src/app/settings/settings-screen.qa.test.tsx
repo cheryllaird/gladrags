@@ -63,14 +63,15 @@ describe("settings: loading", () => {
     expect(await screen.findByText(/Forward it to the address above, from your sign-in address\./)).toBeInTheDocument();
   });
 
-  it("a null address hides copy and reset, and still lists shops and imports", async () => {
+  it("a null address hides copy, reset and the email history, and still lists shops", async () => {
     vi.mocked(api.getSettings).mockResolvedValue({ ...SETTINGS, forwardingAddress: null });
     render(<SettingsScreen email={null} />);
     expect(await screen.findByText(/Email import isn.t set up yet/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Copy address" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Get a new address" })).toBeNull();
     expect(screen.getByRole("heading", { name: "Favourite shops" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Recent order emails" })).toBeInTheDocument();
+    // Changed after review: no email history until forwarding is set up.
+    expect(screen.queryByRole("heading", { name: "Recent order emails" })).toBeNull();
   });
 });
 
@@ -97,9 +98,9 @@ describe("settings: resetting the address", () => {
     expect(screen.getByTestId("forwarding-address")).toHaveTextContent(ADDRESS);
   });
 
-  // Low, reported: the error from a failed reset is still shown when the
-  // dialog is opened again later.
-  it.fails("reopening the dialog after a failed reset doesn't show the old error", async () => {
+  // Fixed after review: the error from a failed reset used to show again
+  // when the dialog was reopened.
+  it("reopening the dialog after a failed reset doesn't show the old error", async () => {
     const user = userEvent.setup();
     vi.mocked(api.resetForwardingAddress).mockRejectedValueOnce(boom());
     render(<SettingsScreen email={null} />);
@@ -184,7 +185,7 @@ describe("settings: email import statuses", () => {
     vi.mocked(api.listEmailImports).mockRejectedValueOnce(boom()).mockResolvedValue([entry({})]);
     render(<SettingsScreen email={null} />);
     expect(await screen.findByText("Something went wrong on our side.")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Check for new order emails" }));
+    await user.click(screen.getByRole("button", { name: "Refresh the list of order emails" }));
     expect(await screen.findByText("Added 1 item to review")).toBeInTheDocument();
   });
 

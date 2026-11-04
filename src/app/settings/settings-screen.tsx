@@ -69,7 +69,8 @@ export function SettingsScreen({ email }: { email: string | null }) {
         {state.kind === "ready" && (
           <>
             <ForwardingAddress address={state.settings.forwardingAddress} email={email} onReset={update} />
-            <EmailImports />
+            {/* No address, no emails: the history only makes sense once forwarding is set up. */}
+            {state.settings.forwardingAddress !== null && <EmailImports />}
             <FavouriteShops saved={state.settings.favouriteShopIds} onSaved={update} />
           </>
         )}

@@ -125,7 +125,15 @@ export function ForwardingAddress({
             </p>
           )}
 
-          <AlertDialog open={open} onOpenChange={(next) => !resetting && setOpen(next)}>
+          <AlertDialog
+            open={open}
+            onOpenChange={(next) => {
+              if (resetting) return;
+              // A fresh start each time: no error left from an earlier try.
+              setError(null);
+              setOpen(next);
+            }}
+          >
             <AlertDialogTrigger asChild>
               <Button variant="ghost" size="lg" className="w-full">
                 <RefreshCwIcon aria-hidden="true" />

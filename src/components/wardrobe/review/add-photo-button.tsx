@@ -19,8 +19,11 @@ export function AddPhotoButton({
   onAdded,
   onError,
   className,
+  accessibleName,
 }: {
   itemId: string;
+  /** A fuller name for screen readers when there are several on a page; it starts with the visible text. */
+  accessibleName?: string;
   onAdded: (item: WardrobeItem) => void;
   onError: (error: unknown) => void;
   className?: string;
@@ -42,7 +45,11 @@ export function AddPhotoButton({
 
   return (
     <>
-      <Button type="button" variant="outline" size="lg" className={className} disabled={busy} onClick={() => ref.current?.click()}>
+      <Button type="button" variant="outline" size="lg" className={className}
+        disabled={busy}
+        aria-label={busy ? undefined : accessibleName}
+        onClick={() => ref.current?.click()}
+      >
         {busy ? <Loader2Icon className="animate-spin" aria-hidden="true" /> : <ImagePlusIcon aria-hidden="true" />}
         {busy ? "Adding the photo…" : "Add a photo"}
       </Button>
