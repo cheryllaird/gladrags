@@ -2,7 +2,7 @@
 
 Maintained by the orchestrator (main Claude Code session). Source of truth for scope: `docs/SPEC.md`.
 
-**Current status:** Milestone 5 round 1: all builder branches (C1–C6) merged into `claude/cheryl-test-feedback-5xw3vb` (a13e15b; 4,129 unit tests, lint, typecheck and build green). Journey tests (C7) and security re-check (C8) running; then a preview for Cheryl. Migration 7 must be applied in Supabase first. Gemini is still on the free tier.
+**Current status:** Milestone 5 round 1 done and on a preview (2026-11-04): https://gladrags-git-claude-cheryl-test-fe-1c492c-cheryllairds-projects.vercel.app. Waiting for Cheryl: apply migration 7, then test. The magic link in the sign-in email points at `NEXT_PUBLIC_SITE_URL` (the old branch's preview), so type the code instead, or set `NEXT_PUBLIC_SITE_URL` for this branch in Vercel. Email import needs Postmark; shop search and tagging need the Gemini paid tier. Gemini is still on the free tier.
 
 Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 
@@ -83,7 +83,7 @@ Integration branch for this round: `claude/cheryl-test-feedback-5xw3vb` (started
 | C6 | Gap placeholders in collages, cut-out on first collage use + upload, "Include items from my shops", "Find in my shops" product cards, add bought product by link | outfit-ui | `m5/outfit-ui` | ☑ merged. Review: approved with 7 minor → fixed. QA: 112 tests, 2 low, fixed. e2e 289/289 (QA run). | C1 (mocks) |
 | C7 | Journey tests updated (add without cut-out, batch add, email import with fixture, gaps from one item, shop search with mocked provider) | qa | `m5/journeys` | ☑ merged. `journeys-m5.spec.ts` (12 tests); full e2e 342/342 on three consecutive runs; two flaky tests fixed (test-only). Open: `wardrobe-qa.spec.ts:600` filter flake (1 in 9, likely a hydration race: use `setFilters(prev => …)`), and the "Shared to GladRags" copy shown after "I've bought this" (low). | C2–C6 |
 | C8 | Security re-check: inbound webhook, email content handling, shop search links, privacy note | security | | ☑ done on a13e15b: no code blocker for Cheryl's preview (apply migration 7 first). Before-testers list below. | C3, C4 |
-| C9 | Preview deploy, checkpoint report to Cheryl | orchestrator | | ☐ | C7, C8 |
+| C9 | Preview deploy, checkpoint report to Cheryl | orchestrator | | ☑ 2026-11-04: preview at https://gladrags-git-claude-cheryl-test-fe-1c492c-cheryllairds-projects.vercel.app (Vercel login; sign-in page 200 with all security headers). **Stopped for Cheryl.** | C7, C8 |
 
 ### Before testers (from the C8 security re-check, 2026-11-04)
 
