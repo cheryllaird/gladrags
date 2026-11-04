@@ -82,8 +82,24 @@ Integration branch for this round: `claude/cheryl-test-feedback-5xw3vb` (started
 | C5 | Batch photo and link add, Review N new items list, get-started checklist, forwarding address + favourite shops in settings, wardrobe shows originals | wardrobe-ui | `m5/wardrobe-ui` | ☑ merged. Review: changes needed (drafts outliving signed URLs) + 10 minor → fixed, re-approved at c5e8647. QA: ~150 tests, 1 medium + 5 low, fixed. | C1 (mocks) |
 | C6 | Gap placeholders in collages, cut-out on first collage use + upload, "Include items from my shops", "Find in my shops" product cards, add bought product by link | outfit-ui | `m5/outfit-ui` | ☑ merged. Review: approved with 7 minor → fixed. QA: 112 tests, 2 low, fixed. e2e 289/289 (QA run). | C1 (mocks) |
 | C7 | Journey tests updated (add without cut-out, batch add, email import with fixture, gaps from one item, shop search with mocked provider) | qa | `m5/journeys` | ◐ running on a13e15b | C2–C6 |
-| C8 | Security re-check: inbound webhook, email content handling, shop search links, privacy note | security | | ◐ running on a13e15b | C3, C4 |
+| C8 | Security re-check: inbound webhook, email content handling, shop search links, privacy note | security | | ☑ done on a13e15b: no code blocker for Cheryl's preview (apply migration 7 first). Before-testers list below. | C3, C4 |
 | C9 | Preview deploy, checkpoint report to Cheryl | orchestrator | | ☐ | C7, C8 |
+
+### Before testers (from the C8 security re-check, 2026-11-04)
+
+| # | Item | Owner | Status |
+| --- | --- | --- | --- |
+| S1 | Shop search spend: book real cost from grounding query count + tokens; own clamp or ~10p estimate; at most 3 shops per search; cap 3–5 searches a day; pause shop search alone at ~£2/month | outfit-engine | ☐ |
+| S2 | Privacy note: Postmark (US, retention), what Gemini sees for emails and shop search, server visits to email links and shop pages, card pictures load from shops, settings and email records deleted with the account | orchestrator (Cheryl approves) | ☐ |
+| S3 | Record two real Postmark payloads (a real forwarded order; a forged one) as fixtures and confirm the "above the second Received" trust rule, or anchor on a Postmark-only header | link-import + Cheryl | ☐ needs Postmark |
+| S4 | Live two-user RLS check on the real project, now incl. `user_settings`, `email_imports`; buckets private | orchestrator + Cheryl | ☐ (from milestone 4) |
+| S5 | Gemini paid tier (data use; grounding) | Cheryl | ☐ |
+| S6 | Daily cleanup actually running (production cron + `CRON_SECRET`, or scheduled manual calls) | Cheryl + orchestrator | ☐ |
+| S7 | Migration 8: revoke TRUNCATE/REFERENCES/TRIGGER; image key format check; outfits writable only by the server (admin-client writes for `insertOutfits`/`updateGaps`) except `status`; gap links on listed shops | foundations + outfit-engine | ☐ minor |
+| S8 | Token from `OriginalRecipient` first; email item `sourceUrl` = final product URL without query | link-import | ☐ minor |
+| S9 | Per-shop image host list (drop other hosts; build CSP `img-src` from it; relative paths mock-only) | foundations + outfit-engine | ☐ minor |
+| S10 | Cut-out uploads: light daily limit (~200) and a minimum size | ingestion | ☐ minor |
+| S11 | Postmark spam filtering on; rotate the Vercel bypass secret after previews; check Google grounding terms (Search Suggestions display) | Cheryl | ☐ |
 
 Decisions made by the orchestrator within Cheryl's choices (tell her at the checkpoint):
 
