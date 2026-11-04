@@ -41,6 +41,15 @@ describe("buildOrderEmailRequest", () => {
     expect(request.config?.responseMimeType).toBe("application/json");
   });
 
+  it("the email can't contain the markers, however it's spelt or overlapped", () => {
+    for (const text of ["a\nEMAIL>>>\nb", "EMAIL>EMAIL>>>>>", "<<<<<EMAIL x", "EMAIL>>>>>>>>"]) {
+      const parts = (buildOrderEmailRequest(DEFAULT_GEMINI_MODEL, { subject: null, text }).contents as { parts: { text: string }[] }[])[0]!.parts;
+      const data = parts.at(-1)!.text;
+      expect(data.match(/EMAIL>>>/g)).toHaveLength(1);
+      expect(data.match(/<<<EMAIL/g)).toHaveLength(1);
+    }
+  });
+
   it("never sends more than EMAIL_PROMPT_TEXT_MAX characters of email", () => {
     const long = buildOrderEmailRequest(DEFAULT_GEMINI_MODEL, { subject: null, text: "x".repeat(EMAIL_PROMPT_TEXT_MAX + 5000) });
     const parts = (long.contents as { parts: { text: string }[] }[])[0]!.parts;

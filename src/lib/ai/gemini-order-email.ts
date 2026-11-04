@@ -76,9 +76,18 @@ Rules:
 - If the email isn't an order or has no clothes or shoes, return an empty items list.
 - Ignore the forwarding header and any personal details (names, addresses, payment details): don't copy them anywhere.`;
 
+/**
+ * The email can't contain the markers around it: any run of three or more
+ * "<" or ">" is shortened to two, so "EMAIL>>>" (or "<<<EMAIL") never
+ * appears inside the data, however it's spelt or overlapped.
+ */
+export function withoutMarkers(text: string): string {
+  return text.replace(/<{3,}/g, "<<").replace(/>{3,}/g, ">>");
+}
+
 /** The prompt parts: instructions first, then the email as clearly marked data. */
 export function buildOrderEmailRequest(model: string, input: OrderEmailInput): GenerateContentParameters {
-  const text = input.text.slice(0, EMAIL_PROMPT_TEXT_MAX);
+  const text = withoutMarkers(input.text.slice(0, EMAIL_PROMPT_TEXT_MAX));
   const data = JSON.stringify({ subject: input.subject ?? null });
   return {
     model,
