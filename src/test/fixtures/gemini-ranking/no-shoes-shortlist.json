@@ -1,0 +1,7 @@
+{
+  "model": "none",
+  "synthetic": true,
+  "note": "Hand-written in Gemini's format (free-tier quota ran out before a recording): pass 1 on a wardrobe without shoes, each outfit describing its shoes gap.",
+  "recordedAt": null,
+  "text": "{\"outfits\": [{\"itemIds\": [\"I1\", \"I4\"], \"gaps\": [{\"category\": \"shoes\", \"subcategory\": \"trainers\", \"colours\": [\"white\"], \"description\": \"White leather trainers\"}]}, {\"itemIds\": [\"I3\", \"I4\", \"I9\"], \"gaps\": [{\"category\": \"shoes\", \"subcategory\": \"boots\", \"colours\": [\"brown\"], \"description\": \"Brown leather Chelsea boots\"}]}, {\"itemIds\": [\"I7\"], \"gaps\": [{\"category\": \"shoes\", \"subcategory\": \"boots\", \"colours\": [\"black\"], \"description\": \"Black ankle boots with a low block heel\"}]}, {\"itemIds\": [\"I2\", \"I5\", \"I8\"], \"gaps\": [{\"category\": \"shoes\", \"subcategory\": \"loafers\", \"colours\": [\"tan\"], \"description\": \"Tan suede loafers\"}]}, {\"itemIds\": [\"I3\", \"I6\"], \"gaps\": [{\"category\": \"shoes\", \"colours\": [\"black\", \"white\"], \"description\": \"Black canvas trainers\"}]}, {\"itemIds\": [\"I1\", \"I5\"], \"gaps\": [{\"category\": \"shoes\", \"subcategory\": \"trainers\", \"colours\": [\"navy\"], \"description\": \"Navy suede trainers\"}]}]}"
+}

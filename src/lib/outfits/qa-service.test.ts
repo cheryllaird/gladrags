@@ -74,7 +74,7 @@ function idsShownToModel(fromShortlist = 0, fromFinal = 0): Set<string> {
   const ids = new Set<string>();
   for (const s of ranking.shortlists.slice(fromShortlist)) {
     s.items.forEach((i) => ids.add(i.id));
-    s.candidates.flat().forEach((id) => ids.add(id));
+    s.candidates.flatMap((c) => c.itemIds).forEach((id) => ids.add(id));
   }
   for (const f of ranking.finals.slice(fromFinal)) f.shortlist.forEach((o) => o.itemIds.forEach((id) => ids.add(id)));
   return ids;
@@ -196,44 +196,53 @@ describe("QA caps: counting and costing", () => {
   });
 
   it("nothing_fits isn't counted or costed", async () => {
-    // Formal event (4–5, loosened to 3–5): only the trainers (2) are left as shoes.
-    mock.deleteItem(byDescription("courts").id);
-    mock.deleteItem(byDescription("loafers").id);
-    const response = await service.generate(USER, { style: { kind: "preset", presetId: "formal_event" }, count: 3 });
+    // Comfy (1, loosened to 1–2): with everything at 2 or below gone, no owned item fits.
+    for (const item of MOCK_ITEMS.filter((i) => i.tags.formality <= 2)) mock.deleteItem(item.id);
+    const response = await service.generate(USER, { style: { kind: "preset", presetId: "comfy" }, count: 3 });
     expect(response).toMatchObject({ status: "incomplete_wardrobe", reason: "nothing_fits", missingCategories: [] });
     expect(count("outfit_request")).toBe(0);
     expect(store.events).toEqual([]);
   });
 
+  it("shoes that don't suit the style become a gap rather than nothing_fits (counted, as the model ran)", async () => {
+    // Formal event (4–5, loosened to 3–5): only the trainers (2) are left as shoes, so they're filtered out.
+    mock.deleteItem(byDescription("courts").id);
+    mock.deleteItem(byDescription("loafers").id);
+    const response = await service.generate(USER, { style: { kind: "preset", presetId: "formal_event" }, count: 3 });
+    expect(response).toMatchObject({ status: "ok", missingCategories: ["shoes"] });
+    for (const o of ok(response)) expect(o.gaps.map((g) => g.category)).toEqual(["shoes"]);
+    expect(count("outfit_request")).toBe(1);
+  });
+
   it("an incomplete wardrobe from a refine isn't counted, though its feedback is kept", async () => {
-    const [parent] = ok(await service.generate(USER, SMART));
-    for (const item of MOCK_ITEMS.filter((i) => i.tags.category === "shoes" && !parent!.itemIds.includes(i.id))) mock.deleteItem(item.id);
-    const shoes = parent!.items.find((i) => i.tags.category === "shoes")!;
-    const response = await service.refine(USER, parent!.id, { kind: "swap", itemId: shoes.id });
+    for (const item of MOCK_ITEMS.slice(1)) mock.deleteItem(item.id);
+    const [parent] = ok(await service.generate(USER, { style: { kind: "custom", text: "anything" }, count: 3 }));
+    const response = await service.refine(USER, parent!.id, { kind: "swap", itemId: MOCK_ITEMS[0]!.id });
     expect(response.status).toBe("incomplete_wardrobe");
     expect(count("outfit_request")).toBe(1);
+    expect(mock.listOutfitFeedback()).toEqual([expect.objectContaining({ outfitId: parent!.id, kind: "swap" })]);
   });
 });
 
-describe("QA missing category message is anchor-aware", () => {
-  it("a top anchor with no bottoms but a dress asks for a bottom", async () => {
+describe("QA missing categories are anchor-aware (and become gaps)", () => {
+  it("a top anchor with no bottoms but a dress gets a bottom gap, and lists bottom as missing", async () => {
     for (const item of MOCK_ITEMS.filter((i) => i.tags.category === "bottom")) mock.deleteItem(item.id);
     const shirt = byDescription("oxford");
     const response = await service.generate(USER, { ...SMART, anchorItemId: shirt.id });
-    expect(response).toEqual({
-      status: "incomplete_wardrobe",
-      reason: "missing_category",
-      missingCategories: ["bottom"],
-      message: "To build an outfit around this item, add a bottom to your wardrobe.",
-    });
-    // Without the anchor, the dress makes outfits.
-    expect((await service.generate(USER, SMART)).status).not.toBe("incomplete_wardrobe");
+    expect(response).toMatchObject({ status: "ok", missingCategories: ["bottom"] });
+    for (const o of ok(response)) {
+      expect(o.itemIds).toContain(shirt.id);
+      expect(o.gaps.map((g) => g.category)).toContain("bottom");
+    }
+    // Without the anchor, the dress makes complete outfits and nothing is missing.
+    expect(await service.generate(USER, SMART)).toMatchObject({ status: "ok", missingCategories: [] });
   });
 
-  it("no shoes at all, no anchor: asks for shoes", async () => {
+  it("no shoes at all, no anchor: every outfit has a shoes gap", async () => {
     for (const item of MOCK_ITEMS.filter((i) => i.tags.category === "shoes")) mock.deleteItem(item.id);
     const response = await service.generate(USER, SMART);
-    expect(response).toMatchObject({ reason: "missing_category", missingCategories: ["shoes"], message: "Add shoes to your wardrobe to get outfits." });
+    expect(response).toMatchObject({ status: "ok", missingCategories: ["shoes"] });
+    for (const o of ok(response)) expect(o.gaps.map((g) => g.category)).toEqual(["shoes"]);
   });
 });
 

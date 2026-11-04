@@ -41,8 +41,29 @@ export const MAX_REJECTED_OUTFITS_FOR_HINTS = 30;
 /** ...and at most this many pairs in one prompt. */
 export const MAX_AVOID_PAIRS = 60;
 
+/**
+ * When the wardrobe allows outfits with gaps, at least this share of the
+ * candidates sent to ranking are gap outfits (if there are that many), so
+ * complete outfits can't crowd them out entirely. Complete outfits still
+ * come first and the prompt prefers them.
+ */
+export const GAP_CANDIDATE_SHARE = 0.25;
+
 /** Thumbnails for pass 2 are downloaded this many at a time. */
 export const THUMBNAIL_CONCURRENCY = 6;
 
 // Pass 1's output schema allows at most SHORTLIST_MAX outfits.
 if (SHORTLIST_SIZE > SHORTLIST_MAX) throw new Error("SHORTLIST_SIZE is larger than the shortlist schema allows");
+
+/** "Find in my shops": candidate pages checked per gap (the model may give up to 8). */
+export const SHOP_PAGE_CHECKS_PER_GAP = 5;
+
+/** "Find in my shops": product pages fetched at a time. */
+export const SHOP_PAGE_CONCURRENCY = 6;
+
+/**
+ * "Find in my shops": time for all the page checks together. With the
+ * grounded search's two attempts (GEMINI_SHOP_SEARCH_TIMEOUT_MS each) this
+ * keeps the route inside its 60 s maxDuration.
+ */
+export const SHOP_PAGE_BUDGET_MS = 12_000;

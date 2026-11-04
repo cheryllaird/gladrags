@@ -4,6 +4,7 @@ import { FakeRankingProvider } from "@/lib/ai/fakes";
 import type { ModelCall, RankingProvider } from "@/lib/ai/types";
 import { ApiException } from "@/lib/api/errors";
 import { finalReplies, INVENTED_ID, shortlistReplies, W, WARDROBE } from "@/test/fixtures/outfit-engine";
+import { okResult } from "@/test/fixtures/outfit-engine";
 import { entry, wardrobe } from "@/test/outfit-helpers";
 import { seededRandom } from "./candidates";
 import { SHORTLIST_SIZE } from "./config";
@@ -58,13 +59,13 @@ describe("two-pass ranking", () => {
     const ranking = fake([shortlistReplies.valid], [finalReplies.valid]);
     const result = await runOutfitPipeline(input({ guidance: "no heels" }), deps(ranking));
 
-    expect(result).toEqual({ status: "ok", outfits: finalReplies.valid.outfits });
+    expect(result).toEqual(okResult(finalReplies.valid.outfits));
 
     const [pass1] = ranking.shortlistCalls;
     expect(pass1!.shortlistSize).toBe(SHORTLIST_SIZE);
     expect(pass1!.items.map((i) => i.id).sort()).toEqual(WARDROBE.map((i) => i.id).sort());
     expect(pass1!.candidates.length).toBe(40);
-    expect(pass1!.request).toEqual({ style: WORK, guidance: "no heels", anchorItemId: undefined });
+    expect(pass1!.request).toEqual({ style: WORK, guidance: "no heels", includeShopItems: false, anchorItemId: undefined });
     // Pass 1 sends tags only: no images anywhere in its input.
     expect(JSON.stringify(pass1)).not.toContain("image");
 
@@ -111,7 +112,7 @@ describe("what pass 1 sees and may pick", () => {
     const ranking = fake([{}], [{}]);
     await runOutfitPipeline(input({ items: big, anchorItemId: anchor.id }), deps(ranking)).catch(() => undefined);
     const pass1 = ranking.shortlistCalls[0]!;
-    const inCandidates = new Set([...pass1.candidates.flat(), anchor.id]);
+    const inCandidates = new Set([...pass1.candidates.flatMap((c) => c.itemIds), anchor.id]);
     expect(pass1.items.length).toBeLessThan(big.length);
     for (const item of pass1.items) expect(inCandidates.has(item.id)).toBe(true);
   });
@@ -120,8 +121,8 @@ describe("what pass 1 sees and may pick", () => {
     const ranking = new FakeRankingProvider({ shortlist: [{}], final: [{}] });
     let offered: string[][] = [];
     ranking.shortlist = async (i) => {
-      offered = i.candidates;
-      const keys = new Set(i.candidates.map((c) => [...c].sort().join()));
+      offered = i.candidates.map((c) => c.itemIds);
+      const keys = new Set(i.candidates.map((c) => [...c.itemIds].sort().join()));
       const tops = i.items.filter((x) => x.tags.category === "top");
       const bottoms = i.items.filter((x) => x.tags.category === "bottom");
       const shoes = i.items.filter((x) => x.tags.category === "shoes");
@@ -150,7 +151,7 @@ describe("validation and the single retry", () => {
     const ranking = fake([shortlistReplies.valid], [finalReplies.inventedItemId]);
     const result = await runOutfitPipeline(input(), deps(ranking));
     expect(ranking.finalCalls).toHaveLength(2);
-    expect(result).toEqual({ status: "ok", outfits: [finalReplies.inventedItemId.outfits[0]] });
+    expect(result).toEqual(okResult([finalReplies.inventedItemId.outfits[0]!]));
     // The invented ID never comes back.
     expect(JSON.stringify(result)).not.toContain(INVENTED_ID);
   });
@@ -206,7 +207,7 @@ describe("anchor item", () => {
     expect(ranking.finalCalls).toHaveLength(2);
     expect(result.status).toBe("ok");
     if (result.status === "ok") for (const o of result.outfits) expect(o.itemIds).toContain(W.coat);
-    for (const ids of ranking.shortlistCalls[0]!.candidates) expect(ids).toContain(W.coat);
+    for (const c of ranking.shortlistCalls[0]!.candidates) expect(c.itemIds).toContain(W.coat);
     expect(ranking.shortlistCalls[0]!.request.anchorItemId).toBe(W.coat);
   });
 
@@ -219,28 +220,17 @@ describe("anchor item", () => {
   });
 });
 
-describe("incomplete wardrobe", () => {
-  it("says which category is missing, without calling the model or counting the request", async () => {
+describe("incomplete wardrobe (missing categories become gaps: see pipeline-gaps.test.ts)", () => {
+  it("an empty wardrobe answers empty_wardrobe, without calling the model or counting the request", async () => {
     const ranking = fake([shortlistReplies.valid], [finalReplies.valid]);
-    const noShoes = WARDROBE.filter((i) => i.tags.category !== "shoes");
-    expect(await runOutfitPipeline(input({ items: noShoes }), deps(ranking))).toEqual({
+    expect(await runOutfitPipeline(input({ items: [] }), deps(ranking))).toEqual({
       status: "incomplete_wardrobe",
-      reason: "missing_category",
-      missingCategories: ["shoes"],
+      reason: "empty_wardrobe",
+      missingCategories: [],
     });
     expect(ranking.shortlistCalls).toHaveLength(0);
+    expect(ranking.finalCalls).toHaveLength(0);
     expect(rankingStarts).toBe(0);
-  });
-
-  it("takes the anchor into account (a top needs a bottom even with a dress)", async () => {
-    const items = WARDROBE.filter((i) => i.tags.category !== "bottom");
-    const result = await runOutfitPipeline(input({ items, anchorItemId: W.top1 }), deps(fake([{}], [{}])));
-    expect(result).toMatchObject({ reason: "missing_category", missingCategories: ["bottom"] });
-  });
-
-  it("an empty wardrobe needs a top, a bottom and shoes", async () => {
-    const result = await runOutfitPipeline(input({ items: [] }), deps(fake([{}], [{}])));
-    expect(result).toMatchObject({ reason: "missing_category", missingCategories: ["top", "bottom", "shoes"] });
   });
 
   it("reports nothing_fits when combinations exist but none suit the style", async () => {
@@ -301,7 +291,7 @@ describe("rejections and refinement", () => {
       [W.bottom1, W.shoes1],
     ]);
     const key = (ids: string[]) => [...ids].sort().join();
-    expect(pass1.candidates.map(key)).not.toContain(key(rejected));
+    expect(pass1.candidates.map((c) => key(c.itemIds))).not.toContain(key(rejected));
 
     // The recorded replies start with the rejected outfit, so both passes
     // retry and then keep only their other outfits.
@@ -329,7 +319,7 @@ describe("rejections and refinement", () => {
       }),
       deps(ranking),
     );
-    expect(result).toEqual({ status: "ok", outfits: swapPick.outfits });
+    expect(result).toEqual(okResult(swapPick.outfits));
     const pass2 = ranking.finalCalls[0]!;
     // Two options: shoes2 with and without the coat.
     expect(pass2.shortlist.map((o) => o.itemIds.slice(0, 3))).toEqual([
@@ -348,14 +338,30 @@ describe("rejections and refinement", () => {
     ).rejects.toMatchObject({ code: "ai_failed" });
   });
 
-  it("a swap lets the kept items go when nothing else can replace the swapped one", async () => {
-    // Swapping the only top: no outfit can keep the bottom, so the dress comes in.
+  it("a swap keeps the other items with a gap when nothing in the wardrobe can replace the swapped one", async () => {
+    // Swapping the only top: the bottom and shoes stay, and the top becomes
+    // a gap the model describes (not the dress, which would drop them).
     const items = wardrobe({ bottom: 1, shoes: 1, dress_jumpsuit: 1 });
-    const [bottom, shoes, dress] = items.map((i) => i.id) as [string, string, string];
-    const pick = { outfits: [{ itemIds: [dress, shoes], name: "Dress instead", reason: "No other top" }] };
+    const [bottom, shoes] = items.map((i) => i.id) as [string, string, string];
+    const topGap = { category: "top", subcategory: "shirt", colours: ["white"], description: "Crisp white shirt" } as const;
+    const pick = { outfits: [{ itemIds: [bottom, shoes], gaps: [topGap], name: "New top", reason: "A white shirt keeps it easy" }] };
     const ranking = fake([{}], [pick]);
     const result = await runOutfitPipeline(input({ items, keepItemIds: [bottom, shoes] }), deps(ranking));
-    expect(result).toEqual({ status: "ok", outfits: pick.outfits });
+    // No anchor, and the wardrobe has a dress, so nothing is "missing" for
+    // outfits in general (missingCategoriesForOutfits); the swap's own gap shows on the outfit.
+    expect(result).toEqual(okResult(pick.outfits));
+    expect(ranking.finalCalls[0]!.shortlist).toEqual([{ itemIds: [bottom, shoes], gaps: [{ category: "top" }], thumbnails: expect.any(Array) }]);
+  });
+
+  it("a swap lets the kept items go when they can't make any outfit", async () => {
+    // Keeping both tops' partner is impossible: two kept items in one slot.
+    const items = wardrobe({ top: 2, bottom: 1, shoes: 1, dress_jumpsuit: 1 });
+    const [top1, top2, , shoes, dress] = items.map((i) => i.id) as [string, string, string, string, string];
+    const pick = { outfits: [{ itemIds: [dress, shoes], name: "Dress instead", reason: "Simple" }] };
+    const ranking = fake([{}], [pick]);
+    const result = await runOutfitPipeline(input({ items, keepItemIds: [top1, top2] }), deps(ranking));
+    expect(result).toMatchObject({ status: "ok" });
+    expect(ranking.finalCalls[0]!.shortlist.some((o) => o.itemIds.includes(dress))).toBe(true);
   });
 
   it("guidance refinement never returns the outfit being refined", async () => {

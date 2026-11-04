@@ -131,7 +131,7 @@ describe("pass 1 prompt", () => {
 
   it("sends the candidates, the style, guidance and avoid hints as data", () => {
     expect(data.candidates).toHaveLength(input.candidates.length);
-    expect(data.candidates[0]).toEqual(refs.refsOf(input.candidates[0]!));
+    expect(data.candidates[0]).toEqual(refs.refsOf(input.candidates[0]!.itemIds));
     expect(data.style).toEqual({
       preset: "Work",
       formality: "3 to 4 on a scale from 1 (loungewear) to 5 (formal)",
@@ -266,7 +266,7 @@ describe("pass 2 prompt", () => {
 
   it("tells the model to use refs only in itemIds, and to choose only what's offered", () => {
     const system = String(params.config!.systemInstruction);
-    expect(system).toContain("never write a ref in a name or reason");
+    expect(system).toContain("never write a ref in a name, reason or gap description");
     expect(system).toContain('Choose only outfits listed in "shortlist"');
     expect(String(buildShortlistPrompt(workShortlistInput()).params.config!.systemInstruction)).toContain(
       'Choose only outfits listed in "candidates"',

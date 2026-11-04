@@ -1,4 +1,4 @@
-import type { ItemTags } from "@/contracts";
+import type { GapDescription, ItemTags } from "@/contracts";
 
 /** What the pure engine functions need from an item. */
 export interface TaggedItem {
@@ -14,12 +14,20 @@ export interface ImageRef {
 
 /** A wardrobe item as the engine loads it: tags plus where to find its picture. */
 export interface WardrobeEntry extends TaggedItem {
-  image: ImageRef;
+  /**
+   * The picture ranking pass 2 looks at: the cut-out, or the original when
+   * there's no cut-out. Null for an item still waiting for a photo
+   * (`needsPhoto`, an order-email line saved with a placeholder): the model
+   * judges it from its tags alone.
+   */
+  image: ImageRef | null;
 }
 
 /** One outfit the model picked, after validation. */
 export interface RankedOutfit {
   itemIds: string[];
+  /** The model's descriptions of the outfit's gap slots. Empty for a complete outfit. */
+  gaps: GapDescription[];
   name: string;
   reason: string;
 }

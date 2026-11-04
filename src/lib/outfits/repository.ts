@@ -1,4 +1,4 @@
-import type { FeedbackKind, Outfit, OutfitStatus, StoredOutfitRequest } from "@/contracts";
+import type { Category, FeedbackKind, GapDescription, Outfit, OutfitGap, OutfitStatus, ShopId, StoredOutfitRequest } from "@/contracts";
 import type { WardrobeEntry } from "./types";
 
 /** GET /api/outfits returns at most this many, newest first. */
@@ -9,7 +9,20 @@ export interface NewOutfit {
   name: string;
   reason: string;
   itemIds: string[];
+  /** The model's descriptions of the gap slots; stored with no shop results yet. */
+  gaps: GapDescription[];
   parentOutfitId: string | null;
+}
+
+/** A rejected outfit's shape, for "avoid" hints and not suggesting it again. */
+export interface RejectedOutfit {
+  itemIds: string[];
+  gaps: Category[];
+}
+
+/** A gap as first stored: the model's description, nothing searched or chosen yet. */
+export function newGap(gap: GapDescription): OutfitGap {
+  return { ...gap, shopResults: [], searchedAt: null, shopProduct: null };
 }
 
 /**
@@ -27,7 +40,11 @@ export interface OutfitRepository {
   insertOutfits(userId: string, outfits: readonly NewOutfit[]): Promise<Outfit[]>;
   /** Null when the outfit isn't the user's. */
   setStatus(userId: string, outfitId: string, status: OutfitStatus): Promise<Outfit | null>;
+  /** Replaces the outfit's gaps (shop results, chosen product). Null when the outfit isn't the user's. */
+  updateGaps(userId: string, outfitId: string, gaps: readonly OutfitGap[]): Promise<Outfit | null>;
   addFeedback(userId: string, outfitId: string, kind: FeedbackKind, detail: string | null): Promise<void>;
-  /** Item IDs of the user's rejected outfits, newest first, at most `limit`. */
-  listRejectedItemIds(userId: string, limit: number): Promise<string[][]>;
+  /** The user's rejected outfits (items and gap slots), newest first, at most `limit`. */
+  listRejectedOutfits(userId: string, limit: number): Promise<RejectedOutfit[]>;
+  /** The shops "Find in my shops" searches (user_settings.favourite_shop_ids). */
+  getFavouriteShopIds(userId: string): Promise<ShopId[]>;
 }

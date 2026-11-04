@@ -1,0 +1,7 @@
+{
+  "model": "none",
+  "synthetic": true,
+  "note": "Hand-written: a valid reply that found nothing.",
+  "recordedAt": null,
+  "text": "{\"gaps\": [{\"category\": \"shoes\", \"candidates\": []}, {\"category\": \"outerwear\", \"candidates\": []}]}"
+}

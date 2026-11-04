@@ -97,17 +97,44 @@ describe("generate", () => {
     expect(count("outfit_request")).toBe(0);
   });
 
-  it("says which category is missing, without counting the request", async () => {
+  it("fills a missing category with a gap in every outfit, lists it, saves the gaps and counts the request", async () => {
     for (const item of MOCK_ITEMS.filter((i) => i.tags.category === "shoes")) mock.deleteItem(item.id);
+    const response = await service.generate(USER, { style: { kind: "preset", presetId: "casual" }, count: 4 });
+    expect(response).toMatchObject({ status: "ok", missingCategories: ["shoes"] });
+    const outfits = ok(response);
+    for (const o of outfits) {
+      expect(OutfitSchema.parse(o)).toEqual(o);
+      expect(o.gaps.map((g) => g.category)).toEqual(["shoes"]);
+      expect(o.gaps[0]).toMatchObject({ shopResults: [], searchedAt: null, shopProduct: null });
+      expect(checkComposition(o.items.map((i) => i.tags.category), ["shoes"])).toEqual({ ok: true });
+      expect(mock.getOutfit(o.id)!.gaps).toEqual(o.gaps);
+    }
+    expect(count("outfit_request")).toBe(1);
+  });
+
+  it("answers empty_wardrobe for a wardrobe with no items, without counting or calling the model", async () => {
+    for (const item of MOCK_ITEMS) mock.deleteItem(item.id);
     const response = await service.generate(USER, { style: { kind: "preset", presetId: "casual" }, count: 4 });
     expect(response).toEqual({
       status: "incomplete_wardrobe",
-      reason: "missing_category",
-      missingCategories: ["shoes"],
-      message: "Add shoes to your wardrobe to get outfits.",
+      reason: "empty_wardrobe",
+      missingCategories: [],
+      message: "Your wardrobe is empty. Add your first item and we'll suggest outfits around it.",
     });
     expect(count("outfit_request")).toBe(0);
     expect(ranking.finals).toHaveLength(0);
+  });
+
+  it("with includeShopItems, offers outfits with one shop-item gap and stores the flag", async () => {
+    const response = await service.generate(USER, { style: { kind: "preset", presetId: "casual" }, includeShopItems: true, count: 5 });
+    expect(response).toMatchObject({ status: "ok", missingCategories: [] });
+    const offered = ranking.shortlists[0]?.candidates ?? ranking.finals[0]!.shortlist;
+    expect(offered.some((c) => c.gaps.length === 1)).toBe(true);
+    expect(offered.every((c) => c.gaps.length <= 1)).toBe(true);
+    for (const o of ok(response)) {
+      expect(o.request.includeShopItems).toBe(true);
+      expect(o.gaps.length).toBeLessThanOrEqual(1);
+    }
   });
 
   it("says nothing fits when no combination suits the style", async () => {
@@ -148,6 +175,20 @@ describe("caps", () => {
 
     expect(await service.list(USER)).toHaveLength(3);
     expect((await service.updateStatus(USER, outfit!.id, { status: "saved" })).status).toBe("saved");
+  });
+
+  it("keeps the request counted when AI pauses after pass 1 was made (it may be billed)", async () => {
+    const shortlist = ranking.shortlist.bind(ranking);
+    ranking.shortlist = async (input) => {
+      const call = await shortlist(input);
+      await store.record({ userId: null, kind: "tagging", costPence: MONTHLY_AI_SPEND_CAP_PENCE, provider: "gemini" });
+      return call;
+    };
+    const error = await service.generate(USER, { style: { kind: "preset", presetId: "work" }, count: 3 }).catch((e: unknown) => e);
+    expect((error as CapReachedError).cap).toBe("monthly_ai_spend");
+    expect(ranking.shortlists).toHaveLength(1);
+    expect(ranking.finals).toHaveLength(0);
+    expect(count("outfit_request")).toBe(1);
   });
 
   it("records the cost of every model call", async () => {
@@ -215,11 +256,41 @@ describe("refine", () => {
     }
   });
 
-  it("says what's missing when the swapped item was the only one of its kind", async () => {
+  it("swapping out the only item of its kind keeps the rest and suggests one to add (a gap)", async () => {
     for (const item of MOCK_ITEMS.filter((i) => i.tags.category === "shoes" && !parent.itemIds.includes(i.id))) mock.deleteItem(item.id);
     const shoes = parent.items.find((i) => i.tags.category === "shoes")!;
     const response = await service.refine(USER, parent.id, { kind: "swap", itemId: shoes.id });
-    expect(response).toMatchObject({ status: "incomplete_wardrobe", reason: "missing_category", missingCategories: ["shoes"] });
+    expect(response).toMatchObject({ status: "ok", missingCategories: ["shoes"] });
+    for (const o of ok(response)) {
+      expect(o.itemIds).not.toContain(shoes.id);
+      expect(o.gaps.map((g) => g.category)).toEqual(["shoes"]);
+      expect(o.parentOutfitId).toBe(parent.id);
+    }
+  });
+
+  it("a swap on an outfit with gaps sends its gaps as part of the previous outfit, and keeps includeShopItems", async () => {
+    for (const item of MOCK_ITEMS.filter((i) => i.tags.category === "shoes")) mock.deleteItem(item.id);
+    const [gapped] = ok(await service.generate(USER, { style: { kind: "preset", presetId: "casual" }, includeShopItems: true, count: 3 }));
+    const swapOut = gapped!.itemIds[0]!;
+    const response = await service.refine(USER, gapped!.id, { kind: "swap", itemId: swapOut });
+    expect(ranking.finals.at(-1)!.refinement).toEqual({
+      previousItemIds: gapped!.itemIds,
+      previousGaps: gapped!.gaps.map(({ category, subcategory, colours, description }) => ({ category, subcategory, colours, description })),
+      feedback: { kind: "swap", itemId: swapOut },
+    });
+    for (const o of ok(response)) {
+      expect(o.itemIds).not.toContain(swapOut);
+      expect(o.request.includeShopItems).toBe(true);
+    }
+  });
+
+  it("swapping out the wardrobe's only item says nothing else can go in, without counting", async () => {
+    for (const item of MOCK_ITEMS.slice(1)) mock.deleteItem(item.id);
+    const [only] = ok(await service.generate(USER, { style: { kind: "custom", text: "anything" }, count: 3 }));
+    const before = count("outfit_request");
+    const response = await service.refine(USER, only!.id, { kind: "swap", itemId: MOCK_ITEMS[0]!.id });
+    expect(response).toMatchObject({ status: "incomplete_wardrobe", reason: "nothing_fits", missingCategories: [] });
+    expect(count("outfit_request")).toBe(before);
   });
 });
 
@@ -275,11 +346,8 @@ describe("status and avoid hints", () => {
 describe("messages and helpers", () => {
   it("words the incomplete-wardrobe messages", () => {
     const work = { kind: "preset", presetId: "work" } as const;
-    expect(incompleteMessage({ status: "incomplete_wardrobe", reason: "missing_category", missingCategories: ["top", "bottom", "shoes"] }, work, false)).toBe(
-      "Add a top, a bottom and shoes to your wardrobe to get outfits.",
-    );
-    expect(incompleteMessage({ status: "incomplete_wardrobe", reason: "missing_category", missingCategories: ["bottom"] }, work, true)).toBe(
-      "To build an outfit around this item, add a bottom to your wardrobe.",
+    expect(incompleteMessage({ status: "incomplete_wardrobe", reason: "empty_wardrobe", missingCategories: [] }, work, false)).toBe(
+      "Your wardrobe is empty. Add your first item and we'll suggest outfits around it.",
     );
     expect(incompleteMessage({ status: "incomplete_wardrobe", reason: "nothing_fits", missingCategories: [] }, { kind: "custom", text: "Gig" }, false)).toBe(
       'Nothing in your wardrobe suits "Gig" yet. Try another style, or add more items.',

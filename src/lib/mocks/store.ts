@@ -11,9 +11,6 @@
 import {
   DEFAULT_FAVOURITE_SHOP_IDS,
   LINK_IMPORT_TTL_SECONDS,
-  SHOPS_BY_ID,
-  SHOP_PRODUCTS_PER_GAP,
-  type Category,
   type CreateItemRequest,
   type EmailImport,
   type FeedbackKind,
@@ -25,7 +22,6 @@ import {
   type OutfitGap,
   type OutfitStatus,
   type ShopId,
-  type ShopProduct,
   type StoredOutfitRequest,
   type WardrobeItem,
 } from "@/contracts";
@@ -300,6 +296,14 @@ export function setOutfitStatus(id: string, status: OutfitStatus): Outfit | null
   return clone(outfit);
 }
 
+/** Replace an outfit's gaps (shop results, chosen product). Null if there's no such outfit. */
+export function setOutfitGaps(id: string, gaps: readonly OutfitGap[]): Outfit | null {
+  const outfit = state().outfits.get(id);
+  if (!outfit) return null;
+  outfit.gaps = clone([...gaps]);
+  return clone(outfit);
+}
+
 /** Save a new outfit (the outfit engine builds it). */
 export function insertOutfit(outfit: Outfit): Outfit {
   state().outfits.set(outfit.id, clone(outfit));
@@ -342,59 +346,6 @@ export function mockGapOutfits(request: StoredOutfitRequest): Outfit[] {
     );
   }
   return outfits;
-}
-
-function mockProduct(shopId: ShopId, gap: OutfitGap, n: number): ShopProduct {
-  const shop = SHOPS_BY_ID[shopId];
-  const slug = gap.description.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-  return {
-    shopId,
-    title: `${gap.description} (${shop.name})`,
-    url: `https://www.${shop.domains[0]}/mock-product/${slug}-${n}`,
-    priceText: `£${25 + n * 10}`,
-    imageUrl: n === 2 ? null : MOCK_UPLOAD_IMAGE_URL,
-  };
-}
-
-/**
- * "Find in my shops" in mock mode: up to three made-up products per gap
- * from the user's favourite shops (the third has no image). Null if the
- * outfit doesn't exist.
- */
-export function mockShopSearch(outfitId: string): Outfit | null {
-  const outfit = state().outfits.get(outfitId);
-  if (!outfit) return null;
-  const shops = state().settings.favouriteShopIds;
-  const searchedAt = now();
-  for (const gap of outfit.gaps) {
-    gap.shopResults = Array.from({ length: SHOP_PRODUCTS_PER_GAP }, (_, n) => mockProduct(shops[n % shops.length]!, gap, n));
-    gap.searchedAt = searchedAt;
-  }
-  return clone(outfit);
-}
-
-/**
- * Pick (or clear, with null) the product for an outfit's gap. "no_gap"
- * if the outfit has no gap in that category, "not_a_result" if the URL
- * isn't one of its results, null if there's no such outfit.
- */
-export function chooseGapProduct(
-  outfitId: string,
-  category: Category,
-  productUrl: string | null,
-): Outfit | "no_gap" | "not_a_result" | null {
-  const outfit = state().outfits.get(outfitId);
-  if (!outfit) return null;
-  const gap = outfit.gaps.find((g) => g.category === category);
-  if (!gap) return "no_gap";
-  if (productUrl === null) {
-    gap.shopProduct = null;
-  } else {
-    const product = gap.shopResults.find((p) => p.url === productUrl);
-    if (!product) return "not_a_result";
-    gap.shopProduct = clone(product);
-  }
-  return clone(outfit);
 }
 
 // ---------------------------------------------------------------------------

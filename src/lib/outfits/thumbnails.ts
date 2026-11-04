@@ -13,8 +13,10 @@ import type { ImageRef, WardrobeEntry } from "./types";
 export interface ThumbnailSource {
   /**
    * A ~256 px picture of each item's cut-out (or its original when there's
-   * no cut-out), by item ID. An item whose picture can't be loaded is left
-   * out, and ranking goes ahead with its tags only.
+   * no cut-out), by item ID. An item without a picture (`image` null: it
+   * still needs a photo) or whose picture can't be loaded is left out;
+   * pass 2 sends every shortlisted item's tags as well, so the model
+   * judges such an item by its tags alone.
    */
   getThumbnails(items: readonly WardrobeEntry[]): Promise<Map<string, ImageInput>>;
 }
@@ -28,7 +30,7 @@ export interface ImageStore {
 export type ImageResizer = (image: ImageInput, maxPx: number) => Promise<ImageInput>;
 
 /** Run `task` over `values`, at most `limit` at a time. */
-async function mapWithLimit<T, R>(values: readonly T[], limit: number, task: (value: T) => Promise<R>): Promise<R[]> {
+export async function mapWithLimit<T, R>(values: readonly T[], limit: number, task: (value: T) => Promise<R>): Promise<R[]> {
   const results: R[] = new Array(values.length);
   let next = 0;
   const worker = async () => {
@@ -50,7 +52,8 @@ export class ResizingThumbnailSource implements ThumbnailSource {
   ) {}
 
   async getThumbnails(items: readonly WardrobeEntry[]): Promise<Map<string, ImageInput>> {
-    const results = await mapWithLimit(items, THUMBNAIL_CONCURRENCY, async (item) => {
+    const pictured = items.filter((item): item is WardrobeEntry & { image: ImageRef } => item.image !== null);
+    const results = await mapWithLimit(pictured, THUMBNAIL_CONCURRENCY, async (item) => {
       try {
         const image = await this.store.download(item.image);
         return [item.id, await this.resize(image, this.maxPx)] as const;
@@ -91,6 +94,8 @@ export class PlaceholderThumbnailSource implements ThumbnailSource {
 
   async getThumbnails(items: readonly WardrobeEntry[]): Promise<Map<string, ImageInput>> {
     this.requested.push(items.map((i) => i.id));
-    return new Map(items.map((item) => [item.id, { data: PLACEHOLDER_PNG, mimeType: "image/png" as const }]));
+    return new Map(
+      items.filter((item) => item.image !== null).map((item) => [item.id, { data: PLACEHOLDER_PNG, mimeType: "image/png" as const }]),
+    );
   }
 }

@@ -14,6 +14,7 @@ export { LINK_IMPORT_ROW_MAX_AGE_MS, cleanUpOldLinkImports } from "./cleanup";
 export { getLinkCutoutDeps, getLinkImportDeps } from "./deps";
 export { finishLinkImport, type LinkCutoutDeps } from "./finish-link";
 export { IMAGE_FETCH, PAGE_FETCH, importFromLink, type LinkImportDeps } from "./import-link";
+export { parseProductPrice } from "./price";
 export { parseProductPage, type ParsedProductPage } from "./product";
 export {
   InMemoryLinkImportRepository,

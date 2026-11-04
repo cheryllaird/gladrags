@@ -259,39 +259,38 @@ describe("mock outfits obey the composition rule", () => {
   });
 });
 
-describe("missing category message", () => {
+describe("missing categories become gaps (milestone 5)", () => {
   async function deleteCategory(category: string) {
     for (const item of MOCK_ITEMS.filter((i) => i.tags.category === category)) {
       await itemById.DELETE(json(`/api/items/${item.id}`, "DELETE"), ctx(item.id));
     }
   }
 
-  it("asks for a top when there are bottoms and shoes but no tops or dresses", async () => {
+  it("lists top as missing and gives each outfit a top gap when there are bottoms and shoes but no tops or dresses", async () => {
     await deleteCategory("top");
     await deleteCategory("dress_jumpsuit");
     const body = await generate({ style: { kind: "preset", presetId: "casual" } });
-    expect(body).toMatchObject({ status: "incomplete_wardrobe", reason: "missing_category", missingCategories: ["top"] });
-    if (body.status === "incomplete_wardrobe") expect(body.message).toMatch(/top/);
+    expect(body).toMatchObject({ status: "ok", missingCategories: ["top"] });
+    if (body.status === "ok") for (const o of body.outfits) expect(o.gaps.map((g) => g.category)).toEqual(["top"]);
   });
 
-  it("asks for top, bottom and shoes for an empty wardrobe", async () => {
+  it("answers empty_wardrobe for an empty wardrobe", async () => {
     for (const item of MOCK_ITEMS) await itemById.DELETE(json(`/api/items/${item.id}`, "DELETE"), ctx(item.id));
     expect((await items.GET(json("/api/items", "GET"))).status).toBe(200);
     const body = await generate({ style: { kind: "preset", presetId: "casual" } });
-    expect(body).toMatchObject({ status: "incomplete_wardrobe", missingCategories: ["top", "bottom", "shoes"] });
+    expect(body).toMatchObject({ status: "incomplete_wardrobe", reason: "empty_wardrobe", missingCategories: [] });
   });
 
-  it("swapping out the only pair of shoes says shoes are missing", async () => {
+  it("swapping out the only pair of shoes keeps the rest with a shoes gap", async () => {
     const shoes = MOCK_ITEMS.filter((i) => i.tags.category === "shoes");
     for (const s of shoes.slice(1)) await itemById.DELETE(json(`/api/items/${s.id}`, "DELETE"), ctx(s.id));
     const body = await generate({ style: { kind: "preset", presetId: "casual" }, count: 3 });
     if (body.status !== "ok") throw new Error("expected outfits");
     const parent = body.outfits[0]!;
     const res = await refine.POST(json(`/api/outfits/${parent.id}/refine`, "POST", { kind: "swap", itemId: shoes[0]!.id }), ctx(parent.id));
-    expect(OutfitGenerationResponseSchema.parse(await res.json())).toMatchObject({
-      status: "incomplete_wardrobe",
-      missingCategories: ["shoes"],
-    });
+    const swapped = OutfitGenerationResponseSchema.parse(await res.json());
+    expect(swapped).toMatchObject({ status: "ok", missingCategories: ["shoes"] });
+    if (swapped.status === "ok") for (const o of swapped.outfits) expect(o.gaps.map((g) => g.category)).toEqual(["shoes"]);
   });
 });
 

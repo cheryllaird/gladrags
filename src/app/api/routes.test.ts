@@ -333,12 +333,13 @@ describe("outfits", () => {
     await expectError(res, 404, "not_found");
   });
 
-  it("says which category is missing", async () => {
+  it("says which category is missing, and fills it with a gap", async () => {
     for (const item of MOCK_ITEMS.filter((i) => i.tags.category === "shoes")) {
       await itemById.DELETE(json(`/api/items/${item.id}`, "DELETE"), ctx(item.id));
     }
     const { body } = await generate({ style: { kind: "preset", presetId: "casual" } });
-    expect(body).toMatchObject({ status: "incomplete_wardrobe", reason: "missing_category", missingCategories: ["shoes"] });
+    expect(body).toMatchObject({ status: "ok", missingCategories: ["shoes"] });
+    if (body.status === "ok") for (const o of body.outfits) expect(o.gaps.map((g) => g.category)).toEqual(["shoes"]);
   });
 
   it("rejects a bad request body", async () => {
@@ -464,11 +465,14 @@ describe("anchor-aware incomplete wardrobe", () => {
     }
     const top = MOCK_ITEMS.find((i) => i.tags.category === "top")!;
     const res = await outfits.POST(json("/api/outfits", "POST", { style: { kind: "preset", presetId: "casual" }, anchorItemId: top.id }));
-    expect(OutfitGenerationResponseSchema.parse(await res.json())).toMatchObject({
-      status: "incomplete_wardrobe",
-      reason: "missing_category",
-      missingCategories: ["bottom"],
-    });
+    const body = OutfitGenerationResponseSchema.parse(await res.json());
+    expect(body).toMatchObject({ status: "ok", missingCategories: ["bottom"] });
+    if (body.status === "ok") {
+      for (const o of body.outfits) {
+        expect(o.itemIds).toContain(top.id);
+        expect(o.gaps.map((g) => g.category)).toContain("bottom");
+      }
+    }
   });
 });
 

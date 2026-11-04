@@ -122,6 +122,20 @@ describe("redirects are re-checked on every hop", () => {
     expect(network.dialed.map((d) => d.address)).toEqual([PUBLIC_V4, PUBLIC_V4, PUBLIC_V4_B]);
   });
 
+  it("lets the caller refuse a redirect target (allowRedirect), without fetching it", async () => {
+    server.routes.set("shop.example/a", redirect("http://www.shop.example/b", 302));
+    server.routes.set("www.shop.example/b", html("off the allowed host"));
+    const seen: string[] = [];
+    const options = { ...OPTIONS, allowRedirect: (url: URL) => (seen.push(url.href), url.hostname === "shop.example") };
+    expect(await failureOf(safeFetch("http://shop.example/a", options, network))).toBe("redirect_refused");
+    expect(seen).toEqual(["http://www.shop.example/b"]);
+    expect(server.requests.map((r) => r.path)).toEqual(["/a"]);
+    // Allowed targets are followed as before.
+    server.routes.set("shop.example/c", redirect("/d", 302));
+    server.routes.set("shop.example/d", html("same host"));
+    expect((await safeFetch("http://shop.example/c", options, network)).finalUrl.href).toBe("http://shop.example/d");
+  });
+
   it.each([
     ["a loopback literal", "http://127.0.0.1/admin", "private_address"],
     ["the metadata address", "http://169.254.169.254/latest/meta-data/iam/security-credentials/", "private_address"],

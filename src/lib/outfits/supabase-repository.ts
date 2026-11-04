@@ -5,24 +5,29 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
+  DEFAULT_FAVOURITE_SHOP_IDS,
   ItemRowSchema,
   OutfitRowSchema,
   STORAGE_BUCKETS,
+  UserSettingsRowSchema,
   type FeedbackKind,
   type ItemRow,
   type Outfit,
+  type OutfitGap,
   type OutfitRow,
   type OutfitStatus,
+  type ShopId,
   type WardrobeItem,
 } from "@/contracts";
 import { itemRowToWardrobeItem, outfitRowToOutfit } from "@/lib/db/mappers";
 import { SIGNED_URL_TTL_SECONDS } from "@/lib/images/server";
-import { OUTFIT_LIST_LIMIT, type NewOutfit, type OutfitRepository } from "./repository";
+import { shapeKey } from "./candidates";
+import { OUTFIT_LIST_LIMIT, newGap, type NewOutfit, type OutfitRepository, type RejectedOutfit } from "./repository";
 import type { WardrobeEntry } from "./types";
 
 const ITEM_COLUMNS =
-  "id, user_id, source, source_url, original_image_key, cutout_image_key, category, subcategory, colours, pattern, formality, seasons, warmth, occasions, fabric, description, tags_edited, created_at";
-const OUTFIT_COLUMNS = "id, user_id, request, name, reason, item_ids, status, parent_outfit_id, created_at";
+  "id, user_id, source, source_url, original_image_key, cutout_image_key, category, subcategory, colours, pattern, formality, seasons, warmth, occasions, fabric, description, tags_edited, needs_review, needs_photo, created_at";
+const OUTFIT_COLUMNS = "id, user_id, request, name, reason, item_ids, gaps, status, parent_outfit_id, created_at";
 
 function fail(what: string, error: { message: string }): never {
   throw new Error(`Couldn't ${what}: ${error.message}`);
@@ -43,9 +48,12 @@ export class SupabaseOutfitRepository implements OutfitRepository {
       return {
         id: row.id,
         tags: item.tags,
-        image: row.cutout_image_key
-          ? { bucket: STORAGE_BUCKETS.cutouts, key: row.cutout_image_key }
-          : { bucket: STORAGE_BUCKETS.originals, key: row.original_image_key },
+        // An item waiting for a photo has only a placeholder picture: ranking uses its tags.
+        image: row.needs_photo
+          ? null
+          : row.cutout_image_key
+            ? { bucket: STORAGE_BUCKETS.cutouts, key: row.cutout_image_key }
+            : { bucket: STORAGE_BUCKETS.originals, key: row.original_image_key },
       };
     });
   }
@@ -82,6 +90,7 @@ export class SupabaseOutfitRepository implements OutfitRepository {
           name: o.name,
           reason: o.reason,
           item_ids: o.itemIds,
+          gaps: o.gaps.map(newGap),
           status: "suggested",
           parent_outfit_id: o.parentOutfitId,
         })),
@@ -90,9 +99,38 @@ export class SupabaseOutfitRepository implements OutfitRepository {
     if (error) fail("save outfits", error);
     const rows = parseRows(OutfitRowSchema, data);
     // Return them in the order they were ranked, not the order the database chose.
-    const order = new Map(outfits.map((o, i) => [o.itemIds.join("+"), i]));
-    rows.sort((a, b) => (order.get(a.item_ids.join("+")) ?? 0) - (order.get(b.item_ids.join("+")) ?? 0));
+    const keyOf = (itemIds: readonly string[], gaps: readonly { category: OutfitGap["category"] }[]) =>
+      shapeKey({ itemIds, gaps: gaps.map((g) => g.category) });
+    const order = new Map(outfits.map((o, i) => [keyOf(o.itemIds, o.gaps), i]));
+    const rank = (row: OutfitRow) => order.get(keyOf(row.item_ids, row.gaps)) ?? 0;
+    rows.sort((a, b) => rank(a) - rank(b));
     return this.withItems(userId, rows);
+  }
+
+  async updateGaps(userId: string, outfitId: string, gaps: readonly OutfitGap[]): Promise<Outfit | null> {
+    const { data, error } = await this.client
+      .from("outfits")
+      .update({ gaps })
+      .eq("user_id", userId)
+      .eq("id", outfitId)
+      .select(OUTFIT_COLUMNS)
+      .maybeSingle();
+    if (error) fail("update the outfit's gaps", error);
+    if (!data) return null;
+    const [outfit] = await this.withItems(userId, [OutfitRowSchema.parse(data)]);
+    return outfit ?? null;
+  }
+
+  async getFavouriteShopIds(userId: string): Promise<ShopId[]> {
+    const { data, error } = await this.client
+      .from("user_settings")
+      .select("favourite_shop_ids")
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (error) fail("load your shops", error);
+    // Every user has a row (made with their profile); the default covers a missing one.
+    if (!data) return [...DEFAULT_FAVOURITE_SHOP_IDS];
+    return UserSettingsRowSchema.pick({ favourite_shop_ids: true }).parse(data).favourite_shop_ids;
   }
 
   async setStatus(userId: string, outfitId: string, status: OutfitStatus): Promise<Outfit | null> {
@@ -116,16 +154,19 @@ export class SupabaseOutfitRepository implements OutfitRepository {
     if (error) fail("save feedback", error);
   }
 
-  async listRejectedItemIds(userId: string, limit: number): Promise<string[][]> {
+  async listRejectedOutfits(userId: string, limit: number): Promise<RejectedOutfit[]> {
     const { data, error } = await this.client
       .from("outfits")
-      .select("item_ids")
+      .select("item_ids, gaps")
       .eq("user_id", userId)
       .eq("status", "rejected")
       .order("created_at", { ascending: false })
       .limit(limit);
     if (error) fail("load rejected outfits", error);
-    return parseRows(OutfitRowSchema.pick({ item_ids: true }), data).map((r) => r.item_ids);
+    return parseRows(OutfitRowSchema.pick({ item_ids: true, gaps: true }), data).map((r) => ({
+      itemIds: r.item_ids,
+      gaps: r.gaps.map((g) => g.category),
+    }));
   }
 
   /** Attach each outfit's items, with signed image URLs. */

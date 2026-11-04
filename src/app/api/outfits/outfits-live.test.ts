@@ -150,16 +150,16 @@ describe("POST /api/outfits (real pipeline, mock mode off)", () => {
     expect(fake.usage.events).toEqual([]); // not counted, no model call recorded
   });
 
-  it("still answers an incomplete wardrobe without the Gemini key (no AI needed)", async () => {
+  it("still answers an empty wardrobe without the Gemini key (no AI needed)", async () => {
     fake.ranking = () => {
       throw new ConfigError("Gemini is not configured.");
     };
-    fake.db.tables.items = fake.db.tables.items!.filter((r) => r.category !== "shoes");
+    fake.db.tables.items = fake.db.tables.items!.filter((r) => r.user_id !== USER.id);
     const res = await outfits.POST(json("/api/outfits", "POST", { style: { kind: "preset", presetId: "work" } }));
     expect(OutfitGenerationResponseSchema.parse(await res.json())).toMatchObject({
       status: "incomplete_wardrobe",
-      reason: "missing_category",
-      missingCategories: ["shoes"],
+      reason: "empty_wardrobe",
+      missingCategories: [],
     });
   });
 
