@@ -112,6 +112,19 @@ describe("several links at once", () => {
     expect(fake.deps.items.rows.size).toBe(1);
   });
 
+  it("a failed save gives the item count back and reopens the import, so the same link can be finished again", async () => {
+    const res1 = LinkImportResponseSchema.parse(await (await step1("http://northfield.example/boots-1")).json());
+    if (res1.status !== "ok") throw new Error("expected ok");
+    vi.spyOn(fake.deps.items, "create").mockRejectedValueOnce(new Error("insert failed"));
+    expect((await step2({ originalImageKey: res1.originalImageKey, saveForReview: true })).status).toBe(500);
+    expect((await fake.deps.usage.summary(TEST_USER)).itemsToday.used).toBe(0);
+    expect(fake.deps.items.rows.size).toBe(0);
+
+    const retry = BatchAddResponseSchema.parse(await (await step2({ originalImageKey: res1.originalImageKey, saveForReview: true })).json());
+    expect(retry.status).toBe("saved");
+    expect((await fake.deps.usage.summary(TEST_USER)).itemsToday.used).toBe(1);
+  });
+
   it("caps: the batch stops at the daily item cap, and the link that hits it fetches nothing", async () => {
     const limit = TEST_LIMITS.dailyCaps.item_ingest; // 3
     const statuses: number[] = [];

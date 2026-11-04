@@ -28,6 +28,7 @@ import { suggestTags, type TaggingDeps } from "@/lib/ingestion/tagging";
 import { saveItemForReview } from "@/lib/ingestion/wardrobe";
 import type { ImageStore } from "@/lib/outfits/thumbnails";
 import { isAiPausedError } from "@/lib/usage/errors";
+import type { UsageReservation } from "@/lib/usage/guard";
 import type { LinkImportRepository, OpenLinkImport } from "./repository";
 
 export interface LinkCutoutDeps extends TaggingDeps {
@@ -44,6 +45,15 @@ function importGone(): ApiException {
 }
 
 export async function finishLinkImport(deps: LinkCutoutDeps, userId: string, upload: LinkCutoutUpload): Promise<ItemDraft> {
+  return (await finishLinkImportCounted(deps, userId, upload)).draft;
+}
+
+/** finishLinkImport, also handing back the item's count so a later step can give it back. */
+async function finishLinkImportCounted(
+  deps: LinkCutoutDeps,
+  userId: string,
+  upload: LinkCutoutUpload,
+): Promise<{ draft: ItemDraft; counted: UsageReservation }> {
   // 1. Caps.
   await deps.usage.assertCanStart(userId, "item_ingest");
 
@@ -104,7 +114,7 @@ export async function finishLinkImport(deps: LinkCutoutDeps, userId: string, upl
     const cutoutUrl = cutoutKey ? cutoutUrls.get(cutoutKey) : null;
     if (!originalUrl || cutoutUrl === undefined) throw new Error("Couldn't sign the new images' URLs");
 
-    return {
+    const draft: ItemDraft = {
       source: "link",
       sourceUrl: claimed.sourceUrl,
       originalImageKey: originalKey,
@@ -113,6 +123,7 @@ export async function finishLinkImport(deps: LinkCutoutDeps, userId: string, upl
       cutoutUrl,
       suggestedTags,
     };
+    return { draft, counted };
   } catch (error) {
     // The original stays: it belongs to the import, and the cleanup job
     // removes it if no item ever uses it.
@@ -142,7 +153,7 @@ export async function finishLinkImport(deps: LinkCutoutDeps, userId: string, upl
  * phone stops there.
  */
 export async function finishLinkImportForReview(deps: LinkCutoutDeps, userId: string, upload: LinkCutoutUpload): Promise<BatchAddResponse> {
-  const draft = await finishLinkImport(deps, userId, upload);
+  const { draft, counted } = await finishLinkImportCounted(deps, userId, upload);
   const tags = draft.suggestedTags;
   if (!tags) return { status: "draft", draft };
 
@@ -156,7 +167,19 @@ export async function finishLinkImportForReview(deps: LinkCutoutDeps, userId: st
     });
     return { status: "saved", item };
   } catch (error) {
+    // Another item already uses these images (a save of the same draft won
+    // the race): it exists, so nothing is undone.
     if (error instanceof DuplicateImageKeyError) throw new ApiException("bad_request", "That item has already been saved");
+    // Saving failed on our side: the user got no item, so give the count
+    // back, remove the cut-out (only this attempt used it) and reopen the
+    // import so pasting the link again within its hour isn't needed. The
+    // original stays: it belongs to the import, and the orphaned-image
+    // cleanup removes it if the import is never finished. Reopening is
+    // safe because claiming is one statement; if the insert did go through
+    // after all, a retry is refused as "already saved".
+    await counted.cancel().catch(() => {});
+    if (draft.cutoutImageKey) await deps.storage.remove(STORAGE_BUCKETS.cutouts, [draft.cutoutImageKey]).catch(() => {});
+    await deps.linkImports.release(userId, draft.originalImageKey).catch(() => {});
     throw error;
   }
 }
