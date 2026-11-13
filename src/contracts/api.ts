@@ -457,5 +457,7 @@ export const CronCleanupResponseSchema = z.object({
   linkImportsDeleted: CountSchema,
   /** sign_in_attempts rows over a day old, deleted. */
   signInAttemptsDeleted: CountSchema,
+  /** (Round 2) outfit_previews rows no outfit shows or waits for, unchanged for an hour, deleted with their images. */
+  unusedPreviewsDeleted: CountSchema.default(0),
 });
 export type CronCleanupResponse = z.infer<typeof CronCleanupResponseSchema>;

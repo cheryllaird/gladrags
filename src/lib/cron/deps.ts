@@ -10,6 +10,7 @@ import { InMemoryImageStorage, SupabaseImageStorage } from "@/lib/ingestion/stor
 import { InMemoryLinkImportRepository, SupabaseLinkImportRepository } from "@/lib/link-import/repository";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { CleanupJobDeps } from "./cleanup";
+import { InMemoryUnusedPreviewSweeper, SupabaseUnusedPreviewSweeper } from "./previews";
 
 export function getCleanupJobDeps(): CleanupJobDeps {
   if (isMockMode()) {
@@ -18,6 +19,7 @@ export function getCleanupJobDeps(): CleanupJobDeps {
       references: new InMemoryItemRepository(),
       linkImports: new InMemoryLinkImportRepository(),
       signInAttempts: new InMemorySignInAttemptStore(),
+      previews: new InMemoryUnusedPreviewSweeper(),
     };
   }
   const admin = createAdminClient();
@@ -26,5 +28,6 @@ export function getCleanupJobDeps(): CleanupJobDeps {
     references: new SupabaseImageReferences(admin),
     linkImports: new SupabaseLinkImportRepository(admin),
     signInAttempts: new SupabaseSignInAttemptStore(admin),
+    previews: new SupabaseUnusedPreviewSweeper(admin),
   };
 }
