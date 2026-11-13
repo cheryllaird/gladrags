@@ -20,6 +20,7 @@ import {
 } from "./item";
 import { OutfitSchema, OutfitStatusSchema } from "./outfit";
 import { FavouriteShopIdsSchema } from "./shops";
+import { ModelPresetIdSchema } from "./previews";
 import { PresetStyleIdSchema } from "./styles";
 
 // Other route bodies live next to their domain types:
@@ -349,6 +350,29 @@ export const GapParamsSchema = z.object({ id: IdSchema, category: CategorySchema
 export const ChooseGapProductRequestSchema = z.object({ productUrl: SourceUrlSchema.nullable() });
 export type ChooseGapProductRequest = z.infer<typeof ChooseGapProductRequestSchema>;
 
+/**
+ * POST /api/outfits/[id]/preview (round 2): make the outfit's "wearing it"
+ * image if it has none. No body. Query `?refresh=true` (PreviewRequestQuerySchema)
+ * is "Update preview" on an outdated one. Returns OutfitResponseSchema.
+ *
+ * The client calls it once per outfit, one after another. Idempotent:
+ * - a ready, failed or (fresh) pending preview is returned as it is, with no call;
+ * - a look identical to one of the user's existing previews (same preset,
+ *   items, gaps and picked products: previewCacheKey) is linked to it at
+ *   no cost and with no cap use;
+ * - otherwise it counts one outfit_preview (cap outfit_previews_per_day),
+ *   reserves the image_generation cost (the images spend share), generates,
+ *   checks and stores the image, and returns the outfit with it ready.
+ * - skipped (cap or pause earlier) is tried again.
+ *
+ * Errors: bad_request with issue path PREVIEW_NEEDS_PRESET_ISSUE_PATH when
+ * the user hasn't picked a model preset; daily_cap_reached
+ * (outfit_previews_per_day); ai_paused (monthly_ai_spend or
+ * monthly_image_spend); ai_failed (failed twice). After a cap or pause the
+ * preview reads as skipped; after ai_failed, as failed.
+ */
+export const PreviewResponseSchema = OutfitResponseSchema;
+
 // ---------------------------------------------------------------------------
 // Settings: favourite shops and the forwarding address
 // ---------------------------------------------------------------------------
@@ -358,6 +382,12 @@ export type ChooseGapProductRequest = z.infer<typeof ChooseGapProductRequestSche
  * POST /api/settings/forwarding-address.
  */
 export const UserSettingsSchema = z.object({
+  /**
+   * Round 2: the model figure outfit previews are made on (MODEL_PRESETS),
+   * or null until the user picks one. Changing it doesn't touch existing
+   * previews; new outfits use the new one.
+   */
+  modelPresetId: ModelPresetIdSchema.nullable().default(null),
   /** The shops "Find in my shops" searches, from SHOPS. New users get DEFAULT_FAVOURITE_SHOP_IDS. */
   favouriteShopIds: FavouriteShopIdsSchema,
   /**
@@ -369,8 +399,15 @@ export const UserSettingsSchema = z.object({
 });
 export type UserSettings = z.infer<typeof UserSettingsSchema>;
 
-/** PUT /api/settings: change the favourite shops. */
-export const UpdateSettingsRequestSchema = z.object({ favouriteShopIds: FavouriteShopIdsSchema });
+/**
+ * PUT /api/settings: change the favourite shops, the model preset (round
+ * 2), or both. At least one. A preset can be changed but not cleared.
+ */
+export const UpdateSettingsRequestSchema = z
+  .object({ favouriteShopIds: FavouriteShopIdsSchema.optional(), modelPresetId: ModelPresetIdSchema.optional() })
+  .refine((req) => req.favouriteShopIds !== undefined || req.modelPresetId !== undefined, {
+    error: "Send favouriteShopIds, modelPresetId, or both",
+  });
 export type UpdateSettingsRequest = z.infer<typeof UpdateSettingsRequestSchema>;
 
 /**
@@ -414,7 +451,7 @@ const CountSchema = z.int().min(0);
 export const CronCleanupResponseSchema = z.object({
   /** Stored images over a day old checked for use. */
   imagesChecked: CountSchema,
-  /** Of those, images no item or open link import uses, now deleted. */
+  /** Of those, images no item, open link import or (round 2) outfit preview uses, now deleted. */
   orphanedImagesDeleted: CountSchema,
   /** link_imports rows over 7 days old, deleted. */
   linkImportsDeleted: CountSchema,

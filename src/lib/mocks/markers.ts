@@ -29,6 +29,7 @@ const CAP_KIND_FOR_ACTION: Record<CappedAction, CapKind> = {
   link_fetch: "link_fetches_per_day",
   email_import: "emails_per_day",
   shop_search: "shop_searches_per_day",
+  outfit_preview: "outfit_previews_per_day",
 };
 
 export function hasMarker(texts: readonly (string | null | undefined)[], marker: string): boolean {

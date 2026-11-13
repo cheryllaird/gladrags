@@ -18,7 +18,7 @@ vi.mock("@/lib/client/api", async (original) => {
 const api = await import("@/lib/client/api");
 
 const ADDRESS = "0123456789abcdef0123456789abcdef@inbound.gladrags.test";
-const SETTINGS: UserSettings = { favouriteShopIds: ["next", "marks_and_spencer", "new_look"], forwardingAddress: ADDRESS };
+const SETTINGS: UserSettings = { modelPresetId: "women_average_medium", favouriteShopIds: ["next", "marks_and_spencer", "new_look"], forwardingAddress: ADDRESS };
 const IMPORTS: EmailImport[] = [
   { id: "0a000000-0000-4000-8000-0000000000e1", receivedAt: "2026-10-30T10:00:00Z", shopName: "M&S", orderDate: "2026-10-30", status: "done", itemCount: 2, skippedCount: 0, error: null },
   { id: "0a000000-0000-4000-8000-0000000000e2", receivedAt: "2026-10-29T10:00:00Z", shopName: null, orderDate: null, status: "failed", itemCount: 0, skippedCount: 0, error: "sender_not_allowed" },

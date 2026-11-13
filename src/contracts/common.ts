@@ -75,9 +75,9 @@ export const API_ERROR_CODES = [
   "forbidden", // a cross-site request (its Origin isn't this site)
   "not_found", // row doesn't exist or isn't yours
   "unsupported_media_type", // a JSON route was sent something other than JSON
-  "daily_cap_reached", // per-user daily cap on items, outfit requests, link fetches, forwarded emails or shop searches
+  "daily_cap_reached", // per-user daily cap on items, outfit requests, link fetches, forwarded emails, shop searches or outfit previews
   "rate_limited", // too many sign-in attempts; try again later
-  "ai_paused", // the monthly AI spend cap has been reached
+  "ai_paused", // the monthly AI spend cap, or a feature's share of it, has been reached
   "ai_failed", // model output failed validation twice, or the provider errored
   "server_misconfigured", // missing environment variables
   "not_implemented", // route is still a mock-only stub (outside mock mode)
@@ -109,7 +109,11 @@ export const CAP_KINDS = [
   "link_fetches_per_day",
   "emails_per_day",
   "shop_searches_per_day",
+  "outfit_previews_per_day",
   "monthly_ai_spend",
+  // Round 2: a spend share reached (that feature alone pauses; ai_paused).
+  "monthly_image_spend",
+  "monthly_shop_search_spend",
 ] as const;
 export const CapKindSchema = z.enum(CAP_KINDS);
 export type CapKind = z.infer<typeof CapKindSchema>;

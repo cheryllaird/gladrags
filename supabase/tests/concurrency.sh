@@ -100,3 +100,36 @@ echo "ok: the month's spend is exactly the cap (${spend}p), not over it"
 # Sign-in: 5 per email.
 got="$(burst "select (public.reserve_sign_in_attempt('magic_link', repeat('d', 64), repeat('e', 64), 5, 1000, 900))->>'ok'")"
 expect "$got" 5 "parallel sign-in attempts for one email stop at 5"
+
+# Round 2 (migration 8): a spend share, 1p at 0.2p a call, with the overall
+# cap far above it: exactly 5 image calls, and the share's spend is the cap.
+q "delete from public.usage_events" >/dev/null
+got="$(burst "select (public.reserve_usage(null, 'image_generation', null, null, 0.2, 500, ${MONTH_START}, 'gemini', array['image_generation'], 1))->>'ok'")"
+expect "$got" 5 "parallel image reservations stop at the images share (1p at 0.2p each)"
+spend="$(q "select public.ai_spend_pence_since(${MONTH_START}, array['image_generation'])")"
+if [ "$spend" != "1.0000" ]; then
+  echo "FAIL: parallel image reservations spent ${spend}p, more than the 1p share" >&2
+  exit 1
+fi
+echo "ok: the images share's spend is exactly its cap (${spend}p), not over it"
+
+# Round 2: 30 outfits with the same look claim their preview at once:
+# exactly one request generates; the others wait for it.
+q "insert into public.items (id, user_id, source, original_image_key, category, subcategory, colours, pattern, formality, seasons, warmth, occasions, description)
+   values ('c8000000-0000-4000-8000-000000000001', '${USER_C}', 'photo', '${USER_C}/00000000-0000-4000-8000-0000000000c8.jpg',
+     'dress_jumpsuit', 'dress', array['red'], 'plain', 3, array['summer'], 'light', array['evening_out'], 'Red dress')" >/dev/null
+q "insert into public.outfits (id, user_id, request, name, reason, item_ids, gaps)
+   select ('c8100000-0000-4000-8000-' || lpad(n::text, 12, '0'))::uuid, '${USER_C}', '{\"style\": {\"kind\": \"preset\", \"presetId\": \"casual\"}}',
+     'Same', 'x', array['c8000000-0000-4000-8000-000000000001']::uuid[], '[{\"category\": \"shoes\", \"colours\": [\"black\"], \"description\": \"Black heels\"}]'
+   from generate_series(1, ${WORKERS}) n" >/dev/null
+q "create sequence public.claim_worker" >/dev/null
+got="$(burst "select (public.claim_outfit_preview('${USER_C}', ('c8100000-0000-4000-8000-' || lpad(nextval('public.claim_worker')::text, 12, '0'))::uuid, repeat('c', 64), 'women_average_medium', false, 150))->>'action' = 'generate'")"
+expect "$got" 1 "30 outfits with one look claiming at once: exactly one generates"
+rows="$(q "select count(*) from public.outfit_previews where user_id = '${USER_C}'")"
+linked="$(q "select count(*) from public.outfits where user_id = '${USER_C}' and preview_id is not null")"
+if [ "$rows" != "1" ] || [ "$linked" != "$WORKERS" ]; then
+  echo "FAIL: after the claim burst: ${rows} preview rows (expected 1), ${linked} outfits linked (expected ${WORKERS})" >&2
+  exit 1
+fi
+echo "ok: one preview row for the look, and all ${linked} outfits linked to it"
+q "drop sequence public.claim_worker" >/dev/null

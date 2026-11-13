@@ -183,6 +183,7 @@ describe("settings", () => {
 
   it("GET shows the favourite shops and the forwarding address", async () => {
     expect(UserSettingsSchema.parse(await (await get()).json())).toEqual({
+      modelPresetId: null,
       favouriteShopIds: ["next", "marks_and_spencer", "new_look"],
       forwardingAddress: `${FORWARDING_CONFIG.prefix}${TOKEN}@${FORWARDING_CONFIG.domain}`,
     });

@@ -1,4 +1,4 @@
-import type { AiCostKind, CappedAction } from "@/contracts";
+import type { AiCostKind, CappedAction, SpendShare } from "@/contracts";
 
 /**
  * Cost-control settings (spec: "Cost controls"). The numbers below are
@@ -22,6 +22,9 @@ export const DAILY_CAPS: Readonly<Record<CappedAction, number>> = {
   // "Find in my shops" on an outfit (all its gaps in one search). Grounded
   // searches cost more than ranking, so the cap is low.
   shop_search: 10,
+  // Round 2: generated outfit previews (about 3 outfit requests' worth).
+  // An identical look reuses its stored image and isn't counted.
+  outfit_preview: 12,
 };
 
 /**
@@ -45,6 +48,41 @@ export const ESTIMATED_COST_PENCE: Readonly<Record<AiCostKind, number>> = {
   // 1p-3p a query at list prices, and one call can make several queries),
   // so this is set high.
   shop_grounding: 3,
+  // One image-model call for an outfit preview. UNVERIFIED (Google's price
+  // page couldn't be reached): list prices suggest 3p-4p an image.
+  image_generation: 4,
+};
+
+/**
+ * A settled cost is recorded at most this many pence, for kinds whose
+ * bound isn't MAX_SETTLED_COST_MULTIPLE × the estimate. Image generation's
+ * estimate is unverified, so it gets a looser, explicit bound.
+ */
+export const MAX_SETTLED_COST_PENCE: Readonly<Partial<Record<AiCostKind, number>>> = {
+  image_generation: 10,
+};
+
+/**
+ * Monthly spend shares (round 2): each pauses its own feature once its
+ * kinds' month total (all users) reaches the share, while everything else
+ * keeps working up to MONTHLY_AI_SPEND_CAP_PENCE. A share isn't set aside:
+ * other features can still use the whole £5.
+ */
+export const MONTHLY_SPEND_SHARES: Readonly<Record<SpendShare, { kinds: readonly AiCostKind[]; capPence: number }>> = {
+  // Spec: previews pause on their own at about £2.
+  images: { kinds: ["image_generation"], capPence: 200 },
+  // Security re-check S1: shop search pauses on its own at about £2 too.
+  shop_search: { kinds: ["shop_grounding"], capPence: 200 },
+};
+
+/** Which share (if any) each costed kind and each capped action falls under. */
+export const SHARE_FOR_COST_KIND: Readonly<Partial<Record<AiCostKind, SpendShare>>> = {
+  image_generation: "images",
+  shop_grounding: "shop_search",
+};
+export const SHARE_FOR_ACTION: Readonly<Partial<Record<CappedAction, SpendShare>>> = {
+  outfit_preview: "images",
+  shop_search: "shop_search",
 };
 
 /** Day and month boundaries for caps are in UK time. */

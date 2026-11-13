@@ -30,7 +30,7 @@ export const FORWARDING_CONFIG = { domain: "inbound.postmark.example", prefix: "
 
 /** Generous enough for one order; tests lower them to reach a cap. */
 export const EMAIL_TEST_LIMITS: UsageLimits = {
-  dailyCaps: { item_ingest: 40, outfit_request: 2, link_fetch: 20, email_import: 3, shop_search: 2 },
+  dailyCaps: { item_ingest: 40, outfit_request: 2, link_fetch: 20, email_import: 3, shop_search: 2, outfit_preview: 2 },
   monthlySpendCapPence: 500,
   timeZone: "Europe/London",
 };

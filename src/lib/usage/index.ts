@@ -5,7 +5,7 @@ import { InMemoryUsageStore, SupabaseUsageStore } from "./store";
 
 export * from "./config";
 export { CapReachedError, isAiPausedError } from "./errors";
-export { UsageGuard, DEFAULT_USAGE_LIMITS, MAX_SETTLED_COST_MULTIPLE, type AiCallMeter, type MeteredCall, type UsageLimits, type UsageReservation } from "./guard";
+export { UsageGuard, DEFAULT_USAGE_LIMITS, MAX_SETTLED_COST_MULTIPLE, maxSettledCost, type AiCallMeter, type MeteredCall, type UsageLimits, type UsageReservation } from "./guard";
 export { InMemoryUsageStore, SupabaseUsageStore, type UsageEvent, type UsageReservationRequest, type UsageReservationResult, type UsageStore } from "./store";
 
 // Kept on globalThis so the in-memory store survives dev-server hot reloads.

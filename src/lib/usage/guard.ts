@@ -1,5 +1,14 @@
-import type { AiCostKind, CappedAction, UsageSummary } from "@/contracts";
-import { DAILY_CAPS, ESTIMATED_COST_PENCE, MONTHLY_AI_SPEND_CAP_PENCE, USAGE_TIME_ZONE } from "./config";
+import type { AiCostKind, CappedAction, SpendShare, UsageSummary } from "@/contracts";
+import {
+  DAILY_CAPS,
+  ESTIMATED_COST_PENCE,
+  MAX_SETTLED_COST_PENCE,
+  MONTHLY_AI_SPEND_CAP_PENCE,
+  MONTHLY_SPEND_SHARES,
+  SHARE_FOR_ACTION,
+  SHARE_FOR_COST_KIND,
+  USAGE_TIME_ZONE,
+} from "./config";
 import { CapReachedError, type CapKind } from "./errors";
 import type { UsageStore } from "./store";
 import { startOfDay, startOfMonth, startOfNextDay, startOfNextMonth } from "./time";
@@ -8,12 +17,21 @@ export interface UsageLimits {
   dailyCaps: Readonly<Record<CappedAction, number>>;
   monthlySpendCapPence: number;
   timeZone: string;
+  /** Per-feature monthly shares (round 2). Missing: MONTHLY_SPEND_SHARES. */
+  spendShares?: Readonly<Record<SpendShare, { kinds: readonly AiCostKind[]; capPence: number }>>;
 }
 
 export const DEFAULT_USAGE_LIMITS: UsageLimits = {
   dailyCaps: DAILY_CAPS,
   monthlySpendCapPence: MONTHLY_AI_SPEND_CAP_PENCE,
   timeZone: USAGE_TIME_ZONE,
+  spendShares: MONTHLY_SPEND_SHARES,
+};
+
+/** Which cap kind an error reports when a share is reached. */
+const SHARE_CAP_KIND: Record<SpendShare, CapKind> = {
+  images: "monthly_image_spend",
+  shop_search: "monthly_shop_search_spend",
 };
 
 const CAP_KIND: Record<CappedAction, CapKind> = {
@@ -22,6 +40,7 @@ const CAP_KIND: Record<CappedAction, CapKind> = {
   link_fetch: "link_fetches_per_day",
   email_import: "emails_per_day",
   shop_search: "shop_searches_per_day",
+  outfit_preview: "outfit_previews_per_day",
 };
 
 /** Daily actions that lead to AI calls, so they're refused while AI is paused. */
@@ -31,6 +50,7 @@ const USES_AI: Record<CappedAction, boolean> = {
   link_fetch: false,
   email_import: true,
   shop_search: true,
+  outfit_preview: true,
 };
 
 /**
@@ -38,6 +58,11 @@ const USES_AI: Record<CappedAction, boolean> = {
  * bounds how far calls already in flight can take the month past £5.
  */
 export const MAX_SETTLED_COST_MULTIPLE = 3;
+
+/** The most a settled cost of this kind is recorded at (MAX_SETTLED_COST_PENCE, else 3 × the estimate). */
+export function maxSettledCost(kind: AiCostKind): number {
+  return MAX_SETTLED_COST_PENCE[kind] ?? ESTIMATED_COST_PENCE[kind] * MAX_SETTLED_COST_MULTIPLE;
+}
 
 /** A provider-reported cost if it's a real, non-negative number; otherwise the estimate. */
 function usableCost(reported: number | undefined, estimate: number): number {
@@ -98,6 +123,8 @@ export class UsageGuard {
    */
   async assertCanStart(userId: string, action: CappedAction): Promise<void> {
     if (USES_AI[action]) await this.assertAiAvailable();
+    const share = SHARE_FOR_ACTION[action];
+    if (share) await this.assertShareAvailable(share);
     const used = await this.store.countSince(userId, action, this.dayStart());
     const limit = this.limits.dailyCaps[action];
     if (used >= limit) throw this.dailyCapError(action);
@@ -113,6 +140,18 @@ export class UsageGuard {
     return spent >= this.limits.monthlySpendCapPence;
   }
 
+  /** Throws CapReachedError (ai_paused, the share's cap kind) if this share of the month is spent. */
+  async assertShareAvailable(share: SpendShare): Promise<void> {
+    if (await this.isSharePaused(share)) throw this.shareCapError(share);
+  }
+
+  /** True when this feature's share of the month is spent. Doesn't look at the overall cap. */
+  async isSharePaused(share: SpendShare): Promise<boolean> {
+    const { kinds, capPence } = this.share(share);
+    const spent = await this.store.spendSince(this.monthStart(), kinds);
+    return spent >= capPence;
+  }
+
   /**
    * Count one capped action (an item upload or link import that gets
    * tagged, an outfit request or refinement, a link page fetch), checking
@@ -121,6 +160,7 @@ export class UsageGuard {
    */
   async reserveAction(userId: string, action: CappedAction): Promise<UsageReservation> {
     const usesAi = USES_AI[action];
+    const share = SHARE_FOR_ACTION[action];
     const result = await this.store.reserve({
       userId,
       kind: action,
@@ -129,9 +169,10 @@ export class UsageGuard {
       dailyLimit: this.limits.dailyCaps[action],
       dayStart: this.dayStart(),
       monthlyCapPence: usesAi ? this.limits.monthlySpendCapPence : null,
-      monthStart: usesAi ? this.monthStart() : null,
+      monthStart: usesAi || share ? this.monthStart() : null,
+      ...this.shareRequest(share),
     });
-    if (!result.ok) throw result.denied === "monthly_spend" ? this.monthlyCapError() : this.dailyCapError(action);
+    if (!result.ok) throw this.deniedError(result.denied, action, share);
     const { eventId } = result;
     return { cancel: () => this.store.cancel(eventId) };
   }
@@ -142,6 +183,7 @@ export class UsageGuard {
    * Returns the reservation's ID for `settleAiCost`.
    */
   async reserveAiCost(userId: string | null, kind: AiCostKind, provider?: string): Promise<string> {
+    const share = SHARE_FOR_COST_KIND[kind];
     const result = await this.store.reserve({
       userId,
       kind,
@@ -151,8 +193,9 @@ export class UsageGuard {
       dayStart: null,
       monthlyCapPence: this.limits.monthlySpendCapPence,
       monthStart: this.monthStart(),
+      ...this.shareRequest(share),
     });
-    if (!result.ok) throw this.monthlyCapError();
+    if (!result.ok) throw result.denied === "share_spend" && share ? this.shareCapError(share) : this.monthlyCapError();
     return result.eventId;
   }
 
@@ -167,7 +210,7 @@ export class UsageGuard {
   async settleAiCost(reservationId: string, kind: AiCostKind, call: MeteredCall): Promise<void> {
     const estimate = ESTIMATED_COST_PENCE[kind];
     let cost = usableCost(call.costPence, estimate);
-    const max = estimate * MAX_SETTLED_COST_MULTIPLE;
+    const max = maxSettledCost(kind);
     if (cost > max) {
       console.warn("AI call cost above the cap's bound; recorded at the bound. Raise ESTIMATED_COST_PENCE.", { kind, reported: cost, recorded: max });
       cost = max;
@@ -213,21 +256,47 @@ export class UsageGuard {
 
   async summary(userId: string): Promise<UsageSummary> {
     const since = this.dayStart();
-    const [items, outfits, emails, shopSearches, aiPaused] = await Promise.all([
+    const [items, outfits, emails, shopSearches, previews, aiPaused, imagesPaused, shopSharePaused] = await Promise.all([
       this.store.countSince(userId, "item_ingest", since),
       this.store.countSince(userId, "outfit_request", since),
       this.store.countSince(userId, "email_import", since),
       this.store.countSince(userId, "shop_search", since),
+      this.store.countSince(userId, "outfit_preview", since),
       this.isAiPaused(),
+      this.isSharePaused("images"),
+      this.isSharePaused("shop_search"),
     ]);
     return {
       itemsToday: { used: items, limit: this.limits.dailyCaps.item_ingest },
       outfitRequestsToday: { used: outfits, limit: this.limits.dailyCaps.outfit_request },
       emailsToday: { used: emails, limit: this.limits.dailyCaps.email_import },
       shopSearchesToday: { used: shopSearches, limit: this.limits.dailyCaps.shop_search },
+      outfitPreviewsToday: { used: previews, limit: this.limits.dailyCaps.outfit_preview },
       dailyResetAt: startOfNextDay(this.now(), this.limits.timeZone).toISOString(),
       aiPaused,
+      previewsPaused: aiPaused || imagesPaused,
+      shopSearchPaused: aiPaused || shopSharePaused,
     };
+  }
+
+  private share(share: SpendShare): { kinds: readonly AiCostKind[]; capPence: number } {
+    return (this.limits.spendShares ?? MONTHLY_SPEND_SHARES)[share];
+  }
+
+  private shareRequest(share: SpendShare | undefined) {
+    if (!share) return { shareKinds: null, shareCapPence: null };
+    const { kinds, capPence } = this.share(share);
+    return { shareKinds: kinds, shareCapPence: capPence };
+  }
+
+  private deniedError(denied: "daily_cap" | "monthly_spend" | "share_spend", action: CappedAction, share: SpendShare | undefined): CapReachedError {
+    if (denied === "monthly_spend") return this.monthlyCapError();
+    if (denied === "share_spend" && share) return this.shareCapError(share);
+    return this.dailyCapError(action);
+  }
+
+  private shareCapError(share: SpendShare): CapReachedError {
+    return new CapReachedError(SHARE_CAP_KIND[share], this.share(share).capPence, startOfNextMonth(this.now(), this.limits.timeZone));
   }
 
   private dailyCapError(action: CappedAction): CapReachedError {

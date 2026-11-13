@@ -18,20 +18,26 @@ export interface UsageReservationRequest extends UsageEvent {
   dayStart: Date | null;
   /** Refuse if everyone's spend since `monthStart` has reached this. Null: not checked. */
   monthlyCapPence: number | null;
-  /** Start of this month (UK time). Required with a monthly cap. */
+  /** Start of this month (UK time). Required with a monthly cap or a share. */
   monthStart: Date | null;
+  /**
+   * Round 2, a monthly spend share: refuse if everyone's spend on these
+   * kinds since `monthStart` has reached `shareCapPence`. Both or neither.
+   */
+  shareKinds?: readonly UsageEventKind[] | null;
+  shareCapPence?: number | null;
 }
 
 export type UsageReservationResult =
   | { ok: true; eventId: string }
-  | { ok: false; denied: "daily_cap" | "monthly_spend" };
+  | { ok: false; denied: "daily_cap" | "monthly_spend" | "share_spend" };
 
 /** Where usage events are kept. The real one is the usage_events table. */
 export interface UsageStore {
   /** How many events of this kind the user has had since `since`. */
   countSince(userId: string, kind: UsageEventKind, since: Date): Promise<number>;
-  /** Total cost of all users' events since `since`, in pence. */
-  spendSince(since: Date): Promise<number>;
+  /** Total cost of all users' events since `since`, in pence; only of `kinds`, when given. */
+  spendSince(since: Date, kinds?: readonly UsageEventKind[]): Promise<number>;
   /**
    * Check the limits and record the event in one atomic step, so calls made
    * at the same moment can't all pass the check before any is recorded.
@@ -67,8 +73,8 @@ export class InMemoryUsageStore implements UsageStore {
     return this.countNow(userId, kind, since);
   }
 
-  async spendSince(since: Date): Promise<number> {
-    return this.spendNow(since);
+  async spendSince(since: Date, kinds?: readonly UsageEventKind[]): Promise<number> {
+    return this.spendNow(since, kinds);
   }
 
   async reserve(request: UsageReservationRequest): Promise<UsageReservationResult> {
@@ -76,6 +82,10 @@ export class InMemoryUsageStore implements UsageStore {
     if (request.monthlyCapPence !== null) {
       if (!request.monthStart) throw new Error("A monthly cap needs a month start");
       if (toUnits(this.spendNow(request.monthStart)) >= toUnits(request.monthlyCapPence)) return { ok: false, denied: "monthly_spend" };
+    }
+    if (request.shareCapPence != null) {
+      if (!request.monthStart || !request.shareKinds?.length) throw new Error("A spend share needs a month start and kinds");
+      if (toUnits(this.spendNow(request.monthStart, request.shareKinds)) >= toUnits(request.shareCapPence)) return { ok: false, denied: "share_spend" };
     }
     if (request.dailyLimit !== null) {
       if (!request.userId || !request.dayStart) throw new Error("A daily limit needs a user and a day start");
@@ -106,8 +116,10 @@ export class InMemoryUsageStore implements UsageStore {
     return this.events.filter((e) => e.userId === userId && e.kind === kind && e.at >= since).length;
   }
 
-  private spendNow(since: Date): number {
-    const units = this.events.filter((e) => e.at >= since).reduce((sum, e) => sum + toUnits(e.costPence), 0);
+  private spendNow(since: Date, kinds?: readonly UsageEventKind[]): number {
+    const units = this.events
+      .filter((e) => e.at >= since && (!kinds || kinds.includes(e.kind)))
+      .reduce((sum, e) => sum + toUnits(e.costPence), 0);
     return units / COST_SCALE;
   }
 }
@@ -115,7 +127,7 @@ export class InMemoryUsageStore implements UsageStore {
 /** What public.reserve_usage returns (see the hardening migration). */
 const ReserveUsageResultSchema = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(true), event_id: z.uuid() }),
-  z.object({ ok: z.literal(false), denied: z.enum(["daily_cap", "monthly_spend"]) }),
+  z.object({ ok: z.literal(false), denied: z.enum(["daily_cap", "monthly_spend", "share_spend"]) }),
 ]);
 
 /**
@@ -136,8 +148,8 @@ export class SupabaseUsageStore implements UsageStore {
     return count ?? 0;
   }
 
-  async spendSince(since: Date): Promise<number> {
-    const { data, error } = await this.admin.rpc("ai_spend_pence_since", { p_since: since.toISOString() });
+  async spendSince(since: Date, kinds?: readonly UsageEventKind[]): Promise<number> {
+    const { data, error } = await this.admin.rpc("ai_spend_pence_since", { p_since: since.toISOString(), p_kinds: kinds ? [...kinds] : null });
     if (error) throw new Error(`Couldn't read AI spend: ${error.message}`);
     return Number(data ?? 0);
   }
@@ -152,6 +164,8 @@ export class SupabaseUsageStore implements UsageStore {
       p_monthly_cap_pence: request.monthlyCapPence,
       p_month_start: request.monthStart?.toISOString() ?? null,
       p_provider: request.provider,
+      p_share_kinds: request.shareKinds ? [...request.shareKinds] : null,
+      p_share_cap_pence: request.shareCapPence ?? null,
     });
     if (error) throw new Error(`Couldn't reserve usage: ${error.message}`);
     const result = ReserveUsageResultSchema.parse(data);

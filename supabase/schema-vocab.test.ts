@@ -14,6 +14,9 @@ import {
   EMAIL_IMPORT_ERRORS,
   EMAIL_IMPORT_STATUSES,
   FEEDBACK_KINDS,
+  MODEL_PRESET_IDS,
+  PREVIEW_FAILED_REASONS,
+  PREVIEW_SKIPPED_REASONS,
   ITEM_SOURCES,
   OUTFIT_STATUSES,
   PATTERNS,
@@ -46,6 +49,9 @@ const vocabularies: Record<string, readonly string[]> = {
   "shop IDs": SHOP_IDS,
   "email import statuses": EMAIL_IMPORT_STATUSES,
   "email import errors": EMAIL_IMPORT_ERRORS,
+  "model preset IDs": MODEL_PRESET_IDS,
+  "preview failure reasons": PREVIEW_FAILED_REASONS,
+  "preview skipped reasons": PREVIEW_SKIPPED_REASONS,
 };
 
 describe("migrations match the contracts", () => {
@@ -59,6 +65,12 @@ describe("migrations match the contracts", () => {
   it("default the favourite shops to the contract's defaults", () => {
     const list = DEFAULT_FAVOURITE_SHOP_IDS.map((id) => `'${id}'`).join(", ");
     expect(sql).toContain(`favourite_shop_ids text[] not null default array[${list}]::text[]`);
+  });
+
+  it("list exactly the contract's model presets in is_model_preset_id (round 2)", () => {
+    const body = /function public\.is_model_preset_id[\s\S]*?\$\$;/.exec(sql)?.[0] ?? "";
+    const listed = [...body.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+    expect(listed.sort()).toEqual([...MODEL_PRESET_IDS].sort());
   });
 
   it("pair each subcategory with its category", () => {

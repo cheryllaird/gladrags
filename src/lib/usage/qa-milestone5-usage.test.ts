@@ -48,15 +48,19 @@ describe("config covers every kind", () => {
   it("emails and shop searches are 10 a day; a shop search is the dearest call", () => {
     expect(DAILY_CAPS.email_import).toBe(10);
     expect(DAILY_CAPS.shop_search).toBe(10);
-    expect(Math.max(...Object.values(ESTIMATED_COST_PENCE))).toBe(ESTIMATED_COST_PENCE.shop_grounding);
+    // Round 2: an image preview is now the dearest call, then a shop search.
+    const { image_generation: _image, ...textCalls } = ESTIMATED_COST_PENCE;
+    expect(Math.max(...Object.values(ESTIMATED_COST_PENCE))).toBe(ESTIMATED_COST_PENCE.image_generation);
+    expect(Math.max(...Object.values(textCalls))).toBe(ESTIMATED_COST_PENCE.shop_grounding);
   });
 
   it("a whole day of shop searches by one user can't spend more than the month's cap on its own", () => {
     expect(DAILY_CAPS.shop_search * ESTIMATED_COST_PENCE.shop_grounding).toBeLessThan(MONTHLY_AI_SPEND_CAP_PENCE);
   });
 
-  it("every cap kind except the monthly one belongs to a capped action", () => {
-    expect(CAP_KINDS).toHaveLength(CAPPED_ACTIONS.length + 1);
+  it("every cap kind except the monthly ones belongs to a capped action", () => {
+    // The overall monthly cap, plus (round 2) the images and shop search shares.
+    expect(CAP_KINDS).toHaveLength(CAPPED_ACTIONS.length + 3);
   });
 });
 

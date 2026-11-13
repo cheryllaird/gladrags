@@ -21,7 +21,7 @@ vi.mock("@/lib/client/api", async (original) => {
 const api = await import("@/lib/client/api");
 
 const ADDRESS = "0123456789abcdef0123456789abcdef@inbound.gladrags.test";
-const SETTINGS: UserSettings = { favouriteShopIds: ["next", "marks_and_spencer", "new_look"], forwardingAddress: ADDRESS };
+const SETTINGS: UserSettings = { modelPresetId: "women_average_medium", favouriteShopIds: ["next", "marks_and_spencer", "new_look"], forwardingAddress: ADDRESS };
 const boom = () => new ApiClientError("internal", "Something went wrong on our side.", { status: 500 });
 
 let n = 0;

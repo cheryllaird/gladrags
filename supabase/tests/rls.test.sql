@@ -958,5 +958,333 @@ select pg_temp.expect_count(
   'select 1 from public.user_settings where user_id = ''5c000000-0000-4000-8000-00000000000c''', 1,
   'QA: C''s settings survive E''s deletion');
 
+
+-- Round 2: outfit previews (migration 8) ----------------------------------------
+-- Two fresh users, P (8a...) and Q (8b...).
+
+insert into public.allowed_emails (email) values ('r2p@example.com'), ('r2q@example.com');
+insert into auth.users (id, email) values
+  ('8a000000-0000-4000-8000-00000000008a', 'r2p@example.com'),
+  ('8b000000-0000-4000-8000-00000000008b', 'r2q@example.com');
+
+insert into public.items (id, user_id, source, original_image_key, category, subcategory, colours, pattern, formality, seasons, warmth, occasions, description) values
+  ('8a100000-0000-4000-8000-000000000001', '8a000000-0000-4000-8000-00000000008a', 'photo',
+   '8a000000-0000-4000-8000-00000000008a/00000000-0000-4000-8000-000000000081.jpg',
+   'top', 't_shirt', array['white'], 'plain', 1, array['summer'], 'light', array['casual'], 'White tee'),
+  ('8a100000-0000-4000-8000-000000000002', '8a000000-0000-4000-8000-00000000008a', 'photo',
+   '8a000000-0000-4000-8000-00000000008a/00000000-0000-4000-8000-000000000082.jpg',
+   'bottom', 'jeans', array['blue'], 'plain', 2, array['summer'], 'medium', array['casual'], 'Blue jeans'),
+  ('8a100000-0000-4000-8000-000000000003', '8a000000-0000-4000-8000-00000000008a', 'photo',
+   '8a000000-0000-4000-8000-00000000008a/00000000-0000-4000-8000-000000000083.jpg',
+   'shoes', 'trainers', array['white'], 'plain', 1, array['summer'], 'light', array['casual'], 'White trainers'),
+  ('8b100000-0000-4000-8000-000000000001', '8b000000-0000-4000-8000-00000000008b', 'photo',
+   '8b000000-0000-4000-8000-00000000008b/00000000-0000-4000-8000-000000000084.jpg',
+   'dress_jumpsuit', 'dress', array['red'], 'plain', 3, array['summer'], 'light', array['evening_out'], 'Red dress');
+
+-- P's outfits: 1 to 3 are the same look (tee, jeans, a shoes gap); 4 is tee, jeans, trainers.
+insert into public.outfits (id, user_id, request, name, reason, item_ids, gaps) values
+  ('8a200000-0000-4000-8000-000000000001', '8a000000-0000-4000-8000-00000000008a', '{"style": {"kind": "preset", "presetId": "casual"}}',
+   'One', 'x', array['8a100000-0000-4000-8000-000000000001', '8a100000-0000-4000-8000-000000000002']::uuid[],
+   '[{"category": "shoes", "subcategory": "trainers", "colours": ["white"], "description": "White trainers"}]'),
+  ('8a200000-0000-4000-8000-000000000002', '8a000000-0000-4000-8000-00000000008a', '{"style": {"kind": "preset", "presetId": "casual"}}',
+   'Two', 'x', array['8a100000-0000-4000-8000-000000000001', '8a100000-0000-4000-8000-000000000002']::uuid[],
+   '[{"category": "shoes", "subcategory": "trainers", "colours": ["white"], "description": "White trainers"}]'),
+  ('8a200000-0000-4000-8000-000000000003', '8a000000-0000-4000-8000-00000000008a', '{"style": {"kind": "preset", "presetId": "casual"}}',
+   'Three', 'x', array['8a100000-0000-4000-8000-000000000001', '8a100000-0000-4000-8000-000000000002']::uuid[],
+   '[{"category": "shoes", "subcategory": "trainers", "colours": ["white"], "description": "White trainers"}]'),
+  ('8a200000-0000-4000-8000-000000000004', '8a000000-0000-4000-8000-00000000008a', '{"style": {"kind": "preset", "presetId": "casual"}}',
+   'Four', 'x', array['8a100000-0000-4000-8000-000000000001', '8a100000-0000-4000-8000-000000000002', '8a100000-0000-4000-8000-000000000003']::uuid[], '[]'),
+  ('8b200000-0000-4000-8000-000000000001', '8b000000-0000-4000-8000-00000000008b', '{"style": {"kind": "preset", "presetId": "evening_out"}}',
+   'Red', 'x', array['8b100000-0000-4000-8000-000000000001']::uuid[],
+   '[{"category": "shoes", "colours": ["black"], "description": "Black heels"}]');
+
+select pg_temp.expect_count(
+  'select 1 from public.outfits where id::text like ''8a2%'' and preview_id is null and not preview_outdated', 4,
+  'R2: new outfits have no preview and are not outdated');
+select pg_temp.expect_count(
+  'select 1 from public.user_settings where user_id = ''8a000000-0000-4000-8000-00000000008a'' and model_preset_id is null', 1,
+  'R2: a new user has no model preset yet');
+select pg_temp.expect_count(
+  'select * from storage.buckets where id = ''previews'' and public = false', 1,
+  'R2: the previews bucket exists and is private');
+
+-- Settings: the model preset, as P.
+set role authenticated;
+select set_config('request.jwt.claim.sub', '8a000000-0000-4000-8000-00000000008a', false);
+select pg_temp.expect_rows(
+  'update public.user_settings set model_preset_id = ''men_broad_deep'' where user_id = ''8a000000-0000-4000-8000-00000000008a''', 1,
+  'R2: P picks a model preset');
+select pg_temp.expect_error(
+  'update public.user_settings set model_preset_id = ''women_broad_light'' where user_id = ''8a000000-0000-4000-8000-00000000008a''',
+  'R2: P picking a preset that isn''t on the list');
+select pg_temp.expect_rows(
+  'update public.user_settings set model_preset_id = ''men_slim_light'' where user_id = ''8b000000-0000-4000-8000-00000000008b''', 0,
+  'R2: P changing Q''s preset changes nothing');
+select pg_temp.expect_rows(
+  'update public.user_settings set favourite_shop_ids = array[''next''] where user_id = ''8a000000-0000-4000-8000-00000000008a''', 1,
+  'R2: P can still change their shops');
+
+-- Previews are written by the server only.
+select pg_temp.expect_error($$
+  insert into public.outfit_previews (user_id, cache_key, preset_id, item_ids)
+  values ('8a000000-0000-4000-8000-00000000008a', repeat('a', 64), 'men_broad_deep', array['8a100000-0000-4000-8000-000000000001']::uuid[])
+$$, 'R2: P inserting a preview');
+select pg_temp.expect_error(
+  'select public.claim_outfit_preview(''8a000000-0000-4000-8000-00000000008a'', ''8a200000-0000-4000-8000-000000000001'', repeat(''a'', 64), ''men_broad_deep'', false, 150)',
+  'R2: P calling claim_outfit_preview');
+select pg_temp.expect_error(
+  'update public.outfits set preview_outdated = true where id = ''8a200000-0000-4000-8000-000000000001''',
+  'R2: P setting preview_outdated');
+select pg_temp.expect_rows(
+  'update public.outfits set status = ''saved'' where id = ''8a200000-0000-4000-8000-000000000001''', 1,
+  'R2: P can still save an outfit');
+select pg_temp.expect_rows(
+  'update public.outfits set status = ''suggested'' where id = ''8a200000-0000-4000-8000-000000000001''', 1,
+  'R2: and change it back');
+reset role;
+
+set role anon;
+select set_config('request.jwt.claim.sub', '', false);
+select pg_temp.expect_error('select * from public.outfit_previews', 'R2: anon reading previews');
+reset role;
+
+-- claim_outfit_preview, as the server.
+do $$
+declare
+  p constant uuid := '8a000000-0000-4000-8000-00000000008a';
+  q constant uuid := '8b000000-0000-4000-8000-00000000008b';
+  o1 constant uuid := '8a200000-0000-4000-8000-000000000001';
+  o2 constant uuid := '8a200000-0000-4000-8000-000000000002';
+  o3 constant uuid := '8a200000-0000-4000-8000-000000000003';
+  k1 constant text := repeat('1', 64);
+  k2 constant text := repeat('2', 64);
+  r jsonb;
+  first_id uuid;
+  second_id uuid;
+begin
+  r := public.claim_outfit_preview(q, o1, k1, 'men_broad_deep', false, 150);
+  if r ->> 'ok' <> 'false' or r ->> 'reason' <> 'not_found' then raise exception 'FAIL: Q claimed P''s outfit: %', r; end if;
+  raise notice 'ok: R2: a claim on someone else''s outfit is not_found';
+
+  r := public.claim_outfit_preview(p, o1, k1, 'men_broad_deep', false, 150);
+  if r ->> 'action' <> 'generate' or r ->> 'status' <> 'pending' then raise exception 'FAIL: first claim: %', r; end if;
+  first_id := (r ->> 'preview_id')::uuid;
+  if (select preview_id from public.outfits where id = o1) <> first_id then raise exception 'FAIL: outfit 1 not linked'; end if;
+  if (select suggested_slots from public.outfit_previews where id = first_id) <> array['shoes'] then raise exception 'FAIL: suggested slots not recorded'; end if;
+  raise notice 'ok: R2: the first claim of a look creates a pending preview and links it (generate)';
+
+  r := public.claim_outfit_preview(p, o1, k1, 'men_broad_deep', false, 150);
+  if r ->> 'action' <> 'existing' then raise exception 'FAIL: second claim of the same outfit: %', r; end if;
+  raise notice 'ok: R2: claiming again while pending answers existing (no second generation)';
+
+  r := public.claim_outfit_preview(p, o2, k1, 'men_broad_deep', false, 150);
+  if r ->> 'action' <> 'wait' or (r ->> 'preview_id')::uuid <> first_id then raise exception 'FAIL: same look, other outfit, pending: %', r; end if;
+  raise notice 'ok: R2: another outfit with the same look waits for the pending one (wait)';
+
+  update public.outfit_previews set status = 'ready', image_key = '8a000000-0000-4000-8000-00000000008a/00000000-0000-4000-8000-0000000000f1.webp'
+  where id = first_id and status = 'pending';
+
+  r := public.claim_outfit_preview(p, o3, k1, 'men_broad_deep', false, 150);
+  if r ->> 'action' <> 'reused' or r ->> 'status' <> 'ready' or (r ->> 'preview_id')::uuid <> first_id then raise exception 'FAIL: reuse: %', r; end if;
+  raise notice 'ok: R2: a third outfit with the same look reuses the ready image (reused)';
+
+  r := public.claim_outfit_preview(p, o1, k1, 'men_broad_deep', true, 150);
+  if r ->> 'action' <> 'existing' then raise exception 'FAIL: refresh with the same key: %', r; end if;
+  raise notice 'ok: R2: a refresh with an unchanged look answers existing';
+
+  -- Picking a product marks the linked outfit outdated; shop results alone don't.
+  update public.outfits set gaps = jsonb_set(gaps, '{0,shopResults}', '[{"url": "https://www.next.co.uk/a"}]') where id = o1;
+  if (select preview_outdated from public.outfits where id = o1) then raise exception 'FAIL: new shop results marked the preview outdated'; end if;
+  update public.outfits set gaps = jsonb_set(gaps, '{0,shopProduct}', '{"url": "https://www.next.co.uk/a"}') where id = o1;
+  if not (select preview_outdated from public.outfits where id = o1) then raise exception 'FAIL: picking a product did not mark it outdated'; end if;
+  if (select preview_outdated from public.outfits where id = o2) then raise exception 'FAIL: another outfit was marked outdated'; end if;
+  raise notice 'ok: R2: picking a shop product marks that outfit''s preview outdated (shop results alone don''t)';
+
+  r := public.claim_outfit_preview(p, o1, k1, 'men_broad_deep', false, 150);
+  if r ->> 'action' <> 'existing' then raise exception 'FAIL: outdated without refresh: %', r; end if;
+  r := public.claim_outfit_preview(p, o1, k2, 'men_broad_deep', true, 150);
+  if r ->> 'action' <> 'generate' or r ->> 'released_image_key' is not null then raise exception 'FAIL: refresh to a new look: %', r; end if;
+  second_id := (r ->> 'preview_id')::uuid;
+  if (select preview_outdated from public.outfits where id = o1) then raise exception 'FAIL: relinking did not clear outdated'; end if;
+  if not exists (select 1 from public.outfit_previews where id = first_id) then raise exception 'FAIL: the shared image was deleted while still used'; end if;
+  raise notice 'ok: R2: refresh on an outdated preview claims the new look; the old image stays for the outfits still using it';
+
+  -- A cap or pause leaves the preview skipped; the next claim tries again.
+  update public.outfit_previews set status = 'skipped', failure_reason = 'daily_cap_reached' where id = second_id and status = 'pending';
+  r := public.claim_outfit_preview(p, o1, k2, 'men_broad_deep', false, 150);
+  if r ->> 'action' <> 'generate' or (r ->> 'preview_id')::uuid <> second_id then raise exception 'FAIL: claim after skipped: %', r; end if;
+  if (select failure_reason from public.outfit_previews where id = second_id) is not null then raise exception 'FAIL: reclaim kept the reason'; end if;
+  raise notice 'ok: R2: a skipped preview is claimed again (generate)';
+
+  -- An abandoned pending preview (older than the stale time) is claimed again.
+  alter table public.outfit_previews disable trigger outfit_previews_touch_updated_at;
+  update public.outfit_previews set updated_at = now() - interval '10 minutes' where id = second_id;
+  alter table public.outfit_previews enable trigger outfit_previews_touch_updated_at;
+  r := public.claim_outfit_preview(p, o1, k2, 'men_broad_deep', false, 150);
+  if r ->> 'action' <> 'generate' then raise exception 'FAIL: claim after stale pending: %', r; end if;
+  raise notice 'ok: R2: a stale pending preview is claimed again (generate)';
+
+  update public.outfit_previews set status = 'failed', failure_reason = 'ai_failed' where id = second_id and status = 'pending';
+  r := public.claim_outfit_preview(p, o1, k2, 'men_broad_deep', false, 150);
+  if r ->> 'action' <> 'existing' or r ->> 'status' <> 'failed' then raise exception 'FAIL: claim after failed: %', r; end if;
+  raise notice 'ok: R2: a failed preview is final for its look (existing)';
+
+  -- Moving outfit 1 back to the first look releases the failed one (no image to remove).
+  r := public.claim_outfit_preview(p, o1, k1, 'men_broad_deep', true, 150);
+  if r ->> 'action' <> 'reused' or exists (select 1 from public.outfit_previews where id = second_id) then raise exception 'FAIL: release of an unused preview: %', r; end if;
+  raise notice 'ok: R2: a preview no outfit uses any more is deleted';
+end;
+$$;
+
+select pg_temp.expect_error(
+  $$select public.claim_outfit_preview('8a000000-0000-4000-8000-00000000008a', '8a200000-0000-4000-8000-000000000004', 'not a hash', 'men_broad_deep', false, 150)$$,
+  'R2: a claim with a malformed cache key');
+select pg_temp.expect_error(
+  $$select public.claim_outfit_preview('8a000000-0000-4000-8000-00000000008a', '8a200000-0000-4000-8000-000000000004', repeat('3', 64), 'robot', false, 150)$$,
+  'R2: a claim with an unknown preset');
+
+-- Constraints on previews.
+select pg_temp.expect_error($$
+  insert into public.outfit_previews (user_id, cache_key, preset_id, item_ids, status)
+  values ('8a000000-0000-4000-8000-00000000008a', repeat('4', 64), 'men_broad_deep', array['8a100000-0000-4000-8000-000000000001']::uuid[], 'ready')
+$$, 'R2: a ready preview without an image');
+select pg_temp.expect_error($$
+  insert into public.outfit_previews (user_id, cache_key, preset_id, item_ids, status, image_key)
+  values ('8a000000-0000-4000-8000-00000000008a', repeat('4', 64), 'men_broad_deep', array['8a100000-0000-4000-8000-000000000001']::uuid[], 'ready',
+    '8b000000-0000-4000-8000-00000000008b/00000000-0000-4000-8000-0000000000f2.webp')
+$$, 'R2: a preview image in someone else''s folder');
+select pg_temp.expect_error($$
+  insert into public.outfit_previews (user_id, cache_key, preset_id, item_ids, status, image_key)
+  values ('8a000000-0000-4000-8000-00000000008a', repeat('4', 64), 'men_broad_deep', array['8a100000-0000-4000-8000-000000000001']::uuid[], 'ready',
+    '8a000000-0000-4000-8000-00000000008a/00000000-0000-4000-8000-0000000000f2.png')
+$$, 'R2: a preview image that isn''t WebP');
+select pg_temp.expect_error($$
+  insert into public.outfit_previews (user_id, cache_key, preset_id, item_ids, status)
+  values ('8a000000-0000-4000-8000-00000000008a', repeat('4', 64), 'men_broad_deep', array['8a100000-0000-4000-8000-000000000001']::uuid[], 'failed')
+$$, 'R2: a failed preview without a reason');
+select pg_temp.expect_error($$
+  insert into public.outfit_previews (user_id, cache_key, preset_id, item_ids, status, failure_reason)
+  values ('8a000000-0000-4000-8000-00000000008a', repeat('4', 64), 'men_broad_deep', array['8a100000-0000-4000-8000-000000000001']::uuid[], 'skipped', 'ai_failed')
+$$, 'R2: a skipped preview with a failure reason');
+select pg_temp.expect_error($$
+  insert into public.outfit_previews (user_id, cache_key, preset_id, item_ids)
+  values ('8a000000-0000-4000-8000-00000000008a', repeat('1', 64), 'men_broad_deep', array['8a100000-0000-4000-8000-000000000001']::uuid[])
+$$, 'R2: two previews for one user and look');
+select pg_temp.expect_rows($$
+  insert into public.outfit_previews (user_id, cache_key, preset_id, item_ids)
+  values ('8b000000-0000-4000-8000-00000000008b', repeat('1', 64), 'women_plus_deep', array['8b100000-0000-4000-8000-000000000001']::uuid[])
+$$, 1, 'R2: the same cache key for another user is another preview');
+select pg_temp.expect_error($$
+  update public.outfits set preview_id = (select id from public.outfit_previews where user_id = '8b000000-0000-4000-8000-00000000008b')
+  where id = '8a200000-0000-4000-8000-000000000004'
+$$, 'R2: linking an outfit to someone else''s preview');
+
+-- Reading, as P and Q.
+insert into storage.objects (bucket_id, name) values
+  ('previews', '8a000000-0000-4000-8000-00000000008a/00000000-0000-4000-8000-0000000000f1.webp'),
+  ('previews', '8b000000-0000-4000-8000-00000000008b/00000000-0000-4000-8000-0000000000f3.webp');
+set role authenticated;
+select set_config('request.jwt.claim.sub', '8a000000-0000-4000-8000-00000000008a', false);
+select pg_temp.expect_count('select * from public.outfit_previews', 1, 'R2: P sees only their own preview');
+select pg_temp.expect_count('select * from storage.objects where bucket_id = ''previews''', 1, 'R2: P sees only their own preview images');
+select pg_temp.expect_rows('delete from storage.objects where bucket_id = ''previews'' and name like ''8b%''', 0, 'R2: P deleting Q''s preview image changes nothing');
+select pg_temp.expect_error(
+  'update public.outfits set preview_id = null where id = ''8a200000-0000-4000-8000-000000000001''',
+  'R2: P unlinking a preview');
+select pg_temp.expect_error(
+  'update public.outfit_previews set status = ''failed'', failure_reason = ''internal''',
+  'R2: P changing a preview');
+reset role;
+set role authenticated;
+select set_config('request.jwt.claim.sub', '8b000000-0000-4000-8000-00000000008b', false);
+select pg_temp.expect_count('select * from public.outfit_previews where user_id = ''8a000000-0000-4000-8000-00000000008a''', 0, 'R2: Q can''t see P''s previews');
+reset role;
+
+-- Deleting outfits: the shared image stays until the last outfit using it goes.
+delete from public.outfits where id in ('8a200000-0000-4000-8000-000000000002', '8a200000-0000-4000-8000-000000000003');
+select pg_temp.expect_count(
+  'select 1 from public.outfit_previews where cache_key = repeat(''1'', 64) and user_id = ''8a000000-0000-4000-8000-00000000008a''', 1,
+  'R2: deleting two of the outfits sharing a preview keeps it for the third');
+
+-- A new cut-out keeps the preview; a new photo deletes it (and unlinks outfits).
+update public.items set cutout_image_key = '8a000000-0000-4000-8000-00000000008a/00000000-0000-4000-8000-000000000091.png'
+where id = '8a100000-0000-4000-8000-000000000001';
+select pg_temp.expect_count(
+  'select 1 from public.outfits where id = ''8a200000-0000-4000-8000-000000000001'' and preview_id is not null', 1,
+  'R2: a new cut-out keeps the preview');
+update public.items set original_image_key = '8a000000-0000-4000-8000-00000000008a/00000000-0000-4000-8000-000000000092.jpg'
+where id = '8a100000-0000-4000-8000-000000000001';
+select pg_temp.expect_count(
+  'select 1 from public.outfit_previews where user_id = ''8a000000-0000-4000-8000-00000000008a''', 0,
+  'R2: a new photo deletes the previews that show the item');
+select pg_temp.expect_count(
+  'select 1 from public.outfits where id = ''8a200000-0000-4000-8000-000000000001'' and preview_id is null', 1,
+  'R2: and the outfit goes back to no preview');
+
+-- Deleting an item (as its owner) deletes previews that show it.
+do $$
+declare r jsonb;
+begin
+  r := public.claim_outfit_preview('8a000000-0000-4000-8000-00000000008a', '8a200000-0000-4000-8000-000000000004', repeat('5', 64), 'men_broad_deep', false, 150);
+  if r ->> 'action' <> 'generate' then raise exception 'FAIL: claim for outfit 4: %', r; end if;
+end;
+$$;
+set role authenticated;
+select set_config('request.jwt.claim.sub', '8a000000-0000-4000-8000-00000000008a', false);
+select pg_temp.expect_rows('delete from public.items where id = ''8a100000-0000-4000-8000-000000000003''', 1, 'R2: P deletes the trainers');
+reset role;
+select pg_temp.expect_count(
+  'select 1 from public.outfit_previews where cache_key = repeat(''5'', 64)', 0,
+  'R2: deleting an item deletes the previews that show it');
+
+-- Deleting an account deletes its previews.
+delete from auth.users where id = '8b000000-0000-4000-8000-00000000008b';
+select pg_temp.expect_count(
+  'select 1 from public.outfit_previews where user_id = ''8b000000-0000-4000-8000-00000000008b''', 0,
+  'R2: Q''s previews are deleted with the account');
+
+-- New usage kinds, and a spend share in reserve_usage.
+select pg_temp.expect_rows(
+  $$insert into public.usage_events (user_id, kind, cost_pence) values (null, 'image_generation', 0), ('8a000000-0000-4000-8000-00000000008a', 'outfit_preview', 0)$$, 2,
+  'R2: image_generation and outfit_preview are usage kinds');
+do $$
+declare
+  p constant uuid := '8a000000-0000-4000-8000-00000000008a';
+  month_start timestamptz := date_trunc('month', now() at time zone 'Europe/London') at time zone 'Europe/London';
+  day_start timestamptz := date_trunc('day', now() at time zone 'Europe/London') at time zone 'Europe/London';
+  share_before numeric := public.ai_spend_pence_since(month_start, array['image_generation']);
+  r jsonb;
+  granted int := 0;
+begin
+  for i in 1..5 loop
+    r := public.reserve_usage(null, 'image_generation', null, null, 0.4, 1000000, month_start, 'gemini', array['image_generation'], share_before + 1);
+    if (r ->> 'ok')::boolean then granted := granted + 1;
+    elsif r ->> 'denied' <> 'share_spend' then raise exception 'FAIL: share refusal said %', r;
+    end if;
+  end loop;
+  if granted <> 3 then raise exception 'FAIL: % image reservations under a 1p share at 0.4p each, expected 3', granted; end if;
+  raise notice 'ok: R2: reserve_usage stops a kind at its spend share (reached, not approached)';
+
+  r := public.reserve_usage(null, 'tagging', null, null, 0.2, 1000000, month_start, 'gemini');
+  if not (r ->> 'ok')::boolean then raise exception 'FAIL: tagging refused when only the image share is spent: %', r; end if;
+  raise notice 'ok: R2: other kinds keep working when a share is spent';
+
+  r := public.reserve_usage(p, 'outfit_preview', 12, day_start, 0, 1000000, month_start, null, array['image_generation'], share_before + 1);
+  if r ->> 'denied' <> 'share_spend' then raise exception 'FAIL: the preview action passed a spent share: %', r; end if;
+  raise notice 'ok: R2: the daily preview action is refused once the image share is spent';
+
+  if public.ai_spend_pence_since(month_start, array['image_generation']) - share_before <> 1.2 then
+    raise exception 'FAIL: ai_spend_pence_since with kinds summed %', public.ai_spend_pence_since(month_start, array['image_generation']) - share_before;
+  end if;
+  raise notice 'ok: R2: ai_spend_pence_since sums only the kinds asked for';
+end;
+$$;
+select pg_temp.expect_error(
+  $$select public.reserve_usage(null, 'image_generation', null, null, 0.4, null, now(), null, array['image_generation'], null)$$,
+  'R2: share kinds without a share cap');
+select pg_temp.expect_error(
+  $$select public.reserve_usage(null, 'image_generation', null, null, 0.4, null, null, null, array['image_generation'], 1)$$,
+  'R2: a share without a month start');
+
 \o
 \echo 'All migration checks passed.'

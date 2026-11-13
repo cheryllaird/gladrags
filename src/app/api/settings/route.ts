@@ -33,15 +33,16 @@ export const GET = withApiHandler(async () => {
   return jsonResponse(UserSettingsSchema, toUserSettings(stored, config));
 });
 
-/** Change the favourite shops. */
+/** Change the favourite shops, the model preset (round 2), or both. */
 export const PUT = withApiHandler(async (request) => {
   const user = await requireUser();
-  const { favouriteShopIds } = await parseJsonBody(request, UpdateSettingsRequestSchema);
+  const change = await parseJsonBody(request, UpdateSettingsRequestSchema);
   if (isMockMode()) {
-    mock.setFavouriteShops(favouriteShopIds);
+    if (change.favouriteShopIds) mock.setFavouriteShops(change.favouriteShopIds);
+    if (change.modelPresetId) mock.setModelPreset(change.modelPresetId);
     return jsonResponse(UserSettingsSchema, mockSettings());
   }
   const config = getForwardingAddressConfig();
-  const stored = present(await (await getSettingsRepository()).setFavouriteShops(user.id, favouriteShopIds));
+  const stored = present(await (await getSettingsRepository()).update(user.id, change));
   return jsonResponse(UserSettingsSchema, toUserSettings(stored, config));
 });

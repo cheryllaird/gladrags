@@ -2,7 +2,17 @@
  * Convert database rows (snake_case) to API shapes (camelCase) and back.
  * Image URLs are passed in because signing them needs a Supabase call.
  */
-import type { CreateItemRequest, ItemRow, ItemTags, Outfit, OutfitRow, WardrobeItem } from "@/contracts";
+import {
+  NO_PREVIEW,
+  type CreateItemRequest,
+  type ItemRow,
+  type ItemTags,
+  type Outfit,
+  type OutfitPreview,
+  type OutfitPreviewRow,
+  type OutfitRow,
+  type WardrobeItem,
+} from "@/contracts";
 
 /** Pass cutoutUrl: null when the row has no cutout_image_key. */
 export function itemRowToWardrobeItem(
@@ -62,8 +72,36 @@ export function createItemRequestToRow(userId: string, req: CreateItemRequest) {
   };
 }
 
-/** `itemsById` must contain every item in row.item_ids. */
-export function outfitRowToOutfit(row: OutfitRow, itemsById: ReadonlyMap<string, WardrobeItem>): Outfit {
+/**
+ * Round 2: the API preview for an outfit row and its outfit_previews row
+ * (null when outfits.preview_id is null). Pass the signed URL of a ready
+ * image; a ready row whose image can't be signed reads as failed (internal).
+ */
+export function previewRowToOutfitPreview(
+  outfit: Pick<OutfitRow, "preview_outdated">,
+  preview: OutfitPreviewRow | null,
+  imageUrl: string | null,
+): OutfitPreview {
+  if (!preview) return { ...NO_PREVIEW, suggestedSlots: [] };
+  const common = { presetId: preview.preset_id, suggestedSlots: [...preview.suggested_slots], outdated: outfit.preview_outdated };
+  if (preview.status === "ready") {
+    return imageUrl
+      ? { status: "ready", imageUrl, failureReason: null, ...common }
+      : { status: "failed", imageUrl: null, failureReason: "internal", ...common };
+  }
+  if (preview.status === "pending") return { status: "pending", imageUrl: null, failureReason: null, ...common };
+  return { status: preview.status, imageUrl: null, failureReason: preview.failure_reason, ...common };
+}
+
+/**
+ * `itemsById` must contain every item in row.item_ids. `preview` defaults
+ * to none until the outfit engine reads outfit_previews (round 2, P2).
+ */
+export function outfitRowToOutfit(
+  row: OutfitRow,
+  itemsById: ReadonlyMap<string, WardrobeItem>,
+  preview: OutfitPreview = { ...NO_PREVIEW, suggestedSlots: [] },
+): Outfit {
   const items = row.item_ids.map((id) => {
     const item = itemsById.get(id);
     if (!item) throw new Error(`Outfit ${row.id} refers to missing item ${id}`);
@@ -80,5 +118,6 @@ export function outfitRowToOutfit(row: OutfitRow, itemsById: ReadonlyMap<string,
     status: row.status,
     parentOutfitId: row.parent_outfit_id,
     createdAt: new Date(row.created_at).toISOString(),
+    preview,
   };
 }
