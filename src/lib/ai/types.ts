@@ -184,7 +184,8 @@ export interface PreviewItemInput {
  * A gap: the model draws this suggested piece on the figure, so an outfit
  * with gaps still shows as a complete look. With a picked shop product,
  * `productImage` is that product's picture (fetched through link-import's
- * safeFetch with the shop-domain redirect check, then the image checks).
+ * safeFetch with allowRedirect = shopImageUrlAllowed: the shop's domains or its
+ * imageHosts, then the image checks).
  * It is model input only: never stored or shown.
  */
 export interface PreviewGapInput {

@@ -13,21 +13,26 @@ import { SourceUrlSchema } from "./item";
  * lists the IDs (supabase/schema-vocab.test.ts checks they agree).
  *
  * Primark is left out on purpose: it has no UK online shop to link to.
+ *
+ * `imageHosts` (round 2): other hosts the shop serves its product pictures
+ * from (a CDN), for fetching a picked product's picture as preview input.
+ * Empty for now: only the shop's own domains are allowed until the per-shop
+ * image host list is filled in and checked (security item S9).
  */
 export const SHOPS = [
-  { id: "next", name: "Next", domains: ["next.co.uk"] },
-  { id: "marks_and_spencer", name: "M&S", domains: ["marksandspencer.com"] },
-  { id: "new_look", name: "New Look", domains: ["newlook.com"] },
-  { id: "john_lewis", name: "John Lewis", domains: ["johnlewis.com"] },
-  { id: "river_island", name: "River Island", domains: ["riverisland.com"] },
-  { id: "zara", name: "Zara", domains: ["zara.com"] },
-  { id: "hm", name: "H&M", domains: ["hm.com"] },
-  { id: "uniqlo", name: "Uniqlo", domains: ["uniqlo.com"] },
-  { id: "asos", name: "ASOS", domains: ["asos.com"] },
-  { id: "mango", name: "Mango", domains: ["mango.com"] },
-  { id: "matalan", name: "Matalan", domains: ["matalan.co.uk"] },
-  { id: "fatface", name: "FatFace", domains: ["fatface.com"] },
-] as const satisfies readonly { id: string; name: string; domains: readonly string[] }[];
+  { id: "next", name: "Next", domains: ["next.co.uk"], imageHosts: [] },
+  { id: "marks_and_spencer", name: "M&S", domains: ["marksandspencer.com"], imageHosts: [] },
+  { id: "new_look", name: "New Look", domains: ["newlook.com"], imageHosts: [] },
+  { id: "john_lewis", name: "John Lewis", domains: ["johnlewis.com"], imageHosts: [] },
+  { id: "river_island", name: "River Island", domains: ["riverisland.com"], imageHosts: [] },
+  { id: "zara", name: "Zara", domains: ["zara.com"], imageHosts: [] },
+  { id: "hm", name: "H&M", domains: ["hm.com"], imageHosts: [] },
+  { id: "uniqlo", name: "Uniqlo", domains: ["uniqlo.com"], imageHosts: [] },
+  { id: "asos", name: "ASOS", domains: ["asos.com"], imageHosts: [] },
+  { id: "mango", name: "Mango", domains: ["mango.com"], imageHosts: [] },
+  { id: "matalan", name: "Matalan", domains: ["matalan.co.uk"], imageHosts: [] },
+  { id: "fatface", name: "FatFace", domains: ["fatface.com"], imageHosts: [] },
+] as const satisfies readonly { id: string; name: string; domains: readonly string[]; imageHosts: readonly string[] }[];
 
 export type Shop = (typeof SHOPS)[number];
 export const SHOP_IDS = SHOPS.map((shop) => shop.id) as [Shop["id"], ...Shop["id"][]];
@@ -69,6 +74,24 @@ export function shopForUrl(url: string, shopIds: readonly ShopId[] = SHOP_IDS): 
     if (SHOPS_BY_ID[id].domains.some((domain) => hostMatchesDomain(parsed.hostname, domain))) return id;
   }
   return null;
+}
+
+/**
+ * Round 2: whether a product picture may be fetched for this shop, as
+ * preview input: https, on the shop's own domains or its `imageHosts`. The
+ * preview route passes this as safeFetch's `allowRedirect` (and checks the
+ * first URL with it too), so a redirect can't lead the fetch elsewhere.
+ */
+export function shopImageUrlAllowed(url: string, shopId: ShopId): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.port) return false;
+  const shop = SHOPS_BY_ID[shopId];
+  return [...shop.domains, ...shop.imageHosts].some((domain) => hostMatchesDomain(parsed.hostname, domain));
 }
 
 export const SHOP_PRODUCT_LIMITS = { title: 200, price: 40 } as const;

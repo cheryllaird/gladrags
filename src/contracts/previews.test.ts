@@ -4,7 +4,6 @@
  */
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 import {
   PREVIEW_REPLY_BLOCKED,
@@ -14,7 +13,7 @@ import {
   PREVIEW_REPLY_SQUARE,
 } from "@/lib/ai/fixtures/preview-fixtures";
 import type { FakeImageReply } from "@/lib/ai/fakes";
-import { sniffImageType } from "@/lib/images/sniff";
+import { inspectGeneratedImage } from "@/lib/images/preview-check";
 import {
   BUILDS_BY_GENDER,
   DEFAULT_MODEL_PRESET_ID,
@@ -26,6 +25,8 @@ import {
   OutfitSchema,
   PREVIEW_OUTPUT_MAX_BYTES,
   PreviewRequestQuerySchema,
+  SHOPS,
+  shopImageUrlAllowed,
   UpdateSettingsRequestSchema,
   UserSettingsSchema,
   checkGeneratedPreviewImage,
@@ -168,18 +169,14 @@ describe("the preview cache key", () => {
   });
 });
 
-/** What the preview route does with a reply: sniff, decode, check. */
+/**
+ * What the preview route does with a reply: sniff and fully decode it
+ * (inspectGeneratedImage; a header read with metadata() isn't enough),
+ * then check.
+ */
 async function factsOf(reply: FakeImageReply): Promise<GeneratedImageFacts | "no image"> {
   if (reply === "throw" || !("image" in reply)) return "no image";
-  const { data } = reply.image;
-  let dimensions: GeneratedImageFacts["dimensions"] = null;
-  try {
-    const meta = await sharp(data).metadata();
-    if (meta.width && meta.height) dimensions = { width: meta.width, height: meta.height };
-  } catch {
-    dimensions = null;
-  }
-  return { mimeType: sniffImageType(data), byteLength: data.byteLength, dimensions };
+  return inspectGeneratedImage(reply.image.data);
 }
 
 describe("checks on a generated image", () => {
@@ -197,6 +194,20 @@ describe("checks on a generated image", () => {
   it("refuse bytes that aren't an image, whatever type the model declared", async () => {
     const result = checkGeneratedPreviewImage((await factsOf(PREVIEW_REPLY_NOT_AN_IMAGE)) as GeneratedImageFacts);
     expect(result).toMatchObject({ ok: false });
+  });
+
+  it("refuse a truncated image whose header still reports the full size (a full decode catches it)", async () => {
+    const good = PREVIEW_REPLY_GOOD as { image: { data: Uint8Array } };
+    const half = good.image.data.slice(0, Math.floor(good.image.data.byteLength / 2));
+    const facts = await inspectGeneratedImage(half);
+    expect(facts.dimensions).toBeNull();
+    expect(checkGeneratedPreviewImage(facts).ok).toBe(false);
+  });
+
+  it("refuse a NaN or negative byte length", () => {
+    for (const byteLength of [Number.NaN, -1, Number.POSITIVE_INFINITY]) {
+      expect(checkGeneratedPreviewImage({ mimeType: "image/png", byteLength, dimensions: { width: 832, height: 1248 } }).ok).toBe(false);
+    }
   });
 
   it("a refusal or an empty reply has no image to check", async () => {
@@ -221,5 +232,17 @@ describe("checks on a generated image", () => {
   it("accept a JPEG or WebP portrait close to 2:3", () => {
     expect(checkGeneratedPreviewImage({ mimeType: "image/jpeg", byteLength: 500_000, dimensions: { width: 1024, height: 1536 } }).ok).toBe(true);
     expect(checkGeneratedPreviewImage({ mimeType: "image/webp", byteLength: 500_000, dimensions: { width: 896, height: 1280 } }).ok).toBe(true);
+  });
+});
+
+describe("shop product pictures as preview input", () => {
+  it("are allowed only over https from the shop's own domains (image hosts empty until S9)", () => {
+    expect(SHOPS.every((shop) => Array.isArray(shop.imageHosts))).toBe(true);
+    expect(shopImageUrlAllowed("https://www.next.co.uk/images/p.jpg", "next")).toBe(true);
+    expect(shopImageUrlAllowed("http://www.next.co.uk/images/p.jpg", "next")).toBe(false);
+    expect(shopImageUrlAllowed("https://www.next.co.uk:8443/p.jpg", "next")).toBe(false);
+    expect(shopImageUrlAllowed("https://www.zara.com/p.jpg", "next")).toBe(false);
+    expect(shopImageUrlAllowed("https://next.co.uk.evil.example/p.jpg", "next")).toBe(false);
+    expect(shopImageUrlAllowed("not a url", "next")).toBe(false);
   });
 });
