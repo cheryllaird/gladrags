@@ -79,6 +79,8 @@ export const OutfitRowSchema = z.object({
    * Written by the server only.
    */
   preview_id: IdSchema.nullable().default(null),
+  /** Round 2: a refresh in progress: the new look's preview, while preview_id still shows the old picture. */
+  pending_preview_id: IdSchema.nullable().default(null),
   /** Round 2: set by the database when a gap's chosen product changes after the preview was linked. */
   preview_outdated: z.boolean().default(false),
 });
@@ -101,6 +103,8 @@ export const OutfitPreviewRowSchema = z.object({
   /** In the previews bucket, `<user id>/<uuid>.webp`; set when ready. */
   image_key: z.string().nullable(),
   failure_reason: z.enum(PREVIEW_FAILURE_REASONS).nullable(),
+  /** When generation was last claimed (stale pending and the failed-retry window count from it). */
+  attempted_at: DbTimestampSchema,
   created_at: DbTimestampSchema,
   updated_at: DbTimestampSchema,
 });
@@ -112,15 +116,21 @@ export const ClaimOutfitPreviewResultSchema = z.discriminatedUnion("ok", [
   z.object({
     ok: z.literal(true),
     /**
-     * - existing: the outfit already has a preview to show (ready, failed,
-     *   or pending in another request); nothing to do.
-     * - reused: linked to the same look's ready or failed image; no cost, no cap.
+     * - existing: what the outfit shows stands (ready, failed for good or
+     *   recently, or pending in another request); nothing to do. On the
+     *   look the picture shows, this also clears "outdated".
+     * - reused: linked to the same look's ready (or standing failed) preview; no cost, no cap.
      * - wait: linked to the same look's preview, pending in another request.
-     * - generate: this request must generate it (the row is pending and claimed).
+     * - generate: this request must generate it (the row is pending and
+     *   claimed); then call finish_outfit_preview.
+     * - unavailable: a refresh onto a look that failed within the retry
+     *   window; the outfit keeps its outdated picture.
      */
-    action: z.enum(["existing", "reused", "wait", "generate"]),
+    action: z.enum(["existing", "reused", "wait", "generate", "unavailable"]),
     preview_id: IdSchema,
     status: z.enum(["pending", "ready", "failed", "skipped"]),
+    /** True when the preview is a refresh's (outfits.pending_preview_id): the old picture still shows. */
+    refreshing: z.boolean(),
     /**
      * The image of a preview this outfit stopped using, when no other
      * outfit uses it any more (its row is deleted): remove it from storage.
@@ -129,6 +139,25 @@ export const ClaimOutfitPreviewResultSchema = z.discriminatedUnion("ok", [
   }),
 ]);
 export type ClaimOutfitPreviewResult = z.infer<typeof ClaimOutfitPreviewResultSchema>;
+
+/**
+ * What public.finish_outfit_preview returns. ok false: the row is gone (an
+ * item it shows was deleted or got a new photo) or isn't pending any more;
+ * delete the image just made. released_image_keys: old pictures of outfits
+ * that switched to this one and that nothing uses any more; remove them.
+ */
+export const FinishOutfitPreviewResultSchema = z.object({
+  ok: z.boolean(),
+  released_image_keys: z.array(z.string()),
+});
+export type FinishOutfitPreviewResult = z.infer<typeof FinishOutfitPreviewResultSchema>;
+
+/** What public.sweep_unused_outfit_previews returns (the daily cleanup). */
+export const SweepUnusedPreviewsResultSchema = z.object({
+  deleted: z.int().min(0),
+  image_keys: z.array(z.string()),
+});
+export type SweepUnusedPreviewsResult = z.infer<typeof SweepUnusedPreviewsResultSchema>;
 
 export const OutfitFeedbackRowSchema = z.object({
   id: IdSchema,

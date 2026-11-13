@@ -13,6 +13,7 @@ const row: OutfitPreviewRow = OutfitPreviewRowSchema.parse({
   status: "ready",
   image_key: "8a000000-0000-4000-8000-00000000008a/00000000-0000-4000-8000-0000000000f1.webp",
   failure_reason: null,
+  attempted_at: "2026-11-13 10:00:00+00",
   created_at: "2026-11-13 10:00:00+00",
   updated_at: "2026-11-13 10:00:00+00",
 });
@@ -31,8 +32,18 @@ describe("previewRowToOutfitPreview", () => {
       presetId: "women_curvy_medium",
       suggestedSlots: ["bottom", "shoes"],
       outdated: true,
+      refreshing: false,
     });
     expect(OutfitPreviewSchema.safeParse(preview).success).toBe(true);
+  });
+
+  it("a refresh in progress reads as refreshing, still showing the old picture", () => {
+    const preview = previewRowToOutfitPreview(
+      { preview_outdated: true, pending_preview_id: "8a300000-0000-4000-8000-000000000002" },
+      row,
+      "https://x.supabase.co/sign/p.webp",
+    );
+    expect(preview).toMatchObject({ status: "ready", outdated: true, refreshing: true });
   });
 
   it("a ready row whose image can't be signed reads as failed (internal), never as none", () => {

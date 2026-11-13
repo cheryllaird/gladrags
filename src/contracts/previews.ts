@@ -90,7 +90,7 @@ export const DEFAULT_MODEL_PRESET_ID: ModelPresetId = "women_average_medium";
 
 /**
  * True while public/presets holds the neutral placeholder silhouettes
- * (scripts/make-preset-placeholders.mjs). The orchestrator replaces them
+ * (scripts/make-preview-placeholders.mjs). The orchestrator replaces them
  * with the real generated set (PROGRESS.md task P5) and sets this false.
  * The preview route may still run against placeholders in development.
  */
@@ -104,7 +104,10 @@ export const MODEL_PRESET_IMAGES_ARE_PLACEHOLDERS = true;
  * - none: no preview yet (the client calls POST /api/outfits/[id]/preview).
  * - pending: being generated (by this or another request for the same look).
  * - ready: stored; `imageUrl` is a short-lived signed URL.
- * - failed: generation failed twice; final for this look. The collage shows.
+ * - failed: generation failed twice. The collage shows. Final for this look
+ *   when the model refused (blocked) or its image failed the checks
+ *   (invalid_image); after ai_failed or internal (passing troubles) a later
+ *   call tries again once PREVIEW_FAILED_RETRY_SECONDS have passed.
  * - skipped: not generated because of the daily cap or the spend pause; a
  *   later POST tries again. The collage shows.
  */
@@ -121,6 +124,8 @@ export const PREVIEW_FAILED_REASONS = [
 ] as const;
 export const PREVIEW_SKIPPED_REASONS = ["daily_cap_reached", "ai_paused"] as const;
 export const PREVIEW_FAILURE_REASONS = [...PREVIEW_FAILED_REASONS, ...PREVIEW_SKIPPED_REASONS] as const;
+/** Failed reasons that are tried again after PREVIEW_FAILED_RETRY_SECONDS; the others are final for the look. */
+export const PREVIEW_RETRYABLE_FAILED_REASONS = ["ai_failed", "internal"] as const;
 export const PreviewFailureReasonSchema = z.enum(PREVIEW_FAILURE_REASONS);
 export type PreviewFailureReason = z.infer<typeof PreviewFailureReasonSchema>;
 
@@ -146,6 +151,13 @@ export const OutfitPreviewSchema = z
      * POST /api/outfits/[id]/preview?refresh=true.
      */
     outdated: z.boolean(),
+    /**
+     * True while "Update preview" is making the new picture: `imageUrl`
+     * still shows the old (outdated) one until the new one is ready. Ends
+     * when it's ready (the picture switches, outdated clears) or fails or
+     * is skipped (the old picture stays, still outdated). Missing reads as false.
+     */
+    refreshing: z.boolean().default(false),
   })
   .refine((p) => (p.status === "ready") === (p.imageUrl !== null), { path: ["imageUrl"], error: "An image URL comes with a ready preview only" })
   .refine(
@@ -167,6 +179,7 @@ export const NO_PREVIEW: OutfitPreview = {
   presetId: null,
   suggestedSlots: [],
   outdated: false,
+  refreshing: false,
 };
 
 /** Query string of POST /api/outfits/[id]/preview. `?refresh=true` is "Update preview" on an outdated one. */
@@ -187,7 +200,17 @@ export const PREVIEW_NEEDS_PRESET_ISSUE_PATH = "modelPresetId";
  */
 export const PREVIEW_PENDING_STALE_SECONDS = 150;
 
-/** While a preview is pending, the client asks again (POST, or GET the outfit) at most this often. */
+/** A preview that failed with ai_failed or internal is tried again by a later call after this long (orchestrator decision a). */
+export const PREVIEW_FAILED_RETRY_SECONDS = 60 * 60;
+
+/** The daily cleanup deletes outfit_previews rows no outfit shows or waits for, once unchanged for this long. */
+export const PREVIEW_UNUSED_SWEEP_SECONDS = 60 * 60;
+
+/**
+ * While a preview is pending (or refreshing), the client asks again at most
+ * this often, with the same POST (idempotent; it also takes over an
+ * abandoned generation once it's stale).
+ */
 export const PREVIEW_POLL_INTERVAL_MS = 3000;
 
 // ---------------------------------------------------------------------------
@@ -253,8 +276,19 @@ export const PREVIEW_OUTPUT_MIN_SIDE_PX = 512;
 export const PREVIEW_OUTPUT_MAX_SIDE_PX = 4096;
 /** Full-length portrait, asked for as 2:3 (width:height). */
 export const PREVIEW_ASPECT_RATIO = { width: 2, height: 3 } as const;
-/** Accepted width/height ratio either side of 2/3 (0.617 to 0.717). */
+/**
+ * Accepted width/height ratio either side of 2/3 (0.617 to 0.717). Inside
+ * it, the server may pad the image to exactly 2:3 (plain background) when
+ * storing it, so every stored preview has the same shape.
+ */
 export const PREVIEW_ASPECT_TOLERANCE = 0.05;
+/**
+ * The decode for the checks is a full one (every pixel, e.g. sharp's
+ * raw().toBuffer()), with at most this many input pixels and failing on
+ * any decoding error (sharp `failOn: "error"`), not a header read: a
+ * truncated or hostile file must fail here, not later.
+ */
+export const PREVIEW_DECODE_MAX_INPUT_PIXELS = 4096 * 4096;
 
 /** What is stored: WebP, EXIF stripped, longest side at most this, at most this many bytes. */
 export const PREVIEW_STORED_IMAGE_TYPE = "image/webp" as const;
@@ -265,7 +299,11 @@ export interface GeneratedImageFacts {
   /** The type sniffed from the bytes (not what the provider declared), or null if unrecognised. */
   mimeType: string | null;
   byteLength: number;
-  /** Pixel size after decoding; null if the image didn't decode. */
+  /**
+   * Pixel size from a FULL decode of the bytes (see
+   * PREVIEW_DECODE_MAX_INPUT_PIXELS; inspectGeneratedImage in
+   * src/lib/images/preview-check.ts does it); null if it didn't decode.
+   */
   dimensions: { width: number; height: number } | null;
 }
 
@@ -276,6 +314,7 @@ export type GeneratedImageCheck = { ok: true } | { ok: false; problem: string };
  * reply: retried once, then the preview fails with `invalid_image`.
  */
 export function checkGeneratedPreviewImage(facts: GeneratedImageFacts): GeneratedImageCheck {
+  if (!Number.isFinite(facts.byteLength) || facts.byteLength < 0) return { ok: false, problem: "Bad byte length" };
   if (facts.byteLength === 0) return { ok: false, problem: "No image data" };
   if (facts.byteLength > PREVIEW_OUTPUT_MAX_BYTES) return { ok: false, problem: `Image over ${PREVIEW_OUTPUT_MAX_BYTES} bytes` };
   if (!facts.mimeType || !(PREVIEW_OUTPUT_IMAGE_TYPES as readonly string[]).includes(facts.mimeType)) {

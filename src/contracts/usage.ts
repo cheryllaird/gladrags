@@ -72,15 +72,15 @@ export const UsageSummarySchema = z.object({
   emailsToday: CounterSchema,
   /** "Find in my shops" searches today. */
   shopSearchesToday: CounterSchema,
-  /** (Round 2) Outfit previews generated today (reused ones aren't counted). */
-  outfitPreviewsToday: CounterSchema,
+  /** (Round 2) Outfit previews generated today (reused ones aren't counted). Missing reads as 0 of 0. */
+  outfitPreviewsToday: CounterSchema.default({ used: 0, limit: 0 }),
   /** When the daily counters reset (midnight UK time). */
   dailyResetAt: TimestampSchema,
   /** True when the monthly AI (Gemini) spend cap is reached and AI features are paused. */
   aiPaused: z.boolean(),
   /** (Round 2) True when previews are paused: the overall cap, or the images share, is reached. */
-  previewsPaused: z.boolean(),
+  previewsPaused: z.boolean().default(false),
   /** (Round 2) True when shop search is paused: the overall cap, or its share, is reached. */
-  shopSearchPaused: z.boolean(),
+  shopSearchPaused: z.boolean().default(false),
 });
 export type UsageSummary = z.infer<typeof UsageSummarySchema>;

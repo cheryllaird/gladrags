@@ -13,7 +13,9 @@ import {
   DEFAULT_MODEL_PRESET_ID,
   LINK_IMPORT_TTL_SECONDS,
   NO_PREVIEW,
+  PREVIEW_FAILED_RETRY_SECONDS,
   PREVIEW_PENDING_STALE_SECONDS,
+  PREVIEW_RETRYABLE_FAILED_REASONS,
   type Category,
   type CreateItemRequest,
   type EmailImport,
@@ -64,7 +66,7 @@ interface MockState {
   /** Round 2: the outfit_previews table, by cache key (one mock user). */
   previews: Map<string, MockPreview>;
   /** Round 2: outfits.preview_id (as the cache key) and outfits.preview_outdated. */
-  outfitPreviews: Map<string, { cacheKey: string; outdated: boolean }>;
+  outfitPreviews: Map<string, MockPreviewLink>;
   /** email_imports rows, newest first. */
   emailImports: EmailImport[];
   /** Message IDs of emails already handled (the real table keeps a hash). */
@@ -86,7 +88,19 @@ export interface MockPreview {
   status: "pending" | "ready" | "failed" | "skipped";
   imageUrl: string | null;
   failureReason: PreviewFailureReason | null;
-  updatedAt: number;
+  /** When generation was last claimed (outfit_previews.attempted_at). */
+  attemptedAt: number;
+}
+
+/**
+ * An outfit's links (outfits.preview_id, pending_preview_id and
+ * preview_outdated), with cache keys standing in for row IDs.
+ */
+export interface MockPreviewLink {
+  cacheKey: string;
+  /** A refresh in progress: the new look, while cacheKey still shows the old picture. */
+  pendingKey: string | null;
+  outdated: boolean;
 }
 
 export interface MockOutfitFeedback {
@@ -307,22 +321,28 @@ export function deleteItem(id: string): boolean {
   return true;
 }
 
-/** Remove an outfit, and its preview when no other outfit uses it (as the database triggers do). */
+/** Remove an outfit, and its previews when no other outfit uses them (as the database triggers do). */
 function deleteOutfit(outfitId: string): void {
   const s = state();
   s.outfits.delete(outfitId);
   const link = s.outfitPreviews.get(outfitId);
   s.outfitPreviews.delete(outfitId);
-  if (link && ![...s.outfitPreviews.values()].some((l) => l.cacheKey === link.cacheKey)) s.previews.delete(link.cacheKey);
+  if (link) {
+    releasePreview(link.cacheKey);
+    if (link.pendingKey) releasePreview(link.pendingKey);
+  }
 }
 
-/** Delete previews whose image shows this item; outfits using them go back to no preview. */
+/** Delete previews whose image shows this item; outfits showing them go back to no preview, and refreshes waiting for them end. */
 function dropPreviewsShowing(itemId: string): void {
   const s = state();
   for (const [key, preview] of s.previews) {
     if (!preview.itemIds.includes(itemId)) continue;
     s.previews.delete(key);
-    for (const [outfitId, link] of s.outfitPreviews) if (link.cacheKey === key) s.outfitPreviews.delete(outfitId);
+    for (const [outfitId, link] of s.outfitPreviews) {
+      if (link.cacheKey === key) s.outfitPreviews.delete(outfitId);
+      else if (link.pendingKey === key) link.pendingKey = null;
+    }
   }
 }
 
@@ -353,6 +373,7 @@ function previewOf(outfitId: string): OutfitPreview {
   const row = link ? s.previews.get(link.cacheKey) : undefined;
   if (!link || !row) return { ...NO_PREVIEW, suggestedSlots: [] };
   return {
+    refreshing: link.pendingKey !== null,
     status: row.status,
     imageUrl: row.status === "ready" ? row.imageUrl : null,
     failureReason: row.status === "failed" || row.status === "skipped" ? row.failureReason : null,
@@ -398,65 +419,128 @@ export function insertOutfit(outfit: Omit<Outfit, "preview"> & { preview?: Outfi
 // Outfit previews (round 2), as claim_outfit_preview does them
 // ---------------------------------------------------------------------------
 
-export type MockPreviewClaim = "existing" | "reused" | "wait" | "generate";
+export type MockPreviewClaim = "existing" | "reused" | "wait" | "generate" | "unavailable";
 
-const isFresh = (row: MockPreview) => Date.now() - row.updatedAt < PREVIEW_PENDING_STALE_SECONDS * 1000;
+/** Whether a row stands as it is (preview_stands in migration 8). */
+function stands(row: MockPreview): boolean {
+  const age = Date.now() - row.attemptedAt;
+  switch (row.status) {
+    case "ready":
+      return true;
+    case "pending":
+      return age < PREVIEW_PENDING_STALE_SECONDS * 1000;
+    case "failed":
+      return !(PREVIEW_RETRYABLE_FAILED_REASONS as readonly string[]).includes(row.failureReason ?? "") || age < PREVIEW_FAILED_RETRY_SECONDS * 1000;
+    case "skipped":
+      return false;
+  }
+}
+
+const inUse = (key: string) => [...state().outfitPreviews.values()].some((l) => l.cacheKey === key || l.pendingKey === key);
+
+/** Delete a preview nothing shows or waits for (release_outfit_preview). Failed rows stay until the daily sweep. */
+function releasePreview(key: string): void {
+  const row = state().previews.get(key);
+  if (row && row.status !== "failed" && !inUse(key)) state().previews.delete(key);
+}
 
 /**
- * Link the outfit to the preview for its look (cacheKey), and say what the
- * caller must do. Null if there's no such outfit.
+ * claim_outfit_preview in memory: link the outfit to the preview for its
+ * look (cacheKey), and say what the caller must do. A refresh of a ready
+ * picture links the new look as pending and keeps the old picture until
+ * finishPreview. Null if there's no such outfit.
  */
 export function claimPreview(outfitId: string, cacheKey: string, presetId: string, refresh: boolean): MockPreviewClaim | null {
   const s = state();
   const outfit = s.outfits.get(outfitId);
   if (!outfit) return null;
   const link = s.outfitPreviews.get(outfitId);
-  const current = link ? s.previews.get(link.cacheKey) : undefined;
-  if (link && current) {
-    const settled = current.status === "ready" || current.status === "failed" || (current.status === "pending" && isFresh(current));
-    if (settled && (!refresh || link.cacheKey === cacheKey)) return "existing";
+  const linked = link ? s.previews.get(link.cacheKey) : undefined;
+
+  // 1. Back on the look the picture shows: clear outdated and any refresh.
+  if (link && linked && link.cacheKey === cacheKey && stands(linked)) {
+    const pending = link.pendingKey;
+    link.outdated = false;
+    link.pendingKey = null;
+    if (pending) releasePreview(pending);
+    return "existing";
   }
-  const linkTo = (key: string) => {
-    const previous = s.outfitPreviews.get(outfitId);
-    s.outfitPreviews.set(outfitId, { cacheKey: key, outdated: false });
-    if (previous && previous.cacheKey !== key && ![...s.outfitPreviews.values()].some((l) => l.cacheKey === previous.cacheKey)) {
-      s.previews.delete(previous.cacheKey);
-    }
-  };
+  // 2. Not a refresh: what the outfit shows stands.
+  if (!refresh && link && linked && stands(linked)) return "existing";
+
+  // 3. This look's preview.
+  let keepOld = refresh && !!linked && linked.status === "ready";
   const row = s.previews.get(cacheKey);
-  if (row && (row.status === "ready" || row.status === "failed")) {
-    linkTo(cacheKey);
-    return "reused";
+  let action: MockPreviewClaim;
+  if (row && (row.status === "ready" || row.status === "failed") && stands(row)) {
+    if (row.status === "failed" && keepOld) {
+      const pending = link!.pendingKey;
+      link!.pendingKey = null;
+      if (pending && pending !== cacheKey) releasePreview(pending);
+      return "unavailable";
+    }
+    action = "reused";
+    keepOld = false;
+  } else if (row && row.status === "pending" && stands(row)) {
+    action = "wait";
+  } else {
+    s.previews.set(cacheKey, {
+      cacheKey,
+      presetId,
+      itemIds: [...outfit.itemIds],
+      suggestedSlots: outfit.gaps.map((g) => g.category),
+      status: "pending",
+      imageUrl: null,
+      failureReason: null,
+      attemptedAt: Date.now(),
+    });
+    action = "generate";
   }
-  if (row && row.status === "pending" && isFresh(row)) {
-    linkTo(cacheKey);
-    return "wait";
+
+  if (keepOld) {
+    const pending = link!.pendingKey;
+    link!.pendingKey = cacheKey;
+    if (pending && pending !== cacheKey) releasePreview(pending);
+  } else {
+    const previous = link ? [link.cacheKey, link.pendingKey] : [];
+    s.outfitPreviews.set(outfitId, { cacheKey, pendingKey: null, outdated: false });
+    for (const key of previous) if (key && key !== cacheKey) releasePreview(key);
   }
-  s.previews.set(cacheKey, {
-    cacheKey,
-    presetId,
-    itemIds: [...outfit.itemIds],
-    suggestedSlots: outfit.gaps.map((g) => g.category),
-    status: "pending",
-    imageUrl: null,
-    failureReason: null,
-    updatedAt: Date.now(),
-  });
-  linkTo(cacheKey);
-  return "generate";
+  return action;
 }
 
-/** Finish a claimed preview. Ignored if it was deleted meanwhile (an item went). */
+/**
+ * finish_outfit_preview in memory. Ignored if the row was deleted
+ * meanwhile (an item went) or isn't pending. Outfits refreshing to it
+ * switch when it's ready; otherwise they keep the old (outdated) picture.
+ */
 export function finishPreview(
   cacheKey: string,
   result: { status: "ready"; imageUrl: string } | { status: "failed" | "skipped"; failureReason: PreviewFailureReason },
 ): void {
-  const row = state().previews.get(cacheKey);
+  const s = state();
+  const row = s.previews.get(cacheKey);
   if (!row || row.status !== "pending") return;
   row.status = result.status;
   row.imageUrl = result.status === "ready" ? result.imageUrl : null;
   row.failureReason = result.status === "ready" ? null : result.failureReason;
-  row.updatedAt = Date.now();
+  for (const link of s.outfitPreviews.values()) {
+    if (link.pendingKey !== cacheKey) continue;
+    link.pendingKey = null;
+    if (result.status === "ready") {
+      const old = link.cacheKey;
+      link.cacheKey = cacheKey;
+      link.outdated = false;
+      releasePreview(old);
+    }
+  }
+  releasePreview(cacheKey);
+}
+
+/** For tests: age a preview's last attempt (outfit_previews.attempted_at). */
+export function agePreviewAttempt(cacheKey: string, ms: number): void {
+  const row = state().previews.get(cacheKey);
+  if (row) row.attemptedAt -= ms;
 }
 
 /** Feedback rows (the outfit_feedback table): append-only. */

@@ -282,7 +282,7 @@ describe("QA: refresh after a product pick", () => {
   // cap and the pause first, so a refresh that can't run leaves the
   // outdated picture in place. The mock claims (and drops the old picture)
   // before it reserves.
-  it.fails("a refresh refused by the daily cap keeps the outdated picture (ready, outdated)", async () => {
+  it("a refresh refused by the daily cap keeps the outdated picture (ready, outdated)", async () => {
     const [outfit] = await makeOutfits({ includeShopItems: true });
     await previewOk(outfit!.id);
     await pickFirstProduct(outfit!);
@@ -295,7 +295,7 @@ describe("QA: refresh after a product pick", () => {
   // Picking a product and then clearing it brings the outfit back to the
   // look its picture shows, but `outdated` stays true; "Update preview"
   // then answers existing and never clears it (the same in SQL).
-  it.fails("picking then clearing a product leaves no stuck 'Update preview'", async () => {
+  it("picking then clearing a product leaves no stuck 'Update preview'", async () => {
     const [outfit] = await makeOutfits({ includeShopItems: true });
     await previewOk(outfit!.id);
     const picked = await pickFirstProduct(outfit!);

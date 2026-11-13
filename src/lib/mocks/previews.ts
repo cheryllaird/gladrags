@@ -39,18 +39,29 @@ export async function mockPreview(userId: string, outfitId: string, refresh: boo
   if (!modelPresetId) throw needsPresetError();
 
   const cacheKey = await previewCacheKey({ presetId: modelPresetId, itemIds: outfit.itemIds, gaps: outfit.gaps });
+  const texts = [outfit.request.guidance, outfit.request.style.kind === "custom" ? outfit.request.style.text : null];
+  const now = new Date();
+  const capError = () => new CapReachedError("outfit_previews_per_day", DAILY_CAPS.outfit_preview, startOfNextDay(now, USAGE_TIME_ZONE));
+  const pausedError = () => new CapReachedError("monthly_image_spend", MONTHLY_SPEND_SHARES.images.capPence, startOfNextMonth(now, USAGE_TIME_ZONE));
+
+  // "Update preview": check the cap and the pause BEFORE claiming, so a
+  // refresh that can't run changes nothing (the outdated picture stays).
+  if (refresh) {
+    if (hasMarker(texts, MOCK_MARKERS.previewCap)) throw capError();
+    if (hasMarker(texts, MOCK_MARKERS.previewPaused)) throw pausedError();
+    await usage.assertCanStart(userId, "outfit_preview");
+  }
+
   const action = mock.claimPreview(outfitId, cacheKey, modelPresetId, refresh);
   if (action !== "generate") return mock.getOutfit(outfitId)!;
 
-  const texts = [outfit.request.guidance, outfit.request.style.kind === "custom" ? outfit.request.style.text : null];
-  const now = new Date();
   if (hasMarker(texts, MOCK_MARKERS.previewCap)) {
     mock.finishPreview(cacheKey, { status: "skipped", failureReason: "daily_cap_reached" });
-    throw new CapReachedError("outfit_previews_per_day", DAILY_CAPS.outfit_preview, startOfNextDay(now, USAGE_TIME_ZONE));
+    throw capError();
   }
   if (hasMarker(texts, MOCK_MARKERS.previewPaused)) {
     mock.finishPreview(cacheKey, { status: "skipped", failureReason: "ai_paused" });
-    throw new CapReachedError("monthly_image_spend", MONTHLY_SPEND_SHARES.images.capPence, startOfNextMonth(now, USAGE_TIME_ZONE));
+    throw pausedError();
   }
   try {
     // Counts against the (in-memory) daily preview cap like the real route.

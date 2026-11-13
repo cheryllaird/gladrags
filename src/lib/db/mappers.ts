@@ -78,12 +78,18 @@ export function createItemRequestToRow(userId: string, req: CreateItemRequest) {
  * image; a ready row whose image can't be signed reads as failed (internal).
  */
 export function previewRowToOutfitPreview(
-  outfit: Pick<OutfitRow, "preview_outdated">,
+  outfit: Pick<OutfitRow, "preview_outdated"> & Partial<Pick<OutfitRow, "pending_preview_id">>,
   preview: OutfitPreviewRow | null,
   imageUrl: string | null,
 ): OutfitPreview {
   if (!preview) return { ...NO_PREVIEW, suggestedSlots: [] };
-  const common = { presetId: preview.preset_id, suggestedSlots: [...preview.suggested_slots], outdated: outfit.preview_outdated };
+  const common = {
+    presetId: preview.preset_id,
+    suggestedSlots: [...preview.suggested_slots],
+    outdated: outfit.preview_outdated,
+    // A refresh in progress (outfits.pending_preview_id): the old picture still shows.
+    refreshing: (outfit.pending_preview_id ?? null) !== null,
+  };
   if (preview.status === "ready") {
     return imageUrl
       ? { status: "ready", imageUrl, failureReason: null, ...common }

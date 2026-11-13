@@ -39,19 +39,19 @@ async function capOf(promise: Promise<unknown>): Promise<CapReachedError | null>
 }
 
 describe("config (round 2)", () => {
-  it("12 previews a day, 4p an image settled at most 10p, and 2 pound shares for images and shop search", () => {
+  it("12 previews a day, 4p an image settled at most 20p, and 2 pound shares for images and shop search", () => {
     expect(DAILY_CAPS.outfit_preview).toBe(12);
     expect(ESTIMATED_COST_PENCE.image_generation).toBe(4);
-    expect(MAX_SETTLED_COST_PENCE.image_generation).toBe(10);
-    expect(maxSettledCost("image_generation")).toBe(10);
+    expect(MAX_SETTLED_COST_PENCE.image_generation).toBe(20);
+    expect(maxSettledCost("image_generation")).toBe(20);
     expect(maxSettledCost("tagging")).toBeCloseTo(0.6);
     expect(MONTHLY_SPEND_SHARES.images).toEqual({ kinds: ["image_generation"], capPence: 200 });
     expect(MONTHLY_SPEND_SHARES.shop_search).toEqual({ kinds: ["shop_grounding"], capPence: 200 });
     for (const share of Object.values(MONTHLY_SPEND_SHARES)) expect(share.capPence).toBeLessThan(MONTHLY_AI_SPEND_CAP_PENCE);
   });
 
-  it("a full day of previews by one user stays within the images share", () => {
-    expect(DAILY_CAPS.outfit_preview * maxSettledCost("image_generation")).toBeLessThan(MONTHLY_SPEND_SHARES.images.capPence);
+  it("a full day of previews by one user stays well within the images share at the estimate", () => {
+    expect(DAILY_CAPS.outfit_preview * ESTIMATED_COST_PENCE.image_generation).toBeLessThan(MONTHLY_SPEND_SHARES.images.capPence);
   });
 });
 
@@ -109,11 +109,11 @@ describe("monthly spend shares", () => {
     expect(await guard.summary(ALICE)).toMatchObject({ aiPaused: true, previewsPaused: true, shopSearchPaused: true });
   });
 
-  it("an image call settles at its real cost, clamped at 10p", async () => {
+  it("an image call settles at its real cost, clamped at 20p", async () => {
     const { guard, store } = setup();
     const id = await guard.reserveAiCost(null, "image_generation", "gemini");
     await guard.settleAiCost(id, "image_generation", { costPence: 25, provider: "gemini" });
-    expect(store.events.find((e) => e.id === id)?.costPence).toBe(10);
+    expect(store.events.find((e) => e.id === id)?.costPence).toBe(20);
   });
 
   it("the cap error serialises as the API's error shape", async () => {

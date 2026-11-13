@@ -9,6 +9,7 @@ import {
   OutfitResponseSchema,
   OutfitListResponseSchema,
   PREVIEW_NEEDS_PRESET_ISSUE_PATH,
+  previewCacheKey,
   UsageSummarySchema,
   UserSettingsSchema,
   type Outfit,
@@ -88,6 +89,7 @@ describe("POST /api/outfits/[id]/preview (mock mode)", () => {
       presetId: "women_average_medium",
       suggestedSlots: [],
       outdated: false,
+      refreshing: false,
     });
     expect(await previewsToday()).toBe(1);
     // Loading it again shows the stored preview.
@@ -163,6 +165,47 @@ describe("POST /api/outfits/[id]/preview (mock mode)", () => {
     const refreshed = await readyOutfit(outfit!.id, "?refresh=true");
     expect(refreshed.preview).toMatchObject({ status: "ready", outdated: false });
     expect(await previewsToday()).toBe(2);
+  });
+
+  it("a refresh keeps the old picture while the new one is made (refreshing), then switches", async () => {
+    vi.stubEnv("GLADRAGS_MOCK_PREVIEW_DELAY_MS", "50");
+    const [outfit] = await makeOutfits({ includeShopItems: true });
+    await readyOutfit(outfit!.id);
+    const searched = OutfitResponseSchema.parse(await (await shopSearch.POST(json("/x", "POST"), ctx(outfit!.id))).json()).outfit;
+    const gap = searched.gaps[0]!;
+    await gapProduct.PUT(json("/x", "PUT", { productUrl: gap.shopResults[0]!.url }), { params: Promise.resolve({ id: outfit!.id, category: gap.category }) });
+    const running = readyOutfit(outfit!.id, "?refresh=true");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const during = mockStore.getOutfit(outfit!.id)!;
+    expect(during.preview).toMatchObject({ status: "ready", outdated: true, refreshing: true, imageUrl: MOCK_PREVIEW_WITH_SUGGESTIONS_IMAGE_URL });
+    // Asking again meanwhile waits for it: no second generation.
+    expect((await readyOutfit(outfit!.id, "?refresh=true")).preview.refreshing).toBe(true);
+    const after = await running;
+    expect(after.preview).toMatchObject({ status: "ready", outdated: false, refreshing: false });
+    expect(await previewsToday()).toBe(2);
+  });
+
+  it("a failed refresh keeps the old picture (still outdated); it's unavailable for an hour, then tried again", async () => {
+    const [outfit] = await makeOutfits({ includeShopItems: true });
+    await readyOutfit(outfit!.id);
+    // The same outfit's look, but with the failure marker on its request.
+    const failing = mockStore.insertOutfit({ ...outfit!, id: crypto.randomUUID(), request: { ...outfit!.request, guidance: "mock-preview-fails" } });
+    await readyOutfit(failing.id); // reuses the ready picture: no generation, so no failure
+    const searched = OutfitResponseSchema.parse(await (await shopSearch.POST(json("/x", "POST"), ctx(failing.id))).json()).outfit;
+    const gap = searched.gaps[0]!;
+    await gapProduct.PUT(json("/x", "PUT", { productUrl: gap.shopResults[0]!.url }), { params: Promise.resolve({ id: failing.id, category: gap.category }) });
+    await expectError(await previewOf(failing.id, "?refresh=true"), 502, "ai_failed");
+    expect(mockStore.getOutfit(failing.id)!.preview).toMatchObject({ status: "ready", outdated: true, refreshing: false });
+    // Within the hour: unavailable, nothing generated, the old picture stays.
+    const before = await previewsToday();
+    expect((await readyOutfit(failing.id, "?refresh=true")).preview).toMatchObject({ status: "ready", outdated: true });
+    expect(await previewsToday()).toBe(before);
+    // An hour on, ai_failed is tried again (and counted).
+    const picked = mockStore.getOutfit(failing.id)!;
+    const key = await previewCacheKey({ presetId: "women_average_medium", itemIds: picked.itemIds, gaps: picked.gaps });
+    mockStore.agePreviewAttempt(key, 61 * 60 * 1000);
+    await expectError(await previewOf(failing.id, "?refresh=true"), 502, "ai_failed");
+    expect(await previewsToday()).toBe(before + 1);
   });
 
   it("mock-preview-fails: ai_failed, then the preview reads failed and isn't tried again", async () => {
