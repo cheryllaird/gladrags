@@ -193,3 +193,10 @@ if q "update public.usage_events set cost_pence = 'NaN' where id = '${id}'" >/de
   q "update public.usage_events set cost_pence = 0.2 where id = '${id}'" >/dev/null
 fi
 echo "ok: settled costs can't be negative or null"
+
+# Round 2 (migration 8), QA: previews and spend shares.
+QA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+echo "Running QA preview checks..."
+psql "$TEST_URL" -q -v ON_ERROR_STOP=1 -f "$QA_DIR/qa-previews.test.sql"
+echo "Running QA preview concurrency checks..."
+bash "$QA_DIR/qa-previews-concurrency.sh" "$TEST_URL"
