@@ -4,8 +4,8 @@
 # refresh. Run by supabase/tests/qa-concurrency.sh (so by pnpm db:verify)
 # against the throwaway database, never a real project. Same gate harness
 # as concurrency.sh: WORKERS sessions queue on an advisory lock and are
-# released together. "KNOWN BUG" lines are reported bugs that don't fail
-# the run.
+# released together. (The "KNOWN BUG" line in section 5 is now an
+# assertion: the race is fixed.)
 set -euo pipefail
 
 TEST_URL="${1:?Usage: qa-previews-concurrency.sh <database url>}"
@@ -173,8 +173,9 @@ wait "$reuse"
 reuse_action="$(grep -E '^(reused|existing|wait|generate)$' "$reuse_out" || true)"
 rm -f "$reuse_out"
 linked="$(q "select count(*) from public.outfits o join public.outfit_previews p on p.id = o.preview_id where o.id = '9e400000-0000-4000-8000-000000000002' and p.status = 'ready'")"
-if [ "$reuse_action" = "reused" ] && [ "$linked" = "0" ]; then
-  echo "KNOWN BUG (reported): a refresh racing a reuse deleted the image the reuse had just linked (reuse said 'reused'; the outfit now has no preview; the refresh returned released_image_key=$(echo "$refresh" | sed -E 's/.*"released_image_key": ("[^"]*"|null).*/\1/'))"
-else
-  echo "ok: QA R2: a refresh racing a reuse keeps the reused image (reuse: ${reuse_action}, linked ready: ${linked})"
+if [ "$reuse_action" != "reused" ] || [ "$linked" != "1" ]; then
+  echo "FAIL: a refresh racing a reuse lost the reused image (reuse: ${reuse_action}, linked ready: ${linked}; refresh: ${refresh})" >&2
+  exit 1
 fi
+echo "ok: QA R2: a refresh racing a reuse keeps the reused image (reuse: ${reuse_action}, linked ready: ${linked})"
+

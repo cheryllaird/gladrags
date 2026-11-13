@@ -133,3 +133,51 @@ if [ "$rows" != "1" ] || [ "$linked" != "$WORKERS" ]; then
 fi
 echo "ok: one preview row for the look, and all ${linked} outfits linked to it"
 q "drop sequence public.claim_worker" >/dev/null
+
+# Round 2 review fixes: releases are race-safe.
+# (a) Outfit A reuses look K1 (transaction held open) while outfit B, the
+#     only other outfit showing K1, finishes a refresh onto K3. B's release
+#     of K1 must wait for A and then see A's link: K1 stays.
+q "insert into public.outfits (id, user_id, request, name, reason, item_ids, gaps)
+   select ('c8200000-0000-4000-8000-00000000000' || n)::uuid, '${USER_C}', '{\"style\": {\"kind\": \"preset\", \"presetId\": \"casual\"}}', 'Race', 'x',
+     array['c8000000-0000-4000-8000-000000000001']::uuid[], '[{\"category\": \"shoes\", \"colours\": [\"red\"], \"description\": \"Red flats\"}]'
+   from generate_series(1, 4) n" >/dev/null
+K1="$(q "select (public.claim_outfit_preview('${USER_C}', 'c8200000-0000-4000-8000-000000000001', repeat('a', 64), 'women_average_medium', false, 150))->>'preview_id'")"
+q "select public.finish_outfit_preview('${USER_C}', '${K1}', 'ready', '${USER_C}/00000000-0000-4000-8000-0000000000a1.webp', null)" >/dev/null
+K3="$(q "select (public.claim_outfit_preview('${USER_C}', 'c8200000-0000-4000-8000-000000000001', repeat('b', 64), 'women_average_medium', true, 150))->>'preview_id'")"
+hold="$(mktemp)"
+psql "$TEST_URL" -qtAX -v ON_ERROR_STOP=1 -c "begin" \
+  -c "select public.claim_outfit_preview('${USER_C}', 'c8200000-0000-4000-8000-000000000002', repeat('a', 64), 'women_average_medium', false, 150)->>'action'" \
+  -c "select pg_sleep(1.5)" -c "commit" >"$hold" &
+holder=$!
+until [ "$(q "select count(*) from pg_stat_activity where pid <> pg_backend_pid() and query = 'select pg_sleep(1.5)'")" -ge 1 ]; do :; done
+finish="$(q "select public.finish_outfit_preview('${USER_C}', '${K3}', 'ready', '${USER_C}/00000000-0000-4000-8000-0000000000b1.webp', null)")"
+wait "$holder"
+action="$(grep -E '^(reused|existing|wait|generate)$' "$hold" || true)"
+rm -f "$hold"
+kept="$(q "select count(*) from public.outfits o join public.outfit_previews p on p.id = o.preview_id where o.id = 'c8200000-0000-4000-8000-000000000002' and p.status = 'ready' and p.id = '${K1}'")"
+if [ "$action" != "reused" ] || [ "$kept" != "1" ] || echo "$finish" | grep -q '0000000000a1'; then
+  echo "FAIL: a finish racing a reuse released the reused image (reuse: ${action}, kept: ${kept}, finish: ${finish})" >&2
+  exit 1
+fi
+echo "ok: a refresh finishing while another outfit reuses the old look keeps that image"
+
+# (b) Two outfits stop showing one preview at the same moment: the second
+#     to take the row's lock sees the first's unlink and deletes it.
+q "select public.claim_outfit_preview('${USER_C}', 'c8200000-0000-4000-8000-000000000003', repeat('d', 64), 'women_average_medium', false, 150)" >/dev/null
+q "select public.claim_outfit_preview('${USER_C}', 'c8200000-0000-4000-8000-000000000004', repeat('d', 64), 'women_average_medium', false, 150)" >/dev/null
+first="$(mktemp)"
+psql "$TEST_URL" -qtAX -v ON_ERROR_STOP=1 -c "begin" \
+  -c "delete from public.outfits where id = 'c8200000-0000-4000-8000-000000000003'" \
+  -c "select pg_sleep(1.5)" -c "commit" >"$first" &
+leaver=$!
+until [ "$(q "select count(*) from pg_stat_activity where pid <> pg_backend_pid() and query = 'select pg_sleep(1.5)'")" -ge 1 ]; do :; done
+q "delete from public.outfits where id = 'c8200000-0000-4000-8000-000000000004'" >/dev/null
+wait "$leaver"
+rm -f "$first"
+left="$(q "select count(*) from public.outfit_previews where user_id = '${USER_C}' and cache_key = repeat('d', 64)")"
+if [ "$left" != "0" ]; then
+  echo "FAIL: two outfits leaving one preview together left it behind (${left} row)" >&2
+  exit 1
+fi
+echo "ok: two outfits leaving one preview at the same moment don't leave it orphaned"

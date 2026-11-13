@@ -1,7 +1,7 @@
 -- QA (round 2, P1): adversarial checks on migration 8 beyond rls.test.sql.
 -- Run by supabase/tests/qa-concurrency.sh (so by pnpm db:verify) against
 -- the throwaway database, never a real project. Any failure raises an
--- error. "KNOWN BUG" lines are reported bugs that don't fail the run.
+-- error. (The two "KNOWN BUG" lines are now assertions: both bugs are fixed.)
 --
 -- Users: R (9c...) and S (9d...).
 
@@ -442,16 +442,11 @@ select pg_temp.expect_error($$select public.reserve_usage(null, 'image_generatio
 select pg_temp.expect_error($$select public.reserve_usage(null, 'image_generation', null, null, 4, 500, now() - interval '40 days', null, array['image_generation'], 200)$$,
   'QA R2: a share with a month start from last month');
 
-do $$
-declare res jsonb;
-begin
-  res := public.reserve_usage(null, 'image_generation', null, null, 4, 500, now() - interval '1 day', null, array['image_generation'], -1);
-  if (res ->> 'ok')::boolean then raise exception 'FAIL: a negative share cap allowed a reservation'; end if;
-  raise notice 'NOTE: a negative share cap is accepted as an argument (it refuses everything; the app never sends one)';
-end;
-$$;
+-- Was a NOTE (a negative share cap was accepted as an argument): refused since the review fixes.
+select pg_temp.expect_error($$select public.reserve_usage(null, 'image_generation', null, null, 4, 500, now() - interval '1 day', null, array['image_generation'], -1)$$,
+  'QA R2: a negative share cap');
 
--- 7. Known bug: "Update preview" stuck after a product is picked then cleared -----------
+-- 7. Was a known bug: "Update preview" stuck after a product is picked then cleared ------
 
 do $$
 declare
@@ -467,9 +462,8 @@ begin
   -- Back to the look the picture shows; "Update preview" (refresh, same key):
   res := public.claim_outfit_preview(r_user, o, repeat('8', 64), 'men_slim_deep', true, 150);
   if (select preview_outdated from public.outfits where id = o) then
-    raise notice 'KNOWN BUG (reported): picking then clearing a product leaves preview_outdated true, and a refresh (%) never clears it', res ->> 'action';
-  else
-    raise notice 'ok: QA R2: a refresh on the look the picture shows clears outdated';
+    raise exception 'FAIL: picking then clearing a product leaves preview_outdated true after a refresh (%)', res ->> 'action';
   end if;
+  raise notice 'ok: QA R2: a refresh on the look the picture shows clears outdated';
 end;
 $$;

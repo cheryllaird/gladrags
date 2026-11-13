@@ -1048,7 +1048,7 @@ select set_config('request.jwt.claim.sub', '', false);
 select pg_temp.expect_error('select * from public.outfit_previews', 'R2: anon reading previews');
 reset role;
 
--- claim_outfit_preview, as the server.
+-- claim_outfit_preview and finish_outfit_preview, as the server.
 do $$
 declare
   p constant uuid := '8a000000-0000-4000-8000-00000000008a';
@@ -1056,9 +1056,14 @@ declare
   o1 constant uuid := '8a200000-0000-4000-8000-000000000001';
   o2 constant uuid := '8a200000-0000-4000-8000-000000000002';
   o3 constant uuid := '8a200000-0000-4000-8000-000000000003';
+  o4 constant uuid := '8a200000-0000-4000-8000-000000000004';
   k1 constant text := repeat('1', 64);
   k2 constant text := repeat('2', 64);
+  k5 constant text := repeat('5', 64);
+  img1 constant text := '8a000000-0000-4000-8000-00000000008a/00000000-0000-4000-8000-0000000000f1.webp';
+  img2 constant text := '8a000000-0000-4000-8000-00000000008a/00000000-0000-4000-8000-0000000000f2.webp';
   r jsonb;
+  f jsonb;
   first_id uuid;
   second_id uuid;
 begin
@@ -1067,7 +1072,7 @@ begin
   raise notice 'ok: R2: a claim on someone else''s outfit is not_found';
 
   r := public.claim_outfit_preview(p, o1, k1, 'men_broad_deep', false, 150);
-  if r ->> 'action' <> 'generate' or r ->> 'status' <> 'pending' then raise exception 'FAIL: first claim: %', r; end if;
+  if r ->> 'action' <> 'generate' or r ->> 'status' <> 'pending' or (r ->> 'refreshing')::boolean then raise exception 'FAIL: first claim: %', r; end if;
   first_id := (r ->> 'preview_id')::uuid;
   if (select preview_id from public.outfits where id = o1) <> first_id then raise exception 'FAIL: outfit 1 not linked'; end if;
   if (select suggested_slots from public.outfit_previews where id = first_id) <> array['shoes'] then raise exception 'FAIL: suggested slots not recorded'; end if;
@@ -1075,22 +1080,21 @@ begin
 
   r := public.claim_outfit_preview(p, o1, k1, 'men_broad_deep', false, 150);
   if r ->> 'action' <> 'existing' then raise exception 'FAIL: second claim of the same outfit: %', r; end if;
-  raise notice 'ok: R2: claiming again while pending answers existing (no second generation)';
-
   r := public.claim_outfit_preview(p, o2, k1, 'men_broad_deep', false, 150);
   if r ->> 'action' <> 'wait' or (r ->> 'preview_id')::uuid <> first_id then raise exception 'FAIL: same look, other outfit, pending: %', r; end if;
-  raise notice 'ok: R2: another outfit with the same look waits for the pending one (wait)';
+  raise notice 'ok: R2: claiming again while pending is existing; another outfit with the look waits (no second generation)';
 
-  update public.outfit_previews set status = 'ready', image_key = '8a000000-0000-4000-8000-00000000008a/00000000-0000-4000-8000-0000000000f1.webp'
-  where id = first_id and status = 'pending';
+  f := public.finish_outfit_preview(p, first_id, 'ready', img1, null);
+  if not (f ->> 'ok')::boolean or jsonb_array_length(f -> 'released_image_keys') <> 0 then raise exception 'FAIL: finish ready: %', f; end if;
+  f := public.finish_outfit_preview(p, first_id, 'failed', null, 'ai_failed');
+  if (f ->> 'ok')::boolean then raise exception 'FAIL: finishing a row that isn''t pending: %', f; end if;
+  raise notice 'ok: R2: finish sets a pending preview ready, once';
 
   r := public.claim_outfit_preview(p, o3, k1, 'men_broad_deep', false, 150);
   if r ->> 'action' <> 'reused' or r ->> 'status' <> 'ready' or (r ->> 'preview_id')::uuid <> first_id then raise exception 'FAIL: reuse: %', r; end if;
-  raise notice 'ok: R2: a third outfit with the same look reuses the ready image (reused)';
-
   r := public.claim_outfit_preview(p, o1, k1, 'men_broad_deep', true, 150);
   if r ->> 'action' <> 'existing' then raise exception 'FAIL: refresh with the same key: %', r; end if;
-  raise notice 'ok: R2: a refresh with an unchanged look answers existing';
+  raise notice 'ok: R2: a third outfit reuses the ready image (reused); a refresh with an unchanged look is existing';
 
   -- Picking a product marks the linked outfit outdated; shop results alone don't.
   update public.outfits set gaps = jsonb_set(gaps, '{0,shopResults}', '[{"url": "https://www.next.co.uk/a"}]') where id = o1;
@@ -1100,41 +1104,92 @@ begin
   if (select preview_outdated from public.outfits where id = o2) then raise exception 'FAIL: another outfit was marked outdated'; end if;
   raise notice 'ok: R2: picking a shop product marks that outfit''s preview outdated (shop results alone don''t)';
 
-  r := public.claim_outfit_preview(p, o1, k1, 'men_broad_deep', false, 150);
-  if r ->> 'action' <> 'existing' then raise exception 'FAIL: outdated without refresh: %', r; end if;
+  r := public.claim_outfit_preview(p, o1, k2, 'men_broad_deep', false, 150);
+  if r ->> 'action' <> 'existing' or not (select preview_outdated from public.outfits where id = o1) then raise exception 'FAIL: outdated without refresh: %', r; end if;
+
+  -- A refresh keeps the old picture until the new one is ready.
   r := public.claim_outfit_preview(p, o1, k2, 'men_broad_deep', true, 150);
-  if r ->> 'action' <> 'generate' or r ->> 'released_image_key' is not null then raise exception 'FAIL: refresh to a new look: %', r; end if;
   second_id := (r ->> 'preview_id')::uuid;
-  if (select preview_outdated from public.outfits where id = o1) then raise exception 'FAIL: relinking did not clear outdated'; end if;
-  if not exists (select 1 from public.outfit_previews where id = first_id) then raise exception 'FAIL: the shared image was deleted while still used'; end if;
-  raise notice 'ok: R2: refresh on an outdated preview claims the new look; the old image stays for the outfits still using it';
-
-  -- A cap or pause leaves the preview skipped; the next claim tries again.
-  update public.outfit_previews set status = 'skipped', failure_reason = 'daily_cap_reached' where id = second_id and status = 'pending';
+  if r ->> 'action' <> 'generate' or not (r ->> 'refreshing')::boolean or r ->> 'released_image_key' is not null then raise exception 'FAIL: refresh: %', r; end if;
+  if (select preview_id from public.outfits where id = o1) <> first_id or (select pending_preview_id from public.outfits where id = o1) <> second_id
+    or not (select preview_outdated from public.outfits where id = o1)
+  then raise exception 'FAIL: the refresh didn''t keep the old picture while the new one is made'; end if;
+  r := public.claim_outfit_preview(p, o1, k2, 'men_broad_deep', true, 150);
+  if r ->> 'action' <> 'wait' or not (r ->> 'refreshing')::boolean then raise exception 'FAIL: refresh while the new look is pending: %', r; end if;
   r := public.claim_outfit_preview(p, o1, k2, 'men_broad_deep', false, 150);
-  if r ->> 'action' <> 'generate' or (r ->> 'preview_id')::uuid <> second_id then raise exception 'FAIL: claim after skipped: %', r; end if;
-  if (select failure_reason from public.outfit_previews where id = second_id) is not null then raise exception 'FAIL: reclaim kept the reason'; end if;
-  raise notice 'ok: R2: a skipped preview is claimed again (generate)';
+  if r ->> 'action' <> 'existing' or not (r ->> 'refreshing')::boolean then raise exception 'FAIL: a plain claim during a refresh: %', r; end if;
+  raise notice 'ok: R2: a refresh links the new look as pending and keeps showing the old picture (generate, then wait)';
 
-  -- An abandoned pending preview (older than the stale time) is claimed again.
-  alter table public.outfit_previews disable trigger outfit_previews_touch_updated_at;
-  update public.outfit_previews set updated_at = now() - interval '10 minutes' where id = second_id;
-  alter table public.outfit_previews enable trigger outfit_previews_touch_updated_at;
-  r := public.claim_outfit_preview(p, o1, k2, 'men_broad_deep', false, 150);
-  if r ->> 'action' <> 'generate' then raise exception 'FAIL: claim after stale pending: %', r; end if;
-  raise notice 'ok: R2: a stale pending preview is claimed again (generate)';
+  -- A skipped refresh ends it: the old picture stays, still outdated.
+  f := public.finish_outfit_preview(p, second_id, 'skipped', null, 'daily_cap_reached');
+  if not (f ->> 'ok')::boolean then raise exception 'FAIL: finish skipped: %', f; end if;
+  if (select pending_preview_id from public.outfits where id = o1) is not null or (select preview_id from public.outfits where id = o1) <> first_id
+    or not (select preview_outdated from public.outfits where id = o1)
+  then raise exception 'FAIL: a skipped refresh changed what the outfit shows'; end if;
+  if exists (select 1 from public.outfit_previews where id = second_id) then raise exception 'FAIL: the unused skipped row stayed'; end if;
+  raise notice 'ok: R2: a skipped refresh keeps the old, outdated picture';
 
-  update public.outfit_previews set status = 'failed', failure_reason = 'ai_failed' where id = second_id and status = 'pending';
-  r := public.claim_outfit_preview(p, o1, k2, 'men_broad_deep', false, 150);
-  if r ->> 'action' <> 'existing' or r ->> 'status' <> 'failed' then raise exception 'FAIL: claim after failed: %', r; end if;
-  raise notice 'ok: R2: a failed preview is final for its look (existing)';
+  -- A failed refresh likewise; the failure stands for the retry window ('unavailable').
+  r := public.claim_outfit_preview(p, o1, k2, 'men_broad_deep', true, 150);
+  second_id := (r ->> 'preview_id')::uuid;
+  perform public.finish_outfit_preview(p, second_id, 'failed', null, 'ai_failed');
+  if (select pending_preview_id from public.outfits where id = o1) is not null or (select preview_id from public.outfits where id = o1) <> first_id then
+    raise exception 'FAIL: a failed refresh changed what the outfit shows';
+  end if;
+  r := public.claim_outfit_preview(p, o1, k2, 'men_broad_deep', true, 150);
+  if r ->> 'action' <> 'unavailable' or (r ->> 'refreshing')::boolean then raise exception 'FAIL: refresh onto a failed look: %', r; end if;
+  raise notice 'ok: R2: a failed refresh keeps the old picture; refreshing again within the hour is unavailable';
 
-  -- Moving outfit 1 back to the first look releases the failed one (no image to remove).
+  -- After the retry window an ai_failed look is tried again, and its success switches the picture.
+  update public.outfit_previews set attempted_at = now() - interval '2 hours' where id = second_id;
+  r := public.claim_outfit_preview(p, o1, k2, 'men_broad_deep', true, 150);
+  if r ->> 'action' <> 'generate' or (r ->> 'preview_id')::uuid <> second_id then raise exception 'FAIL: retry after the window: %', r; end if;
+  f := public.finish_outfit_preview(p, second_id, 'ready', img2, null);
+  if (select preview_id from public.outfits where id = o1) <> second_id or (select pending_preview_id from public.outfits where id = o1) is not null
+    or (select preview_outdated from public.outfits where id = o1)
+  then raise exception 'FAIL: finishing the refresh didn''t switch the picture: %', f; end if;
+  if jsonb_array_length(f -> 'released_image_keys') <> 0 then raise exception 'FAIL: released an image others still show: %', f; end if;
+  raise notice 'ok: R2: an ai_failed look is retried after an hour; a ready refresh switches the picture and clears outdated';
+
+  -- Issue: picking then clearing a product. A claim on the look the picture shows clears outdated.
+  update public.outfits set gaps = jsonb_set(gaps, '{0,shopProduct}', '{"url": "https://www.next.co.uk/b"}') where id = o2;
+  update public.outfits set gaps = jsonb_set(gaps, '{0,shopProduct}', 'null') where id = o2;
+  if not (select preview_outdated from public.outfits where id = o2) then raise exception 'FAIL: pick and clear didn''t mark outdated'; end if;
+  r := public.claim_outfit_preview(p, o2, k1, 'men_broad_deep', false, 150);
+  if r ->> 'action' <> 'existing' or (select preview_outdated from public.outfits where id = o2) then raise exception 'FAIL: outdated stuck after clearing: %', r; end if;
+  raise notice 'ok: R2: back on the look its picture shows, an outfit is no longer outdated';
+
+  -- o1 back on k1 (product cleared): a refresh reuses k1 and releases k2's image.
+  update public.outfits set gaps = jsonb_set(gaps, '{0,shopProduct}', 'null') where id = o1;
   r := public.claim_outfit_preview(p, o1, k1, 'men_broad_deep', true, 150);
-  if r ->> 'action' <> 'reused' or exists (select 1 from public.outfit_previews where id = second_id) then raise exception 'FAIL: release of an unused preview: %', r; end if;
-  raise notice 'ok: R2: a preview no outfit uses any more is deleted';
+  if r ->> 'action' <> 'reused' or r ->> 'released_image_key' <> img2 or exists (select 1 from public.outfit_previews where id = second_id) then
+    raise exception 'FAIL: refresh back onto a ready look: %', r;
+  end if;
+  raise notice 'ok: R2: a refresh onto a ready look switches at once and releases the unused image';
+
+  -- Stale pending (by attempted_at) is claimed again; blocked is final however old.
+  r := public.claim_outfit_preview(p, o4, k5, 'men_broad_deep', false, 150);
+  update public.outfit_previews set attempted_at = now() - interval '10 minutes' where cache_key = k5 and user_id = p;
+  r := public.claim_outfit_preview(p, o4, k5, 'men_broad_deep', false, 150);
+  if r ->> 'action' <> 'generate' then raise exception 'FAIL: claim after stale pending: %', r; end if;
+  perform public.finish_outfit_preview(p, (r ->> 'preview_id')::uuid, 'failed', null, 'blocked');
+  update public.outfit_previews set attempted_at = now() - interval '2 days' where cache_key = k5 and user_id = p;
+  r := public.claim_outfit_preview(p, o4, k5, 'men_broad_deep', false, 150);
+  if r ->> 'action' <> 'existing' or r ->> 'status' <> 'failed' then raise exception 'FAIL: claim after blocked: %', r; end if;
+  raise notice 'ok: R2: a stale pending preview is claimed again; a blocked one is final';
+
+  -- Tidy up for the checks below: only k1 stays.
+  update public.outfits set preview_id = null where id = o4;
+  delete from public.outfit_previews where user_id = p and cache_key <> k1;
 end;
 $$;
+
+select pg_temp.expect_error(
+  $$select public.finish_outfit_preview('8a000000-0000-4000-8000-00000000008a', gen_random_uuid(), 'done', null, null)$$,
+  'R2: finish with an unknown status');
+select pg_temp.expect_count(
+  $$select 1 from (select public.finish_outfit_preview('8b000000-0000-4000-8000-00000000008b', (select id from public.outfit_previews where cache_key = repeat('1', 64) and user_id = '8a000000-0000-4000-8000-00000000008a'), 'failed', null, 'internal') as f) x where not (f ->> 'ok')::boolean$$, 1,
+  'R2: finish on another user''s preview does nothing');
 
 select pg_temp.expect_error(
   $$select public.claim_outfit_preview('8a000000-0000-4000-8000-00000000008a', '8a200000-0000-4000-8000-000000000004', 'not a hash', 'men_broad_deep', false, 150)$$,

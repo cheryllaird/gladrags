@@ -4,13 +4,16 @@
 -- 1. user_settings.model_preset_id: the model figure, null until picked.
 -- 2. outfit_previews: one stored image per user and look (cache_key),
 --    shared by every outfit with that look. Server writes; users read own.
--- 3. outfits.preview_id and preview_outdated, with triggers: a picked or
---    cleared shop product marks the preview outdated; an outfit's preview
---    is deleted when no outfit uses it any more.
+-- 3. outfits.preview_id, pending_preview_id (a refresh in progress) and
+--    preview_outdated, with triggers: a picked or cleared shop product
+--    marks the preview outdated; a preview is deleted when no outfit shows
+--    it or waits for it any more (race-safe: release_outfit_preview).
 -- 4. items: deleting an item, or replacing its photo, deletes the previews
 --    that show it (a new cut-out doesn't).
--- 5. claim_outfit_preview(): link an outfit to its look's preview, reusing
---    an existing one, in one locked step. Server only.
+-- 5. claim_outfit_preview(), finish_outfit_preview() and
+--    sweep_unused_outfit_previews(): link an outfit to its look's preview
+--    (reusing one where it can), finish a generation (switching a refresh
+--    over), and the daily sweep of unused rows. Server only.
 -- 6. A private `previews` storage bucket with per-user folder policies.
 -- 7. usage_events: the outfit_preview and image_generation kinds, and
 --    per-feature monthly spend shares in reserve_usage.
@@ -74,6 +77,10 @@ create table if not exists public.outfit_previews (
   status text not null default 'pending',
   image_key text,
   failure_reason text,
+  -- When generation was last claimed: a pending row older than the stale
+  -- time, or an ai_failed or internal one older than the retry window, may
+  -- be claimed again.
+  attempted_at timestamptz not null default now(),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -137,14 +144,19 @@ create trigger outfit_previews_touch_updated_at
   before update on public.outfit_previews
   for each row execute function public.touch_updated_at();
 
--- 3. outfits.preview_id and preview_outdated -------------------------------------
+-- 3. outfits.preview_id, pending_preview_id and preview_outdated -----------------
 
 alter table public.outfits add column if not exists preview_id uuid references public.outfit_previews (id) on delete set null;
+-- A refresh ("Update preview") in progress: the new look's preview, while
+-- preview_id keeps showing the old picture until the new one is ready.
+alter table public.outfits add column if not exists pending_preview_id uuid references public.outfit_previews (id) on delete set null;
 alter table public.outfits add column if not exists preview_outdated boolean not null default false;
 create index if not exists outfits_preview_id_idx on public.outfits (preview_id) where preview_id is not null;
+create index if not exists outfits_pending_preview_id_idx on public.outfits (pending_preview_id) where pending_preview_id is not null;
 
 comment on column public.outfits.preview_id is 'The outfit_previews row whose image this outfit shows; null for no preview yet. Server writes only.';
-comment on column public.outfits.preview_outdated is 'True when a gap''s picked shop product changed after the preview was linked. Set by a trigger.';
+comment on column public.outfits.pending_preview_id is 'A refresh in progress: the new look''s outfit_previews row. finish_outfit_preview switches preview_id to it once ready, or clears it. Server writes only.';
+comment on column public.outfits.preview_outdated is 'True when a gap''s picked shop product changed after the preview was linked. Set by a trigger; cleared by a claim on the look the picture shows, or a new picture.';
 
 -- Users keep writing what they could before (the outfit engine still
 -- saves outfits with the signed-in client), but not the preview columns.
@@ -163,7 +175,7 @@ as $$
   from jsonb_array_elements(case when jsonb_typeof(p_gaps) = 'array' then p_gaps else '[]'::jsonb end) as g;
 $$;
 
--- A preview must be the owner's; linking a new one clears "outdated"; a
+-- Previews must be the owner's; linking a new picture clears "outdated"; a
 -- changed product on a linked outfit sets it.
 create or replace function public.outfits_preview_before_write()
 returns trigger
@@ -177,6 +189,12 @@ begin
     and not exists (select 1 from public.outfit_previews p where p.id = new.preview_id and p.user_id = new.user_id)
   then
     raise exception 'Preview does not exist or is not the owner''s' using errcode = 'check_violation';
+  end if;
+  if new.pending_preview_id is not null
+    and (tg_op = 'INSERT' or new.pending_preview_id is distinct from old.pending_preview_id or new.user_id is distinct from old.user_id)
+    and not exists (select 1 from public.outfit_previews p where p.id = new.pending_preview_id and p.user_id = new.user_id)
+  then
+    raise exception 'Pending preview does not exist or is not the owner''s' using errcode = 'check_violation';
   end if;
 
   if tg_op = 'INSERT' then
@@ -196,10 +214,47 @@ create trigger outfits_preview_before_write
   before insert or update on public.outfits
   for each row execute function public.outfits_preview_before_write();
 
--- When an outfit is deleted, or moves to another preview, its old preview
--- goes if no other outfit uses it. The image itself is removed from
--- storage by the app (claim_outfit_preview returns it) or by the daily
--- orphaned-image cleanup, which counts outfit_previews.image_key as in use.
+-- Delete a preview no outfit shows or is waiting for, and return its image
+-- key (to remove from storage), or null. Failed rows stay (they have no
+-- image, and remember a failed look for the retry window); the daily
+-- sweep removes them after an hour.
+--
+-- Race-safe: it locks the row first, then checks in a NEW statement, so it
+-- sees every link committed by a transaction that held the row (a reuse
+-- locks it before linking). Two outfits leaving one preview at the same
+-- moment take turns on the lock, and the second one sees the first's
+-- unlink and deletes it.
+create or replace function public.release_outfit_preview(p_preview uuid)
+returns text
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_key text;
+begin
+  if p_preview is null then
+    return null;
+  end if;
+  perform 1 from public.outfit_previews where id = p_preview for update;
+  if not found then
+    return null;
+  end if;
+  delete from public.outfit_previews p
+  where p.id = p_preview
+    and p.status <> 'failed'
+    and not exists (select 1 from public.outfits o where o.preview_id = p.id or o.pending_preview_id = p.id)
+  returning p.image_key into v_key;
+  return v_key;
+end;
+$$;
+revoke execute on function public.release_outfit_preview(uuid) from public, anon, authenticated;
+
+-- When an outfit is deleted, or stops pointing at a preview (shown or
+-- pending), that preview goes if nothing else uses it. The image is removed
+-- from storage by the app (claim and finish return its key) or by the
+-- daily cleanup.
 create or replace function public.outfits_release_preview()
 returns trigger
 language plpgsql
@@ -207,12 +262,20 @@ security definer
 set search_path = ''
 as $$
 begin
-  if old.preview_id is not null
-    and (tg_op = 'DELETE' or new.preview_id is distinct from old.preview_id)
-  then
-    delete from public.outfit_previews p
-    where p.id = old.preview_id
-      and not exists (select 1 from public.outfits o where o.preview_id = p.id);
+  if tg_op = 'DELETE' then
+    perform public.release_outfit_preview(old.preview_id);
+    if old.pending_preview_id is distinct from old.preview_id then
+      perform public.release_outfit_preview(old.pending_preview_id);
+    end if;
+  else
+    if old.preview_id is distinct from new.preview_id and old.preview_id is distinct from new.pending_preview_id then
+      perform public.release_outfit_preview(old.preview_id);
+    end if;
+    if old.pending_preview_id is distinct from new.pending_preview_id and old.pending_preview_id is distinct from new.preview_id
+      and old.pending_preview_id is distinct from old.preview_id
+    then
+      perform public.release_outfit_preview(old.pending_preview_id);
+    end if;
   end if;
   return null;
 end;
@@ -221,7 +284,7 @@ revoke execute on function public.outfits_release_preview() from public, anon, a
 
 drop trigger if exists outfits_release_preview on public.outfits;
 create trigger outfits_release_preview
-  after delete or update of preview_id on public.outfits
+  after delete or update of preview_id, pending_preview_id on public.outfits
   for each row execute function public.outfits_release_preview();
 
 -- 4. items: previews showing a deleted item, or an item with a new photo -------
@@ -254,33 +317,59 @@ create trigger items_drop_previews_on_photo
   when (old.original_image_key is distinct from new.original_image_key)
   execute function public.items_drop_previews();
 
--- 5. claim_outfit_preview ----------------------------------------------------------
+-- 5. Claiming, finishing and sweeping previews -----------------------------------
+
+-- Whether a preview row stands as it is (no new attempt): ready; pending
+-- and claimed less than p_stale_seconds ago; or failed for good (blocked,
+-- invalid_image), or failed for a passing reason (ai_failed, internal)
+-- less than p_retry_seconds ago. Skipped rows never stand.
+create or replace function public.preview_stands(
+  p_status text, p_reason text, p_attempted_at timestamptz, p_stale_seconds int, p_retry_seconds int
+)
+returns boolean
+language sql
+stable
+set search_path = ''
+as $$
+  select case p_status
+    when 'ready' then true
+    when 'pending' then p_attempted_at > now() - make_interval(secs => p_stale_seconds)
+    when 'failed' then p_reason in ('blocked', 'invalid_image') or p_attempted_at > now() - make_interval(secs => p_retry_seconds)
+    else false
+  end;
+$$;
+
 -- Called by POST /api/outfits/[id]/preview with the secret key, after the
--- app has worked out the look's cache key (previewCacheKey) with the user's
--- preset. In one step, under a lock per user and look:
+-- app has worked out the look's cache key (previewCacheKey) with the
+-- user's preset. In one step, under a lock per user and look:
 --
--- - The outfit (the user's own) already shows a ready or failed preview,
---   or one pending for less than p_stale_seconds: 'existing', unless
---   p_refresh asks for a different look.
--- - The user has a ready or failed preview with this key: link it,
---   'reused' (no cost, no cap).
--- - Pending in another request (fresh): link it, 'wait'.
--- - Otherwise (none, skipped, or abandoned pending): create or reclaim it
---   as pending, link it, 'generate': the caller generates and then sets it
---   ready, failed or skipped with "... where id = $1 and status = 'pending'"
---   (0 rows means an item went meanwhile: discard the image).
+-- 1. The look the outfit's picture already shows (and it stands): clears
+--    "outdated" and any refresh in progress; 'existing'.
+-- 2. Not a refresh, and the linked preview stands (perhaps outdated):
+--    'existing', nothing changes.
+-- 3. Otherwise the user's preview for this look:
+--    - ready: link it, 'reused' (no cost, no cap);
+--    - failed and standing: 'unavailable' during a refresh (the outfit
+--      keeps its outdated picture), otherwise link it, 'reused';
+--    - pending and fresh: 'wait' (another request is making it);
+--    - none, skipped, stale pending or failed past the retry window:
+--      claim it as pending, 'generate'.
+--    During a refresh of a READY picture, the new preview goes in
+--    pending_preview_id and the old picture stays until finish_outfit_preview
+--    switches it; otherwise it goes straight into preview_id.
 --
--- Returns jsonb { ok, reason?, action, preview_id, status,
--- released_image_key }. released_image_key is the image of the preview
--- this outfit stopped using, when nothing uses it any more: the caller
--- removes it from storage.
+-- Returns jsonb { ok, reason?, action, preview_id, status, refreshing,
+-- released_image_key }. released_image_key is the image of a preview the
+-- outfit stopped showing that nothing uses any more: remove it from storage.
+drop function if exists public.claim_outfit_preview(uuid, uuid, text, text, boolean, int);
 create or replace function public.claim_outfit_preview(
   p_user uuid,
   p_outfit uuid,
   p_cache_key text,
   p_preset_id text,
   p_refresh boolean,
-  p_stale_seconds int
+  p_stale_seconds int,
+  p_retry_seconds int default 3600
 )
 returns jsonb
 language plpgsql
@@ -289,24 +378,36 @@ security definer
 set search_path = ''
 as $$
 declare
-  v_outfit record;
-  v_current record;
-  v_row record;
+  v_items uuid[];
+  v_gaps jsonb;
+  v_linked uuid;
+  v_pending uuid;
+  v_outdated boolean;
+  l_key text;
+  l_status text;
+  l_reason text;
+  l_attempted timestamptz;
+  l_image text;
+  r_id uuid;
+  r_status text;
+  r_reason text;
+  r_attempted timestamptz;
+  v_keep_old boolean;
   v_action text;
-  v_old_key text;
   v_released text := null;
-  v_fresh_after timestamptz := now() - make_interval(secs => p_stale_seconds);
 begin
   if p_user is null or p_outfit is null or p_cache_key is null or p_cache_key !~ '^[0-9a-f]{64}$'
     or p_preset_id is null or not public.is_model_preset_id(p_preset_id)
     or p_refresh is null or p_stale_seconds is null or p_stale_seconds <= 0
+    or p_retry_seconds is null or p_retry_seconds <= 0
   then
     raise exception 'claim_outfit_preview: bad arguments' using errcode = 'invalid_parameter_value';
   end if;
 
   perform pg_advisory_xact_lock(hashtextextended('gladrags.preview:' || p_user::text || ':' || p_cache_key, 0));
 
-  select o.id, o.item_ids, o.gaps, o.preview_id into v_outfit
+  select o.item_ids, o.gaps, o.preview_id, o.pending_preview_id, o.preview_outdated
+  into v_items, v_gaps, v_linked, v_pending, v_outdated
   from public.outfits o
   where o.id = p_outfit and o.user_id = p_user
   for update;
@@ -314,62 +415,215 @@ begin
     return jsonb_build_object('ok', false, 'reason', 'not_found');
   end if;
 
-  if v_outfit.preview_id is not null then
-    select p.id, p.cache_key, p.status, p.updated_at, p.image_key into v_current
-    from public.outfit_previews p where p.id = v_outfit.preview_id;
-    if found
-      and (v_current.status in ('ready', 'failed') or (v_current.status = 'pending' and v_current.updated_at > v_fresh_after))
-      and (not p_refresh or v_current.cache_key = p_cache_key)
-    then
-      return jsonb_build_object('ok', true, 'action', 'existing', 'preview_id', v_current.id,
-        'status', v_current.status, 'released_image_key', null);
-    end if;
-    v_old_key := v_current.image_key;
+  if v_linked is not null then
+    select p.cache_key, p.status, p.failure_reason, p.attempted_at, p.image_key
+    into l_key, l_status, l_reason, l_attempted, l_image
+    from public.outfit_previews p where p.id = v_linked;
   end if;
 
-  select p.id, p.status, p.updated_at into v_row
+  -- 1. Back on the look the picture shows.
+  if v_linked is not null and l_key = p_cache_key
+    and public.preview_stands(l_status, l_reason, l_attempted, p_stale_seconds, p_retry_seconds)
+  then
+    if v_outdated or v_pending is not null then
+      update public.outfits set preview_outdated = false, pending_preview_id = null where id = p_outfit;
+    end if;
+    return jsonb_build_object('ok', true, 'action', 'existing', 'preview_id', v_linked, 'status', l_status,
+      'refreshing', false, 'released_image_key', null);
+  end if;
+
+  -- 2. Not a refresh: what the outfit shows stands.
+  if not p_refresh and v_linked is not null
+    and public.preview_stands(l_status, l_reason, l_attempted, p_stale_seconds, p_retry_seconds)
+  then
+    return jsonb_build_object('ok', true, 'action', 'existing', 'preview_id', v_linked, 'status', l_status,
+      'refreshing', v_pending is not null, 'released_image_key', null);
+  end if;
+
+  -- 3. This look's preview.
+  v_keep_old := p_refresh and v_linked is not null and l_status = 'ready';
+
+  select p.id, p.status, p.failure_reason, p.attempted_at into r_id, r_status, r_reason, r_attempted
   from public.outfit_previews p
   where p.user_id = p_user and p.cache_key = p_cache_key
   for update;
 
-  if found and v_row.status in ('ready', 'failed') then
+  if r_id is not null and r_status in ('ready', 'failed')
+    and public.preview_stands(r_status, r_reason, r_attempted, p_stale_seconds, p_retry_seconds)
+  then
+    if r_status = 'failed' and v_keep_old then
+      if v_pending is not null then
+        update public.outfits set pending_preview_id = null where id = p_outfit;
+      end if;
+      return jsonb_build_object('ok', true, 'action', 'unavailable', 'preview_id', r_id, 'status', r_status,
+        'refreshing', false, 'released_image_key', null);
+    end if;
     v_action := 'reused';
-  elsif found and v_row.status = 'pending' and v_row.updated_at > v_fresh_after then
+    v_keep_old := false;
+  elsif r_id is not null and r_status = 'pending'
+    and public.preview_stands(r_status, r_reason, r_attempted, p_stale_seconds, p_retry_seconds)
+  then
     v_action := 'wait';
-  elsif found then
+  elsif r_id is not null then
     update public.outfit_previews
-    set status = 'pending', failure_reason = null, preset_id = p_preset_id,
-        item_ids = v_outfit.item_ids,
-        suggested_slots = array(select g ->> 'category' from jsonb_array_elements(v_outfit.gaps) g)
-    where id = v_row.id
-    returning id, status into v_row;
+    set status = 'pending', failure_reason = null, image_key = null, preset_id = p_preset_id, attempted_at = now(),
+        item_ids = v_items,
+        suggested_slots = array(select g ->> 'category' from jsonb_array_elements(v_gaps) g)
+    where id = r_id;
     v_action := 'generate';
   else
-    insert into public.outfit_previews (user_id, cache_key, preset_id, item_ids, suggested_slots, status)
-    values (p_user, p_cache_key, p_preset_id, v_outfit.item_ids,
-      array(select g ->> 'category' from jsonb_array_elements(v_outfit.gaps) g), 'pending')
-    returning id, status into v_row;
+    insert into public.outfit_previews (user_id, cache_key, preset_id, item_ids, suggested_slots, status, attempted_at)
+    values (p_user, p_cache_key, p_preset_id, v_items,
+      array(select g ->> 'category' from jsonb_array_elements(v_gaps) g), 'pending', now())
+    returning id into r_id;
     v_action := 'generate';
   end if;
 
-  if v_outfit.preview_id is distinct from v_row.id then
-    update public.outfits set preview_id = v_row.id where id = p_outfit;
+  if v_keep_old then
+    if v_pending is distinct from r_id then
+      update public.outfits set pending_preview_id = r_id where id = p_outfit;
+    end if;
+  elsif v_linked is distinct from r_id or v_pending is not null then
+    update public.outfits set preview_id = r_id, pending_preview_id = null where id = p_outfit;
     -- The release trigger deleted the old preview if nothing else uses it.
-    if v_outfit.preview_id is not null
-      and not exists (select 1 from public.outfit_previews p where p.id = v_outfit.preview_id)
+    if v_linked is not null and v_linked is distinct from r_id
+      and not exists (select 1 from public.outfit_previews p where p.id = v_linked)
     then
-      v_released := v_old_key;
+      v_released := l_image;
     end if;
   end if;
 
-  return jsonb_build_object('ok', true, 'action', v_action, 'preview_id', v_row.id,
-    'status', (select p.status from public.outfit_previews p where p.id = v_row.id),
-    'released_image_key', v_released);
+  return jsonb_build_object('ok', true, 'action', v_action, 'preview_id', r_id,
+    'status', (select p.status from public.outfit_previews p where p.id = r_id),
+    'refreshing', v_keep_old, 'released_image_key', v_released);
 end;
 $$;
 
-revoke execute on function public.claim_outfit_preview(uuid, uuid, text, text, boolean, int) from public, anon, authenticated;
-grant execute on function public.claim_outfit_preview(uuid, uuid, text, text, boolean, int) to service_role;
+revoke execute on function public.claim_outfit_preview(uuid, uuid, text, text, boolean, int, int) from public, anon, authenticated;
+grant execute on function public.claim_outfit_preview(uuid, uuid, text, text, boolean, int, int) to service_role;
+
+-- Finish a claimed (pending) preview: ready with its image, failed or
+-- skipped with a reason. Outfits waiting for it as a refresh
+-- (pending_preview_id) switch to it when ready, and their old pictures are
+-- released; on failed or skipped their refresh ends and they keep the old
+-- (still outdated) picture.
+--
+-- Returns jsonb { ok, released_image_keys }. ok is false when the row is
+-- gone (an item it shows was deleted, or a new photo replaced one) or no
+-- longer pending: the caller then deletes the image it made.
+create or replace function public.finish_outfit_preview(
+  p_user uuid,
+  p_preview uuid,
+  p_status text,
+  p_image_key text,
+  p_failure_reason text
+)
+returns jsonb
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_key text;
+  v_outfit record;
+  v_old_image text;
+  v_released text[] := '{}';
+begin
+  if p_user is null or p_preview is null or p_status is null or p_status not in ('ready', 'failed', 'skipped') then
+    raise exception 'finish_outfit_preview: bad arguments' using errcode = 'invalid_parameter_value';
+  end if;
+
+  select p.cache_key into v_key from public.outfit_previews p where p.id = p_preview and p.user_id = p_user;
+  if v_key is null then
+    return jsonb_build_object('ok', false, 'released_image_keys', '[]'::jsonb);
+  end if;
+  -- Same lock order as claim_outfit_preview: the look, then outfits, then the preview row.
+  perform pg_advisory_xact_lock(hashtextextended('gladrags.preview:' || p_user::text || ':' || v_key, 0));
+  perform 1 from public.outfits o
+  where o.user_id = p_user and (o.pending_preview_id = p_preview or o.preview_id = p_preview)
+  order by o.id
+  for update;
+
+  update public.outfit_previews
+  set status = p_status,
+      image_key = case when p_status = 'ready' then p_image_key else null end,
+      failure_reason = case when p_status = 'ready' then null else p_failure_reason end
+  where id = p_preview and user_id = p_user and status = 'pending';
+  if not found then
+    return jsonb_build_object('ok', false, 'released_image_keys', '[]'::jsonb);
+  end if;
+
+  if p_status = 'ready' then
+    for v_outfit in
+      select o.id, o.preview_id from public.outfits o
+      where o.user_id = p_user and o.pending_preview_id = p_preview
+      order by o.id
+    loop
+      select p.image_key into v_old_image from public.outfit_previews p where p.id = v_outfit.preview_id;
+      update public.outfits set preview_id = p_preview, pending_preview_id = null where id = v_outfit.id;
+      if v_outfit.preview_id is not null and v_old_image is not null
+        and not exists (select 1 from public.outfit_previews p where p.id = v_outfit.preview_id)
+      then
+        v_released := v_released || v_old_image;
+      end if;
+    end loop;
+  else
+    update public.outfits set pending_preview_id = null where user_id = p_user and pending_preview_id = p_preview;
+  end if;
+
+  return jsonb_build_object('ok', true, 'released_image_keys', to_jsonb(v_released));
+end;
+$$;
+
+revoke execute on function public.finish_outfit_preview(uuid, uuid, text, text, text) from public, anon, authenticated;
+grant execute on function public.finish_outfit_preview(uuid, uuid, text, text, text) to service_role;
+
+-- The daily cleanup: delete previews no outfit shows or waits for, last
+-- changed more than p_older_than_seconds ago (failed rows kept for the
+-- retry window, an abandoned refresh, anything a crash left). Each row is
+-- locked (skipping rows in use right now) and re-checked in a new
+-- statement, like release_outfit_preview.
+-- Returns jsonb { deleted, image_keys } for the app to remove from storage.
+create or replace function public.sweep_unused_outfit_previews(p_older_than_seconds int)
+returns jsonb
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_id uuid;
+  v_key text;
+  v_deleted int := 0;
+  v_keys text[] := '{}';
+begin
+  if p_older_than_seconds is null or p_older_than_seconds < 60 then
+    raise exception 'sweep_unused_outfit_previews: bad age' using errcode = 'invalid_parameter_value';
+  end if;
+  for v_id in
+    select p.id from public.outfit_previews p
+    where p.updated_at < now() - make_interval(secs => p_older_than_seconds)
+      and not exists (select 1 from public.outfits o where o.preview_id = p.id or o.pending_preview_id = p.id)
+    for update skip locked
+  loop
+    delete from public.outfit_previews p
+    where p.id = v_id
+      and not exists (select 1 from public.outfits o where o.preview_id = p.id or o.pending_preview_id = p.id)
+    returning p.image_key into v_key;
+    if found then
+      v_deleted := v_deleted + 1;
+      if v_key is not null then
+        v_keys := v_keys || v_key;
+      end if;
+    end if;
+  end loop;
+  return jsonb_build_object('deleted', v_deleted, 'image_keys', to_jsonb(v_keys));
+end;
+$$;
+
+revoke execute on function public.sweep_unused_outfit_previews(int) from public, anon, authenticated;
+grant execute on function public.sweep_unused_outfit_previews(int) to service_role;
 
 -- 6. Storage: the private previews bucket ------------------------------------------
 -- Keys '<user id>/<uuid>.webp' (PREVIEW_STORED_* in src/contracts/previews.ts).
@@ -458,7 +712,8 @@ begin
     raise exception 'reserve_usage: a monthly cap needs a month start' using errcode = 'invalid_parameter_value';
   end if;
   if (p_share_cap_pence is null) <> (p_share_kinds is null)
-    or (p_share_cap_pence is not null and (p_month_start is null or cardinality(p_share_kinds) = 0 or p_share_cap_pence = 'NaN'::numeric))
+    or (p_share_cap_pence is not null and (p_month_start is null or cardinality(p_share_kinds) = 0
+        or p_share_cap_pence = 'NaN'::numeric or p_share_cap_pence < 0))
   then
     raise exception 'reserve_usage: a share needs kinds, a cap and a month start' using errcode = 'invalid_parameter_value';
   end if;
