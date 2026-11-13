@@ -737,8 +737,11 @@ function usage(used: number, aiPaused = false) {
     outfitRequestsToday: { used: 0, limit: 25 },
     emailsToday: { used: 0, limit: 10 },
     shopSearchesToday: { used: 0, limit: 10 },
+    outfitPreviewsToday: { used: 0, limit: 12 },
     dailyResetAt: new Date(Date.now() + 3600_000).toISOString(),
     aiPaused,
+    previewsPaused: aiPaused,
+    shopSearchPaused: aiPaused,
   };
 }
 
