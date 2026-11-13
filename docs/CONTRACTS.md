@@ -1,10 +1,10 @@
 # GladRags contracts
 
-What the foundations branch fixes in place for every other agent: the data model, the shared types, and what each API route accepts and returns. Cheryl approved the first version at checkpoint 2. Milestone 5 (the changes from Cheryl's own test) added review flags, outfit gaps, favourite shops, shop search and order emails; those parts are marked **(M5)**.
+What the foundations branch fixes in place for every other agent: the data model, the shared types, and what each API route accepts and returns. Cheryl approved the first version at checkpoint 2. Milestone 5 (the changes from Cheryl's own test) added review flags, outfit gaps, favourite shops, shop search and order emails; those parts are marked **(M5)**. Round 2 of milestone 5 added generated outfit previews ("wearing it" images) on preset model figures; those parts are marked **(R2)**, and section 12 describes them in one place.
 
 The code is the precise version: Zod schemas in `src/contracts/`, SQL in `supabase/migrations/`. This document says the same thing in plain language. If they ever disagree, the code is wrong or this document is stale, so fix one of them.
 
-**Decisions for Cheryl** are marked **[Decision]**. They're collected at the end too: section 10 for the first round, section 11 for milestone 5.
+**Decisions for Cheryl** are marked **[Decision]**. They're collected at the end too: section 10 for the first round, section 11 for milestone 5, section 13 for round 2.
 
 ---
 
@@ -12,7 +12,7 @@ The code is the precise version: Zod schemas in `src/contracts/`, SQL in `supaba
 
 - One Next.js app. Pages and API routes live in `src/app/`.
 - Supabase holds auth, the Postgres database and the image storage.
-- Gemini does tagging, outfit ranking, reading order emails and (with Google Search) finding gap items in shops, behind interfaces in `src/lib/ai/`.
+- Gemini does tagging, outfit ranking, reading order emails and (with Google Search) finding gap items in shops, behind interfaces in `src/lib/ai/`. **(R2)** A Gemini image model makes the outfit previews, behind `ImageGenerationProvider` in the same folder.
 - **Background removal runs in the user's browser**, behind an interface in `src/lib/images/`. There's no hosted service and no cost. **(M5)** It happens the first time a collage needs an item, not when the item is added.
 - **(M5)** An inbound email service (Cheryl's choice) posts forwarded order emails to a webhook, behind an interface in `src/lib/email/`.
 - Every request body, query string, model reply and scraped page is checked against a Zod schema from `src/contracts/` before use.
@@ -39,11 +39,14 @@ Try it: `GLADRAGS_MOCK_MODE=true pnpm dev`, then open <http://localhost:3000> or
 | `mock-ai-paused` | `503 ai_paused`: the monthly AI spend cap is reached |
 | `mock-daily-cap` | `429 daily_cap_reached`: today's cap for that action is used up |
 | `mock-gaps` | **(M5)** Outfits: canned outfits that each have a shoes gap, with `missingCategories: ["shoes"]` |
+| `mock-preview-fails` | **(R2)** Previews of these outfits: `502 ai_failed`; the preview then reads `failed` (reason `ai_failed`) |
+| `mock-preview-cap` | **(R2)** Previews: `429 daily_cap_reached` (`outfit_previews_per_day`); the preview reads `skipped` |
+| `mock-preview-paused` | **(R2)** Previews: `503 ai_paused` (`monthly_image_spend`, the images share); the preview reads `skipped` |
 
 Where to put them:
 - Add by photo: in the original file's name, e.g. `shirt-mock-no-tags.jpg`.
 - Add by link: anywhere in the URL, e.g. `https://shop.example.com/p?x=mock-ai-paused`.
-- Outfits and refinements: in the guidance or the custom style text.
+- Outfits and refinements: in the guidance or the custom style text. **(R2)** The preview markers go there too, on the request that made the outfits.
 
 On top of that, a link whose host contains `blocked`, `nodata` or `noimage` gives the screenshot fallback, with that reason.
 
@@ -65,13 +68,17 @@ curl -X POST localhost:3000/api/inbound/email -H 'content-type: application/json
 
 A different `from`, or failing checks, records a failed import instead.
 
+**(R2) Previews in mock mode.** Settings start with the default model preset (`women_average_medium`) picked. `POST /api/outfits/:id/preview` "generates" for about 1.2 seconds (`GLADRAGS_MOCK_PREVIEW_DELAY_MS`; tests use 0), then the preview is ready with a mock picture: `/mock/previews/preview.svg`, or `/mock/previews/preview-suggested.svg` for an outfit with gaps (the suggested pieces drawn dashed). An identical look reuses the stored picture without counting, exactly like the real route. Picking or clearing a gap's shop product marks the preview `outdated`; `?refresh=true` makes a new one. The daily preview cap is counted in memory. To try the "Pick your model" prompt, intercept `GET /api/settings` in the browser (Playwright `page.route`) and answer `modelPresetId: null`.
+
 ---
 
 ## 2. Data model
 
-Ten tables in Postgres: the spec's four (`users`, `items`, `outfits`, `outfit_feedback`), the spec's user settings (`user_settings`, **(M5)**), plus five the server needs: `usage_events`, `allowed_emails`, `link_imports`, `sign_in_attempts` and `email_imports` **(M5)**. Row-level security (RLS) is on for every table. Signed-out visitors get nothing. A signed-in user can only see and change their own rows in the spec's four tables, can read their own `usage_events` and `email_imports`, and can read their own `user_settings` and change only its favourite shops. The other three tables are server-only.
+Eleven tables in Postgres: the spec's four (`users`, `items`, `outfits`, `outfit_feedback`), the spec's user settings (`user_settings`, **(M5)**), plus six the server needs: `usage_events`, `allowed_emails`, `link_imports`, `sign_in_attempts`, `email_imports` **(M5)** and `outfit_previews` **(R2)**. Row-level security (RLS) is on for every table. Signed-out visitors get nothing. A signed-in user can only see and change their own rows in the spec's four tables, can read their own `usage_events`, `email_imports` and **(R2)** `outfit_previews`, and can read their own `user_settings` and change only its favourite shops and **(R2)** model preset. **(R2)** On `outfits`, users can no longer write the preview columns (`preview_id`, `preview_outdated`): only the server can. The other three tables are server-only.
 
 **(M5) Applying migrations.** Migration 7 (`20261030000007_milestone5.sql`) is safe to run twice: it uses "if not exists", "create or replace" and drop-then-create throughout, and runs in one transaction, so a failure part-way changes nothing. `pnpm db:verify` applies it twice to prove it. Every migration from 7 on must be written the same way. **Apply it before deploying code from this round**: the new code reads the new columns.
+
+**(R2) Migration 8** (`20261113000008_previews.sql`) is written the same way: safe to run twice, one transaction, applied twice by `pnpm db:verify`. **Cheryl: paste it into the Supabase SQL editor and run it before deploying round 2's code.** The new code calls `reserve_usage` with two extra arguments and reads the new columns, so code first would fail every capped action.
 
 ### users
 | Field | Notes |
@@ -108,8 +115,10 @@ The database also enforces that the subcategory belongs to the category, that th
 | gaps | **(M5)** The slots the wardrobe doesn't fill, as a JSON list (section 4, "Gaps"). Empty for a complete outfit. At most 3, and items plus gaps make 2 to 4 pieces. |
 | status | `suggested`, `saved`, `liked` or `rejected` |
 | parent_outfit_id | Set when this outfit came from refining another one |
+| preview_id | **(R2)** The `outfit_previews` row whose image this outfit shows, or empty for no preview yet. Several outfits with the same look share one. Server writes only. |
+| preview_outdated | **(R2)** True when a gap's picked shop product was changed after the preview was linked: the image stays, and "Update preview" makes a new one. Set by a trigger (new shop results alone don't set it); cleared when the outfit is linked to another preview. |
 
-A trigger refuses outfits that use someone else's items. **[Decision]** Deleting an item also deletes every outfit that used it, saved ones included, because those outfits can no longer be shown.
+A trigger refuses outfits that use someone else's items. **(R2)** Another refuses a preview that isn't the owner's. **[Decision]** Deleting an item also deletes every outfit that used it, saved ones included, because those outfits can no longer be shown.
 
 ### outfit_feedback
 | Field | Notes |
@@ -126,8 +135,9 @@ One row per user, created with their profile (and, for existing users, by the mi
 | Field | Notes |
 | --- | --- |
 | user_id | The owner |
-| favourite_shop_ids[] | 1 to 12 shop IDs from the fixed list (section 4, "Favourite shops"). Default: `next`, `marks_and_spencer`, `new_look`. The only field the user can change. |
+| favourite_shop_ids[] | 1 to 12 shop IDs from the fixed list (section 4, "Favourite shops"). Default: `next`, `marks_and_spencer`, `new_look`. The user can change it (and, **(R2)**, the model preset). |
 | forwarding_token | The private part of the user's order-email forwarding address: 32 random hex digits (122 bits). Unique. Users can read it but not choose it; the database function `reset_forwarding_token()` gives the signed-in user a new one. |
+| model_preset_id | **(R2)** The model figure previews are made on, one of the 24 preset IDs (section 12), or empty until the user picks one. Users can change it (not clear it, through the API). |
 | updated_at | |
 
 **[Decision]** A separate table rather than columns on `users`, so `users` keeps its "change only your display name" rule and the token can be looked up by the server alone.
@@ -147,8 +157,24 @@ One row per forwarded email that reached a user's forwarding address. **It never
 
 Only the server writes here; users can read their own.
 
+### outfit_previews (R2)
+One row per stored preview image: per user and **look** (`cache_key`), shared by every outfit of that user with the same look. Section 12 explains the look and the life of a preview.
+
+| Field | Notes |
+| --- | --- |
+| id, user_id, created_at, updated_at | |
+| cache_key | SHA-256 (hex) of the look: preset, owned item IDs, and each gap's slot, subcategory, colours, description and picked product URL. One row per user per key. |
+| preset_id | The preset it was made on |
+| item_ids[] | The owned items the image shows, so deleting one, or replacing its photo, deletes the row |
+| suggested_slots[] | The gap slots the image shows as suggested pieces (for the "Trainers suggested" labels) |
+| status | `pending`, `ready`, `failed` or `skipped` (no row at all is "none") |
+| image_key | `<user id>/<uuid>.webp` in the `previews` bucket; set when, and only when, `ready` |
+| failure_reason | `failed`: `ai_failed`, `blocked`, `invalid_image` or `internal`. `skipped`: `daily_cap_reached` or `ai_paused`. Empty otherwise. |
+
+Only the server writes here, through `claim_outfit_preview` (section 12) and plain updates of a claimed row; users read their own. The row is deleted when no outfit uses it any more, when an item it shows is deleted or gets a new photo, and with the account.
+
 ### usage_events (addition to the spec)
-**[Decision]** One row per capped action or Gemini call: `kind`, `cost_pence` and `provider`. The kinds counted per user per day are `item_ingest`, `outfit_request`, `link_fetch`, and **(M5)** `email_import` and `shop_search`. The costed Gemini kinds are `tagging`, `ranking_shortlist`, `ranking_final`, and **(M5)** `email_extraction` and `shop_grounding`. It backs the daily caps and the £5/month cap (section 7). Only the server can write here, through the `reserve_usage` function, which checks the cap and records the row in one step. Users can't reset their own counters. When an account is deleted its rows are kept but unlinked, so the month's spend still counts.
+**[Decision]** One row per capped action or Gemini call: `kind`, `cost_pence` and `provider`. The kinds counted per user per day are `item_ingest`, `outfit_request`, `link_fetch`, **(M5)** `email_import` and `shop_search`, and **(R2)** `outfit_preview`. The costed Gemini kinds are `tagging`, `ranking_shortlist`, `ranking_final`, **(M5)** `email_extraction` and `shop_grounding`, and **(R2)** `image_generation`. It backs the daily caps and the £5/month cap (section 7). Only the server can write here, through the `reserve_usage` function, which checks the cap and records the row in one step. Users can't reset their own counters. When an account is deleted its rows are kept but unlinked, so the month's spend still counts.
 
 ### allowed_emails (the tester allowlist)
 **[Decision]** The allowlist is a table, not an environment variable. A trigger on Supabase's auth table refuses to create an account for any other email, or to change an account's email to one that isn't listed. The change check only runs when the email really changes, so Supabase's routine updates to an account aren't affected. That holds even if someone calls Supabase's auth API directly with the public key, which an env-var check in our code couldn't stop. Only the server can read it.
@@ -168,7 +194,9 @@ One row per add-by-link step 1: the source URL, the product data the server read
 One row per accepted sign-in request (a magic-link request or a code check): the action, whether the key is an email or an IP address, an HMAC-SHA-256 of that key made with the server-only `SIGN_IN_HASH_KEY`, and the time. The table is pseudonymous: it stores no email or IP address, and without the key its rows can't be matched to one, even by hashing guesses. The `reserve_sign_in_attempt` function checks the limits and records the attempt in one step (section 5, "Sign-in"). The daily cleanup deletes rows over a day old. Server-only.
 
 ### Image storage
-Two private buckets, `originals` and `cutouts`. Object names are `<user id>/<random id>.<ext>`. Only the server writes images, after checking them and stripping EXIF. A signed-in user can read and delete objects in their own folder, but can't upload or change them directly. Images are served through signed URLs that expire: one hour for wardrobe and outfit images, and 10 minutes for the product image in add-by-link. Stored images carry `Cache-Control: private, max-age=600`, so shared caches never keep them and a browser keeps them for at most 10 minutes.
+Two private buckets, `originals` and `cutouts`, and **(R2)** a third, `previews` (WebP only, 1.5 MB at most). Object names are `<user id>/<random id>.<ext>`. Only the server writes images, after checking them and stripping EXIF. A signed-in user can read and delete objects in their own folder, but can't upload or change them directly. Images are served through signed URLs that expire: one hour for wardrobe and outfit images, and 10 minutes for the product image in add-by-link. Stored images carry `Cache-Control: private, max-age=600`, so shared caches never keep them and a browser keeps them for at most 10 minutes.
+
+**(R2) Preview images** live in `previews`, are made and stored by the server only, and are served the same way (signed for an hour). Account deletion empties the user's folder in every bucket, previews included. The daily orphaned-image cleanup treats an image as in use if an item, an open link import, or **(R2)** an `outfit_previews` row names it, so a preview no outfit uses any more is removed within a day or two even if the app missed it.
 
 **(M5)** The wardrobe shows the original; only collages use cut-outs. For an email item without a usable picture the server stores a plain placeholder picture as its original, so every item still has one and nothing else changes; `needsPhoto` tells the UI to ask for a photo.
 
@@ -303,13 +331,13 @@ All routes are under `/api` and return JSON. Every route except the sign-in ones
 | unsupported_media_type | 415 | A route that takes JSON was sent something without `Content-Type: application/json` |
 | daily_cap_reached | 429 | Per-user daily cap hit; `cap` says which and when it resets |
 | rate_limited | 429 | Too many sign-in attempts; the message says how many minutes to wait |
-| ai_paused | 503 | Monthly AI spend cap hit; adding and new outfits pause until next month |
+| ai_paused | 503 | Monthly AI spend cap hit; adding and new outfits pause until next month. **(R2)** Or a feature's share of it: only that feature pauses (`cap.kind` says which) |
 | ai_failed | 502 | The model failed twice |
 | server_misconfigured | 500 | Missing environment variables |
 | not_implemented | 501 | Stub route called outside mock mode |
 | internal | 500 | Anything else |
 
-`cap.kind` is one of `items_per_day`, `outfit_requests_per_day`, `link_fetches_per_day`, **(M5)** `emails_per_day`, `shop_searches_per_day`, and `monthly_ai_spend`.
+`cap.kind` is one of `items_per_day`, `outfit_requests_per_day`, `link_fetches_per_day`, **(M5)** `emails_per_day`, `shop_searches_per_day`, **(R2)** `outfit_previews_per_day`, and `monthly_ai_spend`, plus **(R2)** the spend shares `monthly_image_spend` and `monthly_shop_search_spend` (each with `ai_paused`: only that feature pauses).
 
 ### Cross-site requests (CSRF)
 The session cookie is `httpOnly` and `SameSite=Lax` (section 9), and on top of that:
@@ -437,9 +465,10 @@ Android can "share" a product page straight to the installed app; it opens `/add
 | `PATCH /api/outfits/:id` | `{ status: "saved" }`, `"liked"`, `"suggested"`, or `{ status: "rejected", reason? }` | `{ outfit }`. Rejecting also records feedback. |
 | `POST /api/outfits/:id/refine` | `{ kind: "swap", itemId }` or `{ kind: "guidance", text }` | Same as `POST /api/outfits`. The new outfits carry `parentOutfitId` and the parent's `includeShopItems`. |
 | `POST /api/outfits/:id/shop-search` | **(M5)** Nothing. "Find in my shops". | `{ outfit }` with each gap's `shopResults` filled |
-| `PUT /api/outfits/:id/gaps/:category` | **(M5)** `{ productUrl }` (one of that gap's `shopResults`), or `{ productUrl: null }` to clear. | `{ outfit }` with the gap's `shopProduct` set |
+| `PUT /api/outfits/:id/gaps/:category` | **(M5)** `{ productUrl }` (one of that gap's `shopResults`), or `{ productUrl: null }` to clear. | `{ outfit }` with the gap's `shopProduct` set. **(R2)** If the outfit has a preview, it's now `outdated`. |
+| `POST /api/outfits/:id/preview` | **(R2)** Nothing; `?refresh=true` for "Update preview". **Stub** (mock mode) until outfit-engine builds it. | `{ outfit }` with its `preview` (section 12) |
 
-An **Outfit** is `{ id, request, name, reason, itemIds, items (full WardrobeItems, same order), gaps, status, parentOutfitId, createdAt }`. The collage uses `items`, and **(M5)** draws each gap in its slot as a dashed placeholder with its description, or with the chosen product's name. Shop pictures appear on the product cards only, never on the collage (decision 6, section 11). `gaps` is empty for a complete outfit (and for every outfit saved before milestone 5).
+An **Outfit** is `{ id, request, name, reason, itemIds, items (full WardrobeItems, same order), gaps, status, parentOutfitId, createdAt, preview }`. **(R2)** `preview` is `{ status, imageUrl, failureReason, presetId, suggestedSlots, outdated }` (section 12); outfits from before round 2 read as `status: "none"`. The collage uses `items`, and **(M5)** draws each gap in its slot as a dashed placeholder with its description, or with the chosen product's name. Shop pictures appear on the product cards only, never on the collage (decision 6, section 11). `gaps` is empty for a complete outfit (and for every outfit saved before milestone 5).
 
 **Find in my shops (M5).** Runs only when the user taps it, on an outfit with gaps (`bad_request` otherwise):
 1. Checks the daily shop search cap (**10 a day**, cap kind `shop_searches_per_day`) and the AI pause, and counts one search for the whole outfit, whatever its number of gaps.
@@ -452,8 +481,8 @@ An **Outfit** is `{ id, request, name, reason, itemIds, items (full WardrobeItem
 ### Settings (M5; built by link-import)
 | Route | Send | Get back |
 | --- | --- | --- |
-| `GET /api/settings` | | `{ favouriteShopIds, forwardingAddress }` |
-| `PUT /api/settings` | `{ favouriteShopIds }`: 1 or more IDs from the list in section 4, no duplicates | The settings |
+| `GET /api/settings` | | `{ modelPresetId, favouriteShopIds, forwardingAddress }`. **(R2)** `modelPresetId` is null until the user picks one. |
+| `PUT /api/settings` | `{ favouriteShopIds }`: 1 or more IDs from the list in section 4, no duplicates; **(R2)** and/or `{ modelPresetId }`, one of the 24 presets (not null). At least one of the two. | The settings |
 | `POST /api/settings/forwarding-address` | Nothing. Resets the address: a new random token, and the old address stops working at once. | The settings |
 
 `forwardingAddress` is `<prefix><token>@<domain>`, built from `INBOUND_EMAIL_PREFIX` and `INBOUND_EMAIL_DOMAIN` (section 9). It's **null when `INBOUND_EMAIL_DOMAIN` isn't set**, and the UI then says email import isn't set up yet.
@@ -495,13 +524,13 @@ It always answers `{ received: true }` once the signature checks out, so the ser
 ### Usage and account (built)
 | Route | Get back |
 | --- | --- |
-| `GET /api/usage` | `{ itemsToday: { used, limit }, outfitRequestsToday: { used, limit }, emailsToday: { used, limit }, shopSearchesToday: { used, limit }, dailyResetAt, aiPaused }` (**(M5)** the two new counters) |
+| `GET /api/usage` | `{ itemsToday: { used, limit }, outfitRequestsToday: { used, limit }, emailsToday: { used, limit }, shopSearchesToday: { used, limit }, outfitPreviewsToday: { used, limit }, dailyResetAt, aiPaused, previewsPaused, shopSearchPaused }` (**(M5)** emails and shop searches; **(R2)** previews and the two share pauses, each true when the overall cap or that feature's share is reached) |
 | `DELETE /api/account` | `{ deleted: true }`. Deletes the user's images, then their account, which removes all their rows (settings and email imports included), then signs them out. |
 
 ### Scheduled jobs (built)
 | Route | Send | Get back |
 | --- | --- | --- |
-| `GET /api/cron/cleanup` | `Authorization: Bearer <CRON_SECRET>` | `{ imagesChecked, orphanedImagesDeleted, linkImportsDeleted, signInAttemptsDeleted }` (counts only) |
+| `GET /api/cron/cleanup` | `Authorization: Bearer <CRON_SECRET>` | `{ imagesChecked, orphanedImagesDeleted, linkImportsDeleted, signInAttemptsDeleted }` (counts only). **(R2)** Covers the `previews` bucket too. |
 
 Vercel Cron calls it once a day at 03:17 UTC (`vercel.json`). **Vercel runs cron jobs on production deployments only**, never on previews, so until the app has a production deployment the cleanup doesn't run on its own (it can be called by hand with the secret). It deletes images over a day old that no item or open link import uses, `link_imports` rows over 7 days old, and `sign_in_attempts` rows over a day old. The secret is compared in constant time. A wrong or missing header gets `401 unauthorized`. If `CRON_SECRET` isn't set, is blank, or has spaces or a newline around it (which no header could ever match), the answer is `500 server_misconfigured` and nothing runs. No user is involved, so it isn't behind sign-in. Neither the response nor the logs include keys, emails or other user data.
 
@@ -518,6 +547,8 @@ The model's output is never trusted. Each reply is checked against a schema. If 
 - After parsing, `checkRankedOutfits` throws out any outfit that uses an item ID the model wasn't given, (when the request has an anchor item) leaves the anchor out, breaks the composition rule counting owned items and gaps together, has no owned item, or **(M5)** has a gap that isn't allowed (section 4, "Gaps"). The engine passes it the gap rules: which categories its (filtered) wardrobe has, and `includeShopItems`; the anchor's category comes from the anchor item. Without gap rules, any gap is refused.
 - **(M5) Shop search (Gemini with Google Search grounding):** `{ gaps: [{ category, candidates: [{ url, title }] }] }`, one entry per gap. A candidate whose link isn't a valid http(s) URL is dropped rather than failing the reply, and at most 8 per gap are kept. Nothing here is shown as it is: the server keeps only links on the user's favourite shops and fetches each page to confirm it and read the real title, price and image.
 - **(M5) Order email:** `{ shopName, orderDate, items: [{ name, brand, colour, size, productUrl, imageUrl }] }`. Only clothes and shoes should be listed. `items` may be empty. Free text is flattened to one line and length-limited (name 200, brand 80, colour 60, size 30, shop name 80 characters). An unreadable date or an invalid link reads as empty rather than failing the reply. A line that doesn't parse (no name, say) is dropped, so one bad line never fails the email; then the first 20 good lines are used. The colour is as the email says it ("Khaki"); tagging maps it to the palette.
+
+- **(R2) Outfit preview (image model):** an image, not JSON, so it's checked by code rather than a schema (`checkGeneratedPreviewImage` in `src/contracts/previews.ts`): the type sniffed from the bytes is PNG, JPEG or WebP (whatever the model declared); at most 8 MB; it decodes; each side between 512 and 4096 px; and it's a 2:3 portrait (width ÷ height within 0.05 of 0.667). No image, a refusal (safety block), a provider error, or a failed check counts as a bad reply: retried once, then the preview is `failed` (`ai_failed`, `blocked` or `invalid_image`) and the outfit keeps its collage. The server then re-encodes it as WebP (longest side at most 1536 px, at most 1.5 MB, no metadata) before storing it. Recorded replies for tests: `src/lib/ai/fixtures/preview-fixtures.ts`.
 
 **One retry covers both kinds of failure.** Some mistakes only show up with context: an invented item ID, a broken composition, a missing anchor. `callWithValidation` takes an optional `check` for these. It runs after the schema passes, and a failure there uses the same single retry, so there are never more than two calls. The pattern for ranking:
 
@@ -550,8 +581,11 @@ The tests include recorded bad replies: an invented "accessory" category, a colo
 | Add-by-link page fetches (step 1, fallbacks included) per user per day | **80** [Decision] | same |
 | **(M5)** Forwarded order emails accepted per user per day | **10** [Decision] | same |
 | **(M5)** "Find in my shops" searches per user per day | **10** [Decision] | same |
+| **(R2)** Outfit previews generated per user per day (reused ones don't count) | **12** [Decision] | same |
+| **(R2)** Monthly spend shares: images (previews), shop search | **£2** each, all users together [Decision] | same (`MONTHLY_SPEND_SHARES`) |
 | AI spend cap, all users together, per calendar month | **£5** (Gemini only) | same |
-| Estimated cost per Gemini call, when the real cost isn't known | tagging 0.2p, shortlist 0.2p, final pick 0.5p [Decision]; **(M5)** reading an email 0.5p, one grounded shop search **3p** [Decision] | same |
+| Estimated cost per Gemini call, when the real cost isn't known | tagging 0.2p, shortlist 0.2p, final pick 0.5p [Decision]; **(M5)** reading an email 0.5p, one grounded shop search **3p** [Decision]; **(R2)** one preview image **4p** (unverified) [Decision] | same |
+| **(R2)** Most a settled call is recorded at | 3 × its estimate, except an image: **10p** (`MAX_SETTLED_COST_PENCE`) | same |
 | Day and month boundaries | UK time (handles British Summer Time) | same |
 
 Before starting work, every route that uses AI asks the usage guard whether it's allowed (`assertCanStart`, a quick check that counts nothing). The item cap is counted where tagging runs: in add-by-photo, in add-by-link step 2, and **(M5)** for each line of an order email (an email counts once against the email cap and once per item against the item cap). Step 1 only checks it, and counts a link fetch instead. **(M5)** A shop search counts once per outfit searched, not per gap. Saving a cut-out or adding a photo later uses no AI and counts nothing.
@@ -562,7 +596,9 @@ Before starting work, every route that uses AI asks the usage guard whether it's
 
 **Checking and counting are one atomic step.** Counting an action (`reserveAction`) and reserving a Gemini call's cost (`reserveAiCost`, or `meterAiCalls` for `callWithValidation`) each go through one database function, `reserve_usage`. It locks (per user for the daily caps, and once for everyone for spend), counts, and records the row only if the cap allows it. Requests sent at the same moment queue behind each other, so a burst can't overshoot a daily cap or the monthly cap. `pnpm db:verify` proves this with 30 calls fired at once. The check is "reached, not approached": a call is allowed while the month is under £5.
 
-**How far past £5 the month can go.** Each call reserves its estimate first. When it returns, the real cost replaces the estimate. A real cost is only used if it's a number of zero or more, and it's recorded at most at **3 times the estimate** (a log line says so when that happens, which means the estimates need raising). So the month can end up over £5 by at most one call's estimate (3p, a shop search, since milestone 5), plus up to 2 × its estimate (6p at most) for each call that was already running when the cap was reached. At tester scale that's still well under £1 at worst.
+**(R2) Spend shares.** A share is a group of costed kinds with its own monthly limit: once those kinds' month total (everyone's) reaches it, that feature alone pauses (`ai_paused` with `cap.kind` `monthly_image_spend` or `monthly_shop_search_spend`), and everything else keeps working until the overall £5. Images (`image_generation`) and shop search (`shop_grounding`) have £2 each. A share isn't set aside: tagging and outfits can still use the whole £5, and the two shares together can use £4 of it. The share is checked atomically in `reserve_usage` (new arguments `p_share_kinds`, `p_share_cap_pence`), under the same spend lock, both when the AI call reserves its cost and when the daily action (`outfit_preview`, `shop_search`) is counted, so a paused feature doesn't use up a daily count. `pnpm db:verify` fires 30 image reservations at once against a 1p share and checks it stops at exactly 1p. Adding a share for another feature is one entry in `MONTHLY_SPEND_SHARES`.
+
+**How far past £5 the month can go.** Each call reserves its estimate first. When it returns, the real cost replaces the estimate. A real cost is only used if it's a number of zero or more, and it's recorded at most at **3 times the estimate** (a log line says so when that happens, which means the estimates need raising). So the month can end up over £5 by at most one call's estimate (**(R2)** 4p, an image, since round 2), plus the gap between its estimate and its clamp for each call that was already running when the cap was reached (6p for an image, 6p for a shop search). The same bound applies to each share. At tester scale that's still well under £1 at worst.
 
 If AI pauses after a request has been counted but before its model call (another request reached the cap in between), the user gets nothing, so the count is given back: in add-by-photo, in outfit requests and refinements and in shop searches (only if no model call was made yet; a pause between two paid calls keeps the count), and in add-by-link step 2, which also reopens the import so the link needn't be pasted again (it still expires an hour after step 1).
 
@@ -578,13 +614,16 @@ In add-by-link step 2 the item is counted before the import is claimed. If the c
 | `RankingProvider.shortlist(...)` and `.pickFinal(...)` | `src/lib/ai/types.ts` | outfit-engine (Gemini) |
 | **(M5)** `ShopSearchProvider.searchGaps({ gaps, shops })` | `src/lib/ai/types.ts` | outfit-engine (Gemini with Google Search) |
 | **(M5)** `OrderEmailProvider.extractOrder({ subject, text })` | `src/lib/ai/types.ts` | link-import (Gemini) |
+| **(R2)** `ImageGenerationProvider.generatePreview({ preset, items, gaps, aspectRatio })` → `{ image: { data, mimeType } or null, blockReason?, costPence?, usage?, provider, model }` | `src/lib/ai/types.ts` | outfit-engine (Gemini image model) |
 | **(M5)** `InboundEmailProvider.verify(request)` and `.parse(rawBody)` | `src/lib/email/types.ts` | link-import (one per email service) |
 | `BackgroundRemover.removeBackground(Blob or ImageBitmap) → PNG Blob`, in the browser | `src/lib/images/types.ts` | ingestion |
 | `ServerImageProcessor.inspect / stripMetadata / resize / hasTransparency / prepareForModel` | `src/lib/images/server.ts` | ingestion (link-import reuses it, plus `checkUploadedCutout`, `cleanImage` and `suggestTags` from `src/lib/ingestion`) |
 | `UsageGuard` (caps and spend): `assertCanStart`, `reserveAction`, `meterAiCalls` | `src/lib/usage/` | built; others call it |
 | `requireUser()` | `src/lib/auth/session.ts` | built; first line of every route |
 
-Fakes for tests (no network): `FakeTaggingProvider`, `FakeRankingProvider`, `FakeBackgroundRemover`, and **(M5)** `FakeShopSearchProvider` and `FakeOrderEmailProvider`.
+Fakes for tests (no network): `FakeTaggingProvider`, `FakeRankingProvider`, `FakeBackgroundRemover`, **(M5)** `FakeShopSearchProvider` and `FakeOrderEmailProvider`, and **(R2)** `FakeImageGenerationProvider` with recorded replies in `src/lib/ai/fixtures/preview-fixtures.ts`.
+
+**(R2) Shared helpers:** `previewCacheKey(look)` and `checkGeneratedPreviewImage(facts)` in `src/contracts/previews.ts`; `previewRowToOutfitPreview` in `src/lib/db/mappers.ts`; `needsPresetError()` in `src/lib/mocks/previews.ts` (move it next to the real route).
 
 **(M5) Shared helpers in `src/contracts/`:** `checkComposition(owned, gaps)`, `checkRankedOutfits(..., { anchorItemId, gaps })`, `missingCategoriesForOutfits`, `shopForUrl`, `forwardingAddress` / `tokenFromAddress`, `judgeInboundEmail`, `collageImageUrl`. Server config: `getForwardingAddressConfig()` and `getInboundWebhookSecret()` in `src/lib/env.server.ts`.
 
@@ -604,6 +643,7 @@ Environment variables (see `.env.example`):
 | `GEMINI_MODEL` | Optional. Gemini model for tagging and ranking; defaults to `gemini-3.8-flash`. Must have known prices (`GEMINI_MODEL_PRICES`), otherwise startup fails with a config error. |
 | `GLADRAGS_MOCK_MODE` | `true` only for local UI work. Refused on Vercel and in production builds. |
 | `GLADRAGS_E2E` | `true` only for end-to-end test runs, to allow mock mode against `pnpm start` |
+| `GLADRAGS_MOCK_PREVIEW_DELAY_MS` | **(R2)** Optional, mock mode only: how long a mock preview takes (default 1200 ms) |
 | `CRON_SECRET` | A long random value (e.g. `openssl rand -hex 32`). Vercel sends it to the daily cleanup job; without it the job refuses to run. Set it in Vercel for Production (cron jobs only run there); Preview too if you want to call the job by hand on a preview. |
 | `SIGN_IN_HASH_KEY` | Server only. At least 32 random characters (e.g. `openssl rand -hex 32`). The key for the pseudonymous sign-in attempt hashes. Without a usable one, sign-in answers `500 server_misconfigured` outside mock mode and tests. Changing it only resets the 15-minute limits. Set it in Vercel for Production and Preview. |
 | `INBOUND_EMAIL_DOMAIN` | **(M5)** The domain the inbound email service receives mail for. Forwarding addresses are `<prefix><token>@<this domain>`. Empty: the app shows no address ("email import isn't set up yet"). |
@@ -614,10 +654,12 @@ Environment variables (see `.env.example`):
 
 There's no background-removal key: it runs in the browser.
 
+**(R2) For previews**, Gemini's paid tier: the free tier has no image quota (it answers 429), so previews stay on recorded fixtures and mock mode until then.
+
 **(M5) For order emails**, Cheryl also chooses and sets up an inbound email service and a domain (or the service's own address), points its webhook at `<site>/api/inbound/email` with the secret, and tells it to drop attachments. For shop search, Gemini's paid tier (Google Search grounding has only a small free allowance).
 
 In the Supabase dashboard:
-1. Run the migrations in `supabase/migrations/` in order (e.g. `supabase db push`, or paste each into the SQL editor). **(M5)** Migration 7 (`20261030000007_milestone5.sql`) is safe to run twice; apply it before deploying this round's code.
+1. Run the migrations in `supabase/migrations/` in order (e.g. `supabase db push`, or paste each into the SQL editor). **(M5)** Migration 7 (`20261030000007_milestone5.sql`) is safe to run twice; apply it before deploying this round's code. **(R2)** So is migration 8 (`20261113000008_previews.sql`): run it in the SQL editor before deploying round 2.
 2. Add yourself, then the testers, to `allowed_emails`.
 3. Under Authentication → URL configuration, add the production address and every preview to the redirect URLs: `<site>/**` and `https://gladrags-*-cheryllairds-projects.vercel.app/**` (Supabase's `*` doesn't match `.` or `/`, so this covers only this team's previews). Sign-in links go back to the address that asked for them; if that address isn't listed, Supabase quietly falls back to the Site URL and the link fails with "code verifier" errors.
 4. Under Authentication → Email templates → Magic link, add the code to the email, e.g. `Or enter this code in the app: {{ .Token }}`. Optionally, point the link at `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=email`, which works in any browser (it opens a page with a "Continue signing in" button). Note that `{{ .SiteURL }}` is the one Site URL set in the dashboard, so these links always open that address, not the preview that asked.
@@ -676,3 +718,83 @@ Made while turning her test notes into contracts. The orchestrator's own decisio
 11. **An email line without a usable picture** is saved with a plain placeholder picture (so every item still has an original) and flagged to add a photo.
 12. **An empty wardrobe** gets its own answer (`empty_wardrobe`) instead of a list of missing categories, so the outfit screen can point to the get-started checklist.
 13. **Text-only tagging** (orchestrator, 2026-10-30): `TaggingInput.image` may be null for an order-email line with no usable picture; the model then tags from the product hints (title required). The ingestion agent makes the prompt handle it.
+
+---
+
+## 12. Generated outfit previews (R2)
+
+Every suggested outfit gets a picture of a model figure wearing it (spec: "Generated outfit preview"). The collage stays as the placeholder while it's made, and as the fallback when it fails, is paused or capped.
+
+### Model presets
+A fixed list of **24 presets**: women's and men's figures × 4 builds × 3 skin tones (`MODEL_PRESETS` in `src/contracts/previews.ts`).
+
+| Field | Values |
+| --- | --- |
+| id | `<gender>_<build>_<tone>`, e.g. `women_average_medium` |
+| gender | `women`, `men` |
+| build | women's: `slim`, `average`, `curvy`, `plus`; men's: `slim`, `average`, `broad`, `plus` (the spec's "curvy or broad" sits in the same place in each grid) |
+| skinTone | `light`, `medium`, `deep` |
+| label | e.g. "Women's, curvy build, deep skin tone". Shown in the picker and used to tell the image model who it's dressing. |
+| imagePath | `/presets/<id>.webp` (in `public/`) |
+
+**The pictures are placeholders for now**: plain silhouettes marked "PLACEHOLDER", made by `scripts/make-preview-placeholders.mjs` (`MODEL_PRESET_IMAGES_ARE_PLACEHOLDERS = true`). The real set is generated once on the paid tier and checked with Cheryl (PROGRESS.md P5). The default is `women_average_medium`.
+
+### Picking the model
+`user_settings.model_preset_id` is empty until the user picks. **[Decision]** The server never picks for them: `POST /api/outfits/:id/preview` without a preset answers `400 bad_request` with the issue path `modelPresetId` (`PREVIEW_NEEDS_PRESET_ISSUE_PATH`). The outfit screen then shows "Pick your model" with the default already selected; choosing one, or just closing the prompt, saves it with `PUT /api/settings` (closing saves the default), and the previews start. So the user is asked exactly once, and an answer is always stored. The settings screen has the same grid for changing it later. **[Decision]** Changing the preset doesn't touch existing previews; outfits from then on use the new one (an older outfit keeps the figure it was made on, and `preview.presetId` says which).
+
+### The preview on an outfit
+`outfit.preview` is `{ status, imageUrl, failureReason, presetId, suggestedSlots, outdated }`:
+
+| status | Meaning | The UI shows |
+| --- | --- | --- |
+| `none` | Not made yet | The collage; calls the route |
+| `pending` | Being made, by this or another request | The collage, with a "making your picture" state; asks again every 3 s or so (`PREVIEW_POLL_INTERVAL_MS`) with `GET /api/outfits/:id` or the same POST (which never makes a second one) |
+| `ready` | Stored; `imageUrl` is a signed URL (1 hour) | The picture, with "Trainers suggested"-style labels for each of `suggestedSlots`, and the collage one tap away |
+| `failed` | Failed twice; `failureReason` is `ai_failed`, `blocked`, `invalid_image` or `internal`. Final for this look. | The collage |
+| `skipped` | Not made because of the daily cap or a pause; `failureReason` is `daily_cap_reached` or `ai_paused`. Tried again by a later POST. | The collage |
+
+`outdated: true` means a gap's shop product was picked or cleared after the picture was made. The picture stays; the UI offers "Update preview".
+
+### Making one: `POST /api/outfits/:id/preview`
+The client calls it once per outfit in a new set, **one after another** (not in parallel), so no single request runs long (`maxDuration` 90 s), and only for the new outfits after a refinement or swap. With `?refresh=true` it's "Update preview" on an outdated one. It returns `{ outfit }`.
+
+1. Loads the outfit (`not_found` if it isn't yours) and your preset (`bad_request` if none).
+2. Works out the outfit's **look**: `previewCacheKey({ presetId, itemIds, gaps })`, a SHA-256 of the preset, the owned item IDs (sorted), and each gap's slot, subcategory, colours, description and **picked product URL**. Shop results and search times don't count.
+3. Calls the database function **`claim_outfit_preview`**, which in one locked step:
+   - returns at once if the outfit already shows a ready, failed or pending (under 150 s old, `PREVIEW_PENDING_STALE_SECONDS`) preview, unless `refresh` asks for a different look (**existing**);
+   - links the outfit to one of your stored previews with the same look, ready or failed, **at no cost and with no cap use** (**reused**), or to one being made right now (**wait**);
+   - otherwise creates the row (or takes back a skipped or abandoned one) as `pending`, links the outfit, and tells the route to make it (**generate**). 30 outfits with one look claiming at once make exactly one image (`pnpm db:verify`).
+4. To generate: counts one `outfit_preview` (12 a day, refused when the images share or the £5 is reached; the row is then `skipped`), reserves one `image_generation` (4p), and calls the image model with the preset picture, each owned item's picture (its cut-out, or the original) and a short description, and each gap **described in words so the model draws the suggested piece**, so an outfit with gaps still shows as a complete look. Where a gap has a picked shop product, the server fetches that product's picture through link-import's `safeFetch` (only from the shop's own domain, redirects checked) and the image checks, and sends it instead of the words; that picture is model input only, never stored or shown (shop pictures stay off the collage, section 11 decision 6). The reply is checked (section 6), retried once, stored as WebP in `previews`, and the row set `ready`; or `failed` after two bad replies (`502 ai_failed`).
+5. If the outfit moved to a new look (a refresh) and nothing else uses the old picture, the old row is deleted and the route removes its image.
+
+Errors: `bad_request` (no preset), `not_found`, `daily_cap_reached` (`outfit_previews_per_day`), `ai_paused` (`monthly_ai_spend` or `monthly_image_spend`), `ai_failed`.
+
+**With `?refresh=true`** the route checks the cap and the pause first (`assertCanStart`), so a refresh that can't run leaves the outdated picture in place. A refresh counts like any new preview, unless the new look already has a ready picture.
+
+### Never the same look twice
+One stored picture per user and look, shared by every outfit with that look: a new request, a refinement or a swap that lands on a look you already have reuses it for free. Loading an outfit again only signs a fresh URL. A `failed` look isn't retried either **[Decision]**; it shows its collage. A `skipped` one is tried again the next time.
+
+### When a picture goes
+- **An outfit deleted** (outfits go when an item they use is deleted, section 2): its picture is deleted only when no other outfit uses it (database trigger).
+- **An item deleted, or its photo replaced:** every picture showing it is deleted, and outfits using it go back to `none` (they're deleted anyway when the item is, decision 5). The database deletes the rows; the app removes the images straight away (`deleteWardrobeItem`, `replaceItemPhoto`). **[Decision]** A new cut-out doesn't count: it's made from the same photo.
+- **The account deleted:** the rows go with the user, and `deleteAccount` empties the `previews` folder like the others.
+- **Anything missed** (a crash part-way): the daily orphaned-image cleanup deletes any image in `previews` that no `outfit_previews` row names, once it's a day old.
+
+### What Gemini sees (for the privacy note)
+The preset picture (not the user), the outfit's item pictures (cut-outs or originals, as for tagging), short descriptions, and a picked shop product's picture. No photo of the user is sent in this phase.
+
+---
+
+## 13. Decisions for Cheryl (round 2)
+
+1. **24 preset figures**: women's and men's × slim, average, curvy (women) or broad (men), plus × light, medium, deep skin tones. The pictures are placeholders until the paid tier is on; the real set is generated once and shown to you before testers see it. Default: women's, average, medium.
+2. **The first time, you're asked**, with the default already selected; closing the prompt keeps the default. The server never silently picks one. Change it any time in settings.
+3. **Changing your figure doesn't redo old pictures.** New outfits use the new figure; older ones keep theirs.
+4. **Caps: 12 pictures a day per person**, and pictures pause on their own once they've cost **£2** in a month (everything else keeps going to £5). A picture is estimated at **4p** (unverified, Google's price page couldn't be reached) and recorded at most at 10p. So £2 buys about 50 pictures across all testers, about 12 to 13 outfit requests' worth. Expect to raise the cap or the share once real prices are in.
+5. **Shop search gets its own £2 share too** (the security re-check, S1, asked for it). Together the two shares can use £4 of the £5, which still leaves tagging and outfits at least £1 if both run out. If that feels tight, lower one share rather than raise the cap.
+6. **The same look is never drawn twice.** Same figure, same items, same suggested pieces and the same picked products: the stored picture is reused for free. A look whose picture failed twice shows its collage and isn't tried again.
+7. **Suggested pieces are drawn on the figure and labelled** ("Trainers suggested"), so an outfit with gaps still looks complete and nobody mistakes a suggestion for something they own.
+8. **Picking a shop product doesn't redraw automatically.** The picture is marked "Update preview"; tapping it makes a new one with the product's picture, and counts as one of the 12. Browsing products costs nothing.
+9. **A new photo of an item retires the pictures that show it; a new cut-out doesn't.** A new photo can change how the item looks; a cut-out is made from the same photo.
+10. **Pictures are deleted when no outfit uses them**, when an item they show is deleted, and with your account. The daily cleanup catches anything missed, but only once it runs: it needs the production cron and `CRON_SECRET` (S6).
+11. **Migration 8 must be applied before the round 2 code is deployed** (SQL editor, safe to run twice).
