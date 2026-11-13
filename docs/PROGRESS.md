@@ -89,7 +89,7 @@ Integration branch for this round: `claude/cheryl-test-feedback-5xw3vb` (started
 
 | # | Item | Owner | Status |
 | --- | --- | --- | --- |
-| S1 | Shop search spend: book real cost from grounding query count + tokens; own clamp or ~10p estimate; at most 3 shops per search; cap 3–5 searches a day; pause shop search alone at ~£2/month | outfit-engine | ☐ |
+| S1 | Shop search spend: book real cost from grounding query count + tokens; own clamp or ~10p estimate; at most 3 shops per search; cap 3–5 searches a day; pause shop search alone at ~£2/month | outfit-engine | ◐ The £2 shop search share is done (foundations, `r2/contracts`: `MONTHLY_SPEND_SHARES.shop_search`, enforced in `reserve_usage`). Real cost booking, shops per search and the cap value remain. |
 | S2 | Privacy note: Postmark (US, retention), what Gemini sees for emails and shop search, server visits to email links and shop pages, card pictures load from shops, settings and email records deleted with the account | orchestrator (Cheryl approves) | ☐ |
 | S3 | Record two real Postmark payloads (a real forwarded order; a forged one) as fixtures and confirm the "above the second Received" trust rule, or anchor on a Postmark-only header | link-import + Cheryl | ☐ needs Postmark |
 | S4 | Live two-user RLS check on the real project, now incl. `user_settings`, `email_imports`; buckets private | orchestrator + Cheryl | ☐ (from milestone 4) |
