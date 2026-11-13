@@ -19,7 +19,7 @@ import type { ServerImageProcessor } from "@/lib/images/server";
 import { CUTOUT_RULES, ORIGINAL_RULES, checkUploadedCutout, checkUploadedImage, cleanImage, invalidImage } from "./images";
 import { DuplicateImageKeyError } from "./items-repository";
 import { newImageKey, type ImageBucket } from "./storage";
-import { toWardrobeItem, type WardrobeDeps } from "./wardrobe";
+import { previewKeysShowing, removePreviewImages, toWardrobeItem, type WardrobeDeps } from "./wardrobe";
 
 export interface ItemImageDeps extends WardrobeDeps {
   images: ServerImageProcessor;
@@ -119,11 +119,15 @@ export async function replaceItemPhoto(deps: ItemImageDeps, userId: string, item
 
   const newKey = newImageKey(userId, clean.mimeType);
   await deps.storage.upload(STORAGE_BUCKETS.originals, newKey, clean);
+  // Round 2: a new photo makes the outfit previews showing the item stale;
+  // the database deletes their rows when the original changes.
+  const previews = await previewKeysShowing(deps, userId, itemId);
   const updated = await pointItemAt(deps, STORAGE_BUCKETS.originals, newKey, () => deps.items.replaceOriginal(userId, itemId, newKey));
 
   // The row read at the start names the files this request replaced.
   if (row.original_image_key !== newKey) await removeReplaced(deps, STORAGE_BUCKETS.originals, row.original_image_key, itemId);
   if (row.cutout_image_key) await removeReplaced(deps, STORAGE_BUCKETS.cutouts, row.cutout_image_key, itemId);
+  await removePreviewImages(deps, previews, itemId);
   return toWardrobeItem(deps.storage, updated);
 }
 

@@ -71,6 +71,14 @@ export interface ItemRepository {
   replaceOriginal(userId: string, id: string, originalKey: string): Promise<ItemRow | null>;
   /** Delete and return the row (for its image keys). Null if there's no such item. */
   delete(userId: string, id: string): Promise<ItemRow | null>;
+  /**
+   * Round 2: image keys of the user's stored outfit previews that show this
+   * item. Deleting the item, or replacing its photo, deletes those previews
+   * (database trigger); the caller then removes the images from storage.
+   * Optional so older test fakes needn't have it; the daily cleanup is the
+   * backstop.
+   */
+  previewImageKeysShowing?(userId: string, itemId: string): Promise<string[]>;
   /** Which of these image keys an existing item of this user already uses. */
   keysInUse(userId: string, keys: readonly string[]): Promise<Set<string>>;
 }
@@ -218,6 +226,17 @@ export class SupabaseItemRepository implements ItemRepository {
     return parseRow(data);
   }
 
+  async previewImageKeysShowing(userId: string, itemId: string): Promise<string[]> {
+    const { data, error } = await this.db
+      .from("outfit_previews")
+      .select("image_key")
+      .eq("user_id", userId)
+      .contains("item_ids", [itemId])
+      .not("image_key", "is", null);
+    if (error) throw new Error(`Couldn't find the item's outfit previews: ${error.message}`);
+    return ((data ?? []) as { image_key: string | null }[]).flatMap((row) => (row.image_key ? [row.image_key] : []));
+  }
+
   async keysInUse(userId: string, keys: readonly string[]): Promise<Set<string>> {
     const inUse = new Set<string>();
     if (keys.length === 0) return inUse;
@@ -261,6 +280,10 @@ export class SupabaseImageReferences implements ImageReferences {
       .gt("created_at", since);
     if (error) throw new Error(`Couldn't check link imports: ${error.message}`);
     for (const row of (data ?? []) as { original_image_key: string }[]) found.add(row.original_image_key);
+    // Round 2: a stored outfit preview (shared by the outfits with its look).
+    const previews = await this.admin.from("outfit_previews").select("image_key").in("image_key", list);
+    if (previews.error) throw new Error(`Couldn't check outfit previews: ${previews.error.message}`);
+    for (const row of (previews.data ?? []) as { image_key: string | null }[]) if (row.image_key) found.add(row.image_key);
     return found;
   }
 }
@@ -363,6 +386,13 @@ export class InMemoryItemRepository implements ItemRepository, ImageReferences {
     return row;
   }
 
+  /** Round 2: stored previews by image key, with the user and items each shows (tests set these). */
+  readonly previews = new Map<string, { userId: string; itemIds: string[] }>();
+
+  async previewImageKeysShowing(userId: string, itemId: string): Promise<string[]> {
+    return [...this.previews].filter(([, p]) => p.userId === userId && p.itemIds.includes(itemId)).map(([key]) => key);
+  }
+
   async keysInUse(userId: string, keys: readonly string[]): Promise<Set<string>> {
     const wanted = new Set(keys);
     const inUse = new Set<string>();
@@ -378,7 +408,7 @@ export class InMemoryItemRepository implements ItemRepository, ImageReferences {
   async referenced(keys: readonly string[]): Promise<Set<string>> {
     const found = new Set<string>();
     for (const key of keys) {
-      if (this.openLinkImportKeys.has(key)) found.add(key);
+      if (this.openLinkImportKeys.has(key) || this.previews.has(key)) found.add(key);
     }
     for (const row of this.rows.values()) {
       for (const key of [row.original_image_key, row.cutout_image_key]) {

@@ -4,6 +4,9 @@
  */
 import type {
   FinalPickInput,
+  ImageGenerationCall,
+  ImageGenerationInput,
+  ImageGenerationProvider,
   ModelCall,
   OrderEmailInput,
   OrderEmailProvider,
@@ -87,5 +90,36 @@ export class FakeShopSearchProvider implements ShopSearchProvider {
   async searchGaps(input: ShopSearchInput): Promise<ModelCall> {
     this.calls.push(input);
     return { raw: this.next(), costPence: 0, provider: this.name, model: "fake-shop-search" };
+  }
+}
+
+/**
+ * One recorded reply for FakeImageGenerationProvider: an image (see
+ * src/lib/ai/fixtures/preview-fixtures.ts for recorded ones), a refusal,
+ * no image at all, or "throw" for a provider error.
+ */
+export type FakeImageReply =
+  | { image: { data: Uint8Array; mimeType: string }; costPence?: number }
+  | { blocked: string }
+  | { noImage: true }
+  | "throw";
+
+export class FakeImageGenerationProvider implements ImageGenerationProvider {
+  readonly name = "fake";
+  readonly calls: ImageGenerationInput[] = [];
+  private readonly next: () => unknown;
+
+  constructor(replies: FakeImageReply[]) {
+    this.next = queue(replies);
+  }
+
+  async generatePreview(input: ImageGenerationInput): Promise<ImageGenerationCall> {
+    this.calls.push(input);
+    const reply = this.next() as FakeImageReply;
+    const base = { provider: this.name, model: "fake-image-model" };
+    if (reply === "throw") throw new Error("Fake image model error");
+    if ("blocked" in reply) return { ...base, image: null, blockReason: reply.blocked, costPence: 0 };
+    if ("noImage" in reply) return { ...base, image: null, costPence: 0 };
+    return { ...base, image: reply.image, costPence: reply.costPence ?? 0, usage: { images: 1 } };
   }
 }

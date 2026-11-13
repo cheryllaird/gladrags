@@ -163,3 +163,69 @@ export interface ShopSearchProvider {
   /** Output should validate against ShopSearchModelOutputSchema. */
   searchGaps(input: ShopSearchInput): Promise<ModelCall>;
 }
+
+// ---------------------------------------------------------------------------
+// Outfit previews (round 2)
+// ---------------------------------------------------------------------------
+
+/** An owned piece of the outfit, as the image model sees it. */
+export interface PreviewItemInput {
+  category: Category;
+  /**
+   * The item's cut-out where one exists, otherwise its original. Null for
+   * an item still waiting for a photo: it's described in words only.
+   */
+  image: ImageInput | null;
+  /** A short description, e.g. the item's tag description ("Navy slim-fit chinos"). */
+  description: string;
+}
+
+/**
+ * A gap: the model draws this suggested piece on the figure, so an outfit
+ * with gaps still shows as a complete look. With a picked shop product,
+ * `productImage` is that product's picture (fetched through link-import's
+ * safeFetch with the shop-domain redirect check, then the image checks).
+ * It is model input only: never stored or shown.
+ */
+export interface PreviewGapInput {
+  category: Category;
+  subcategory: string | null;
+  colours: readonly string[];
+  description: string;
+  productImage: ImageInput | null;
+}
+
+export interface ImageGenerationInput {
+  /** The preset figure: its picture and its label ("Women's, average build, medium skin tone"). */
+  preset: { id: string; label: string; image: ImageInput };
+  items: PreviewItemInput[];
+  gaps: PreviewGapInput[];
+  /** PREVIEW_ASPECT_RATIO (2:3). The prompt asks for full length, plain background, no text. */
+  aspectRatio: { width: number; height: number };
+}
+
+/**
+ * One image-model call, unchecked. The caller sniffs the real type from
+ * the bytes, decodes it, runs checkGeneratedPreviewImage, retries once,
+ * then falls back to the collage.
+ */
+export interface ImageGenerationCall {
+  /** The image, or null when the model returned none. */
+  image: { data: Uint8Array; mimeType: string } | null;
+  /** Set when the model refused (a safety block); `image` is then null. */
+  blockReason?: string;
+  /** Cost in pence if known; otherwise the image_generation estimate stands. */
+  costPence?: number;
+  /** Counts as the provider reports them, for logs and for measuring real costs. */
+  usage?: { inputTokens?: number; outputTokens?: number; images?: number };
+  /** For usage_events.provider, e.g. "gemini". */
+  provider: string;
+  /** Model name, for logs. */
+  model: string;
+}
+
+/** Generates "wearing it" previews. Built by outfit-engine (a Gemini image model). */
+export interface ImageGenerationProvider {
+  readonly name: string;
+  generatePreview(input: ImageGenerationInput): Promise<ImageGenerationCall>;
+}

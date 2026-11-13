@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="768" viewBox="0 0 512 768">
+  <!-- Mock-mode outfit preview (2:3). Not a real generated image. -->
+  <rect width="512" height="768" fill="#f4f1ec"/>
+  <circle cx="256" cy="130" r="48" fill="#c79a72"/>
+  <path d="M190 200 L322 200 L340 420 L172 420 Z" fill="#7a9cc6"/>
+  <path d="M176 420 L336 420 L318 700 L268 700 L256 480 L244 700 L194 700 Z" fill="#33475b"/>
+  <rect x="186" y="700" width="62" height="24" rx="8" fill="#ffffff" stroke="#999" stroke-width="2"/>
+  <rect x="264" y="700" width="62" height="24" rx="8" fill="#ffffff" stroke="#999" stroke-width="2"/>
+  <text x="256" y="52" text-anchor="middle" font-family="sans-serif" font-size="30" font-weight="700" fill="#9a958d">MOCK PREVIEW</text>
+</svg>

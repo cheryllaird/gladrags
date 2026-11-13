@@ -200,6 +200,22 @@ describe("get, edit and delete", () => {
     expect(await deps.storage.exists(STORAGE_BUCKETS.cutouts, row.cutout_image_key!)).toBe(false);
   });
 
+  it("round 2: also removes the stored outfit previews that showed the item, and only those", async () => {
+    const deps = makeTestDeps();
+    const item = await saveItem(deps, CHINOS);
+    const other = await saveItem(deps, TRAINERS);
+    const shown = `${TEST_USER}/00000000-0000-4000-8000-0000000000a1.webp`;
+    const kept = `${TEST_USER}/00000000-0000-4000-8000-0000000000a2.webp`;
+    const png = await cutoutPng();
+    await deps.storage.upload(STORAGE_BUCKETS.previews, shown, png);
+    await deps.storage.upload(STORAGE_BUCKETS.previews, kept, png);
+    deps.items.previews.set(shown, { userId: TEST_USER, itemIds: [item.id, other.id] });
+    deps.items.previews.set(kept, { userId: TEST_USER, itemIds: [other.id] });
+    await deleteWardrobeItem(deps, TEST_USER, item.id);
+    expect(await deps.storage.exists(STORAGE_BUCKETS.previews, shown)).toBe(false);
+    expect(await deps.storage.exists(STORAGE_BUCKETS.previews, kept)).toBe(true);
+  });
+
   it("still deletes the item if removing the images fails", async () => {
     const deps = makeTestDeps();
     const item = await saveItem(deps, CHINOS);
