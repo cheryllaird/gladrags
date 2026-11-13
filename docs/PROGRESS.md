@@ -2,7 +2,7 @@
 
 Maintained by the orchestrator (main Claude Code session). Source of truth for scope: `docs/SPEC.md`.
 
-**Current status:** Milestone 5 round 1 done and on a preview (2026-11-04): https://gladrags-git-claude-cheryl-test-fe-1c492c-cheryllairds-projects.vercel.app. Waiting for Cheryl: apply migration 7, then test. Sign-in links now return to the address they were requested from (fixed 2026-11-04); Supabase's Redirect URLs must allow the preview address. Email import needs Postmark; shop search and tagging need the Gemini paid tier. Gemini is still on the free tier.
+**Current status:** Milestone 5 round 2 (generated outfit previews) planned 2026-11-13; round 1 done and on a preview (2026-11-04): https://gladrags-git-claude-cheryl-test-fe-1c492c-cheryllairds-projects.vercel.app. Waiting for Cheryl: apply migration 7, then test. Sign-in links now return to the address they were requested from (fixed 2026-11-04); Supabase's Redirect URLs must allow the preview address. Email import needs Postmark; shop search and tagging need the Gemini paid tier. Gemini is still on the free tier.
 
 Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 
@@ -111,6 +111,23 @@ Decisions made by the orchestrator within Cheryl's choices (tell her at the chec
 - 2026-11-04: sign-in links failed on the new preview ("code challenge does not match previously saved code verifier"): the magic link went to `NEXT_PUBLIC_SITE_URL`, the old branch's preview, but the PKCE verifier cookie lives on the origin that asked. Fix (orchestrator): the link always goes back to the requesting origin; `getSiteUrl` removed. Supabase's Redirect URLs must allow each preview address.
 - 2026-11-03: contract fix (orchestrator): `singleLineText` refuses and `scrapedText` strips C0 control characters and DEL, so a NUL in model or scraped text can't reach Postgres. Found by QA on C3.
 - 2026-10-31: gaps are judged around each outfit's own top, bottom or dress, so tops in a wardrobe with a dress but no bottoms still get outfits (with a bottom gap). Found by the reviewer; contract change applied on the integration branch.
+
+### Round 2: generated outfit previews (Cheryl's notes, 2026-11-13)
+
+Decisions (SPEC.md "Generated outfit preview"): a preview image for every outfit, generated automatically; the user picks a preset model figure in settings; the image replaces the collage (collage = placeholder and fallback); £5 cap kept, with a daily image cap and an image share of about £2 a month. Image generation is refused on the free-tier key (429, no image quota), so live previews need the Gemini paid tier; everything is built and tested against recorded fixtures until then.
+
+| # | Task | Owner | Branch | Status | Depends on |
+| --- | --- | --- | --- | --- | --- |
+| P1 | Contracts + migration 8: model presets list (id, label, gender, build, skin tone, image path), `user_settings.model_preset_id`, outfit preview fields (key, status), preview route contracts, cap kind `outfit_previews_per_day`, cost kind `image_generation`, a per-kind monthly spend share for images, private previews storage, account/outfit deletion of previews; CONTRACTS.md | foundations | `r2/contracts` | ☐ | Spec |
+| P2 | Image generation provider (Gemini image model), prompt from preset + item images + gap descriptions, output checks, retry once, storage, cap and image spend share, preview route | outfit-engine | `r2/previews` | ☐ | P1 |
+| P3 | Preview in results and saved outfits: collage as placeholder, previews generated one after another, fallback to collage, "Pick your model" prompt on first use, save image | outfit-ui | `r2/preview-ui` | ☐ | P1 (mocks) |
+| P4 | Settings: preset model picker grid | wardrobe-ui | `r2/model-picker` | ☐ | P1 (mocks) |
+| P5 | Preset model images: placeholders now; generate the real set once with the paid tier and check them with Cheryl | orchestrator | | ☐ | Gemini paid tier |
+| P6 | Journey tests with previews (mock provider) | qa | `r2/journeys` | ☐ | P2–P4 |
+| P7 | Security and privacy re-check (previews storage, deletion, what Gemini sees, privacy note) | security | | ☐ | P2–P4 |
+| P8 | Preview deploy, checkpoint for Cheryl | orchestrator | | ☐ | P6, P7 |
+
+Budget note for Cheryl: at an estimated 3–4p per image (unverified; Google's price page is blocked here), about £2 a month buys roughly 50–65 previews across all testers, about 13–16 outfit requests' worth. The daily cap starts at 12 previews per user (3 requests). Expect to raise the cap or the budget once real prices are known.
 
 ## Handoff notes for a new session
 
