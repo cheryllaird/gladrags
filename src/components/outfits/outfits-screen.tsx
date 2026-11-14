@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowLeftIcon, BookmarkIcon, Undo2Icon } from "lucide-react";
 import type {
@@ -23,6 +23,7 @@ import { OutfitCard } from "./outfit-card";
 import { EMPTY_DRAFT, draftToRequest, type DraftField, type RequestDraft } from "./request-draft";
 import { RequestForm, type AnchorState } from "./request-form";
 import { ApiErrorNotice, IncompleteWardrobeNotice, MissingCategoriesNotice } from "./result-notices";
+import { usePreviews } from "./use-previews";
 
 /** One set of suggestions. Refining adds a new set; "Back" returns to the one before. */
 interface ResultSet {
@@ -83,6 +84,10 @@ export function OutfitsScreen({ initialAnchorId }: { initialAnchorId: string | n
   const [statusBusy, setStatusBusy] = useState<Record<string, boolean>>({});
   const [statusErrors, setStatusErrors] = useState<Record<string, ApiFailure | null>>({});
   const nextKey = useRef(1);
+  // Pictures of each new outfit, asked for one after another.
+  const previews = usePreviews(
+    useCallback((fresh: Outfit) => setSets((s) => replaceOutfit(s, fresh)), []),
+  );
   const headingRef = useRef<HTMLHeadingElement>(null);
 
   // Load the anchor item when we arrive from "Build an outfit around this".
@@ -153,6 +158,7 @@ export function OutfitsScreen({ initialAnchorId }: { initialAnchorId: string | n
         fetchedAt: timestamp(),
       },
     ]);
+    if (result.data.status === "ok") previews.enqueue(result.data.outfits);
   }
 
   async function runRefine(outfit: Outfit, refine: RefineRequest, label: string) {
@@ -175,6 +181,8 @@ export function OutfitsScreen({ initialAnchorId }: { initialAnchorId: string | n
         fetchedAt: timestamp(),
       },
     ]);
+    // Only the new outfits: the runner skips any it has seen.
+    if (result.data.status === "ok") previews.enqueue(result.data.outfits);
     scrollToTop();
   }
 
@@ -339,6 +347,8 @@ export function OutfitsScreen({ initialAnchorId }: { initialAnchorId: string | n
                     onStatusChange={(update) => void changeStatus(outfit, update)}
                     onReloadPictures={() => reloadPictures(outfit)}
                     onOutfitChange={(fresh) => setSets((s) => replaceOutfit(s, fresh))}
+                    previewActivity={previews.activity(outfit.id)}
+                    onUpdatePreview={() => previews.refresh(outfit.id)}
                     refineBusy={pending !== null}
                     onSwap={(item) =>
                       void runRefine(outfit, { kind: "swap", itemId: item.id }, `Swapped out the ${item.tags.description.toLowerCase()}`)
@@ -351,6 +361,7 @@ export function OutfitsScreen({ initialAnchorId }: { initialAnchorId: string | n
           )}
         </section>
       )}
+      {previews.sheet}
     </main>
   );
 }

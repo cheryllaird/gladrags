@@ -12,6 +12,7 @@ import { PAGE_BOTTOM_PADDING_STYLE } from "./layout";
 import { outfitsForFilter, type SavedFilter as Filter } from "./saved-filter";
 import { OutfitCard } from "./outfit-card";
 import { ApiErrorNotice } from "./result-notices";
+import { usePreviews } from "./use-previews";
 
 const FILTERS: { id: Filter; label: string }[] = [
   { id: "all", label: "All" },
@@ -74,12 +75,14 @@ export function SavedOutfitsScreen() {
     else setErrors((e) => ({ ...e, [outfit.id]: result.error }));
   }
 
-  /** Keep the outfit as the server now has it (after a shop search or pick), with its status as shown. */
-  function replaceOutfit(fresh: Outfit) {
+  /** Keep the outfit as the server now has it (after a shop search, pick or picture), with its status as shown. */
+  const replaceOutfit = useCallback((fresh: Outfit) => {
     setState((s) =>
       s.status === "ready" ? { ...s, outfits: s.outfits.map((o) => (o.id === fresh.id ? { ...fresh, status: o.status } : o)) } : s,
     );
-  }
+  }, []);
+  // Pictures are asked for as each card comes near the screen, one after another.
+  const previews = usePreviews(replaceOutfit);
 
   /** "Reload pictures": fetch one outfit again for fresh image URLs. */
   async function reloadPictures(outfit: Outfit) {
@@ -159,6 +162,9 @@ export function SavedOutfitsScreen() {
                     onStatusChange={(update) => void changeStatus(outfit, update)}
                     onReloadPictures={() => reloadPictures(outfit)}
                     onOutfitChange={replaceOutfit}
+                    previewActivity={previews.activity(outfit.id)}
+                    onUpdatePreview={() => previews.refresh(outfit.id)}
+                    onNearPreview={() => previews.enqueue([outfit])}
                     // A long saved list would otherwise hold a full-size canvas per outfit.
                     lazyCollage
                   />
@@ -168,6 +174,7 @@ export function SavedOutfitsScreen() {
           )}
         </div>
       )}
+      {previews.sheet}
     </main>
   );
 }

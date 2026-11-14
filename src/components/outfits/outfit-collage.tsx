@@ -31,6 +31,8 @@ interface OutfitCollageProps {
    * pictures" when some pictures didn't load (e.g. their signed URLs expired).
    */
   onReloadPictures?: () => Promise<void>;
+  /** Leave out "Save image" (a generated picture is what gets saved instead). */
+  hideSave?: boolean;
 }
 
 /**
@@ -50,7 +52,7 @@ function contentKey(items: readonly CollageItem[]): string {
  * one at a time (collageCutouts), and each cut-out is swapped in as it
  * arrives. The collage never waits for that.
  */
-export function OutfitCollage({ name, items, gaps = [], lazy = false, onReloadPictures }: OutfitCollageProps) {
+export function OutfitCollage({ name, items, gaps = [], lazy = false, onReloadPictures, hideSave = false }: OutfitCollageProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   /** The finished collage as a PNG, made ahead so "Save image" can share straight from the tap. */
   const pngRef = useRef<Blob | null>(null);
@@ -261,6 +263,7 @@ export function OutfitCollage({ name, items, gaps = [], lazy = false, onReloadPi
               Reload pictures
             </Button>
           )}
+          {!hideSave && (
           <Button
             type="button"
             variant="ghost"
@@ -273,6 +276,7 @@ export function OutfitCollage({ name, items, gaps = [], lazy = false, onReloadPi
             <DownloadIcon aria-hidden />
             Save image
           </Button>
+          )}
         </div>
       </div>
     </div>

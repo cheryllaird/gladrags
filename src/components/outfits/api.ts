@@ -19,7 +19,10 @@ import {
   OutfitListResponseSchema,
   OutfitRequestSchema,
   OutfitResponseSchema,
+  PreviewResponseSchema,
   RefineRequestSchema,
+  UpdateSettingsRequestSchema,
+  UserSettingsSchema,
   UpdateOutfitStatusRequestSchema,
   type ApiError,
   type OutfitGenerationResponse,
@@ -31,6 +34,8 @@ import {
   type ItemResponse,
   type OutfitListResponse,
   type Category,
+  type ModelPresetId,
+  type UserSettings,
 } from "@/contracts";
 
 export type ApiFailure = ApiError["error"];
@@ -153,6 +158,29 @@ export function createOutfitsApi(fetchImpl: FetchLike = (input, init) => fetch(i
         method: "PUT",
         body: checked.data,
       });
+    },
+
+    /**
+     * POST /api/outfits/:id/preview: make (or reuse) the outfit's "wearing it"
+     * picture, or ask how it's going while it's pending. `refresh` is
+     * "Update preview" on an outdated one (`?refresh=true`), and is also sent
+     * while that refresh is still being made.
+     */
+    requestPreview(outfitId: string, options: { refresh?: boolean } = {}): Promise<ApiResult<OutfitResponse>> {
+      const qs = options.refresh ? "?refresh=true" : "";
+      return call(PreviewResponseSchema, `/api/outfits/${encodeURIComponent(outfitId)}/preview${qs}`, { method: "POST" });
+    },
+
+    /** GET /api/settings, to see whether a model preset has been picked yet. */
+    getSettings(): Promise<ApiResult<UserSettings>> {
+      return call(UserSettingsSchema, "/api/settings");
+    },
+
+    /** PUT /api/settings { modelPresetId }: the model figure outfit pictures are made on. */
+    saveModelPreset(modelPresetId: ModelPresetId): Promise<ApiResult<UserSettings>> {
+      const checked = UpdateSettingsRequestSchema.safeParse({ modelPresetId });
+      if (!checked.success) return Promise.resolve(badRequest(checked.error));
+      return call(UserSettingsSchema, "/api/settings", { method: "PUT", body: checked.data });
     },
 
     /** PUT /api/items/:id/cutout: store the cut-out a collage just made (PNG). */
