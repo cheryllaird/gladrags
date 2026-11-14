@@ -7,6 +7,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   DEFAULT_FAVOURITE_SHOP_IDS,
   ItemRowSchema,
+  OutfitPreviewRowSchema,
   OutfitRowSchema,
   STORAGE_BUCKETS,
   UserSettingsRowSchema,
@@ -14,12 +15,14 @@ import {
   type ItemRow,
   type Outfit,
   type OutfitGap,
+  type OutfitPreview,
+  type OutfitPreviewRow,
   type OutfitRow,
   type OutfitStatus,
   type ShopId,
   type WardrobeItem,
 } from "@/contracts";
-import { itemRowToWardrobeItem, outfitRowToOutfit } from "@/lib/db/mappers";
+import { itemRowToWardrobeItem, outfitRowToOutfit, previewRowToOutfitPreview } from "@/lib/db/mappers";
 import { SIGNED_URL_TTL_SECONDS } from "@/lib/images/server";
 import { shapeKey } from "./candidates";
 import { OUTFIT_LIST_LIMIT, newGap, type NewOutfit, type OutfitRepository, type RejectedOutfit } from "./repository";
@@ -27,7 +30,10 @@ import type { WardrobeEntry } from "./types";
 
 const ITEM_COLUMNS =
   "id, user_id, source, source_url, original_image_key, cutout_image_key, category, subcategory, colours, pattern, formality, seasons, warmth, occasions, fabric, description, tags_edited, needs_review, needs_photo, created_at";
-const OUTFIT_COLUMNS = "id, user_id, request, name, reason, item_ids, gaps, status, parent_outfit_id, created_at";
+const OUTFIT_COLUMNS =
+  "id, user_id, request, name, reason, item_ids, gaps, status, parent_outfit_id, created_at, preview_id, pending_preview_id, preview_outdated";
+const PREVIEW_COLUMNS =
+  "id, user_id, cache_key, preset_id, item_ids, suggested_slots, status, image_key, failure_reason, attempted_at, created_at, updated_at";
 
 function fail(what: string, error: { message: string }): never {
   throw new Error(`Couldn't ${what}: ${error.message}`);
@@ -169,17 +175,65 @@ export class SupabaseOutfitRepository implements OutfitRepository {
     }));
   }
 
-  /** Attach each outfit's items, with signed image URLs. */
+  /** Attach each outfit's items, with signed image URLs, and its preview (round 2). */
   private async withItems(userId: string, rows: OutfitRow[]): Promise<Outfit[]> {
     const ids = [...new Set(rows.flatMap((r) => r.item_ids))];
     if (ids.length === 0) return [];
-    const { data, error } = await this.client.from("items").select(ITEM_COLUMNS).eq("user_id", userId).in("id", ids);
-    if (error) fail("load outfit items", error);
-    const items = await this.signItems(parseRows(ItemRowSchema, data));
+    const [itemsResult, previews] = await Promise.all([
+      this.client.from("items").select(ITEM_COLUMNS).eq("user_id", userId).in("id", ids),
+      this.previewsFor(userId, rows),
+    ]);
+    if (itemsResult.error) fail("load outfit items", itemsResult.error);
+    const items = await this.signItems(parseRows(ItemRowSchema, itemsResult.data));
     const byId = new Map(items.map((i) => [i.id, i]));
     // An item deleted mid-request takes its outfits with it (database
     // trigger); skip any outfit that lost an item rather than failing.
-    return rows.filter((r) => r.item_ids.every((id) => byId.has(id))).map((r) => outfitRowToOutfit(r, byId));
+    return rows
+      .filter((r) => r.item_ids.every((id) => byId.has(id)))
+      .map((r) => outfitRowToOutfit(r, byId, previews.get(r.id)));
+  }
+
+  /**
+   * Each outfit's preview: the outfit_previews row it shows (preview_id),
+   * with a fresh signed URL for a ready image. `refreshing` comes from
+   * pending_preview_id: the old picture keeps showing until the new one
+   * is ready. Outfits without a preview read as none.
+   */
+  private async previewsFor(userId: string, rows: readonly OutfitRow[]): Promise<Map<string, OutfitPreview>> {
+    const previewIds = [...new Set(rows.flatMap((r) => (r.preview_id ? [r.preview_id] : [])))];
+    if (previewIds.length === 0) return new Map();
+    const { data, error } = await this.client
+      .from("outfit_previews")
+      .select(PREVIEW_COLUMNS)
+      .eq("user_id", userId)
+      .in("id", previewIds);
+    if (error) fail("load outfit previews", error);
+    const previewRows = parseRows(OutfitPreviewRowSchema, data);
+    const urls = await this.signPreviews(previewRows);
+    const byId = new Map(previewRows.map((p) => [p.id, p]));
+    const result = new Map<string, OutfitPreview>();
+    for (const row of rows) {
+      const preview = row.preview_id ? (byId.get(row.preview_id) ?? null) : null;
+      const url = preview?.image_key ? (urls.get(preview.image_key) ?? null) : null;
+      result.set(row.id, previewRowToOutfitPreview(row, preview, url));
+    }
+    return result;
+  }
+
+  /**
+   * Signed URLs (an hour, like item images) for ready previews. A key that
+   * can't be signed is left out, and the mapper reads its preview as
+   * failed (internal), so the outfit still loads with its collage.
+   */
+  private async signPreviews(rows: readonly OutfitPreviewRow[]): Promise<Map<string, string>> {
+    const keys = rows.flatMap((r) => (r.status === "ready" && r.image_key ? [r.image_key] : []));
+    if (keys.length === 0) return new Map();
+    const { data, error } = await this.client.storage.from(STORAGE_BUCKETS.previews).createSignedUrls(keys, SIGNED_URL_TTL_SECONDS);
+    if (error) {
+      console.error("Couldn't sign preview URLs", { message: error.message });
+      return new Map();
+    }
+    return new Map((data ?? []).flatMap((d) => (d.path && d.signedUrl && !d.error ? [[d.path, d.signedUrl] as const] : [])));
   }
 
   private async signItems(rows: ItemRow[]): Promise<WardrobeItem[]> {
