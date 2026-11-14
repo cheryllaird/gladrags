@@ -11,6 +11,7 @@ vi.mock("@/lib/client/api", async (original) => {
     ...actual,
     getSettings: vi.fn(),
     updateFavouriteShops: vi.fn(),
+    updateModelPreset: vi.fn(),
     resetForwardingAddress: vi.fn(),
     listEmailImports: vi.fn(),
   };
@@ -105,6 +106,32 @@ describe("SettingsScreen", () => {
     for (const name of ["Next", "M&S", "New Look", "Zara"]) await user.click(screen.getByRole("checkbox", { name }));
     expect(screen.getByText("Pick at least one shop.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save shops" })).toBeDisabled();
+  });
+});
+
+describe("SettingsScreen: your model (round 2)", () => {
+  it("shows the saved model first, and saves a new one into the screen's settings", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.updateModelPreset).mockImplementation(async (id) => ({ ...SETTINGS, modelPresetId: id }));
+    render(<SettingsScreen email={null} />);
+    const headings = await screen.findAllByRole("heading", { level: 2 });
+    expect(headings[0]).toHaveTextContent("Your model");
+    expect(screen.getByTestId("current-model")).toHaveTextContent("Women's, average build, medium skin tone");
+
+    await user.click(screen.getByRole("button", { name: "Change model" }));
+    await user.click(screen.getByRole("radio", { name: "Women's, curvy build, light skin tone" }));
+    await user.click(screen.getByRole("button", { name: "Save model" }));
+    expect(api.updateModelPreset).toHaveBeenCalledWith("women_curvy_light");
+    expect(await screen.findByText("Model saved.")).toBeInTheDocument();
+    expect(screen.getByTestId("current-model")).toHaveTextContent("Women's, curvy build, light skin tone");
+    // The other sections are untouched.
+    expect(screen.getByRole("checkbox", { name: "Next" })).toBeChecked();
+  });
+
+  it("says Not picked yet when the user has no model", async () => {
+    vi.mocked(api.getSettings).mockResolvedValue({ ...SETTINGS, modelPresetId: null });
+    render(<SettingsScreen email={null} />);
+    expect(await screen.findByTestId("current-model")).toHaveTextContent("Not picked yet");
   });
 });
 
