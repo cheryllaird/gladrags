@@ -38,6 +38,7 @@ import {
   type ItemListQuery,
   type ItemTags,
   type LinkImportResponse,
+  type ModelPresetId,
   type Outfit,
   type ShopId,
   type UsageSummary,
@@ -318,6 +319,16 @@ export async function getSettings(): Promise<UserSettings> {
 
 export async function updateFavouriteShops(favouriteShopIds: readonly ShopId[]): Promise<UserSettings> {
   const body = UpdateSettingsRequestSchema.parse({ favouriteShopIds });
+  return apiRequest(UserSettingsSchema, "/api/settings", jsonInit("PUT", body));
+}
+
+/**
+ * Round 2: the model figure new outfit previews are made on. A preset can
+ * be changed but not cleared; existing previews keep the figure they were
+ * made on.
+ */
+export async function updateModelPreset(modelPresetId: ModelPresetId): Promise<UserSettings> {
+  const body = UpdateSettingsRequestSchema.parse({ modelPresetId });
   return apiRequest(UserSettingsSchema, "/api/settings", jsonInit("PUT", body));
 }
 

@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EmailImports } from "@/components/settings/email-imports";
 import { FavouriteShops } from "@/components/settings/favourite-shops";
 import { ForwardingAddress } from "@/components/settings/forwarding-address";
+import { ModelPresetSetting } from "@/components/settings/model-preset-setting";
 import { ApiErrorNotice } from "@/components/wardrobe/api-error-notice";
 import { getSettings } from "@/lib/client/api";
 
@@ -68,6 +69,7 @@ export function SettingsScreen({ email }: { email: string | null }) {
         )}
         {state.kind === "ready" && (
           <>
+            <ModelPresetSetting saved={state.settings.modelPresetId} onSaved={update} />
             <ForwardingAddress address={state.settings.forwardingAddress} email={email} onReset={update} />
             {/* No address, no emails: the history only makes sense once forwarding is set up. */}
             {state.settings.forwardingAddress !== null && <EmailImports />}
