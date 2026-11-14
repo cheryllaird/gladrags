@@ -9,8 +9,11 @@ export type { CapKind };
  * user got nothing for it).
  */
 export function isAiPausedError(error: unknown): error is CapReachedError {
-  return error instanceof CapReachedError && error.cap === "monthly_ai_spend";
+  return error instanceof CapReachedError && MONTHLY_CAP_KINDS.has(error.cap);
 }
+
+/** The overall monthly cap and the per-feature shares (round 2): all answer ai_paused. */
+const MONTHLY_CAP_KINDS: ReadonlySet<CapKind> = new Set(["monthly_ai_spend", "monthly_image_spend", "monthly_shop_search_spend"]);
 
 /** Thrown by UsageGuard when a daily cap or the monthly spend cap is reached. */
 export class CapReachedError extends Error {
@@ -54,6 +57,24 @@ export class CapReachedError extends Error {
         return new ApiException(
           "daily_cap_reached",
           `You've searched your shops ${this.limit} times today, the daily limit while we're testing. Try again tomorrow.`,
+          { cap },
+        );
+      case "outfit_previews_per_day":
+        return new ApiException(
+          "daily_cap_reached",
+          `You've had ${this.limit} outfit pictures today, the daily limit while we're testing. Your outfits still show as collages; pictures carry on tomorrow.`,
+          { cap },
+        );
+      case "monthly_image_spend":
+        return new ApiException(
+          "ai_paused",
+          "Outfit pictures are paused until next month. Your outfits still show as collages, and everything else works.",
+          { cap },
+        );
+      case "monthly_shop_search_spend":
+        return new ApiException(
+          "ai_paused",
+          "Searching your shops is paused until next month. Everything else still works.",
           { cap },
         );
       case "monthly_ai_spend":

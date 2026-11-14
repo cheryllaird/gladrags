@@ -8,13 +8,15 @@
  *   link import uses (unsaved drafts, abandoned imports, failed deletes);
  * - cleanUpOldLinkImports: link_imports rows over 7 days old;
  * - sign_in_attempts rows over a day old (the rate-limit window is 15
- *   minutes).
+ *   minutes);
+ * - (round 2) outfit_previews rows no outfit shows or waits for, unchanged
+ *   for an hour, and their images.
  *
  * It returns and logs counts only, never keys, emails or other user data.
  */
 import "server-only";
 import { createHash, timingSafeEqual } from "node:crypto";
-import type { CronCleanupResponse } from "@/contracts";
+import { PREVIEW_UNUSED_SWEEP_SECONDS, STORAGE_BUCKETS, type CronCleanupResponse } from "@/contracts";
 import { ApiException } from "@/lib/api/errors";
 import { SIGN_IN_ATTEMPT_MAX_AGE_MS, type SignInAttemptStore } from "@/lib/auth/rate-limit";
 import { cleanUpOrphanedImages } from "@/lib/ingestion/cleanup";
@@ -22,12 +24,15 @@ import type { ImageReferences } from "@/lib/ingestion/items-repository";
 import type { ImageStorage } from "@/lib/ingestion/storage";
 import { cleanUpOldLinkImports } from "@/lib/link-import/cleanup";
 import type { LinkImportRepository } from "@/lib/link-import/repository";
+import type { UnusedPreviewSweeper } from "./previews";
 
 export interface CleanupJobDeps {
   storage: ImageStorage;
   references: ImageReferences;
   linkImports: LinkImportRepository;
   signInAttempts: SignInAttemptStore;
+  /** Round 2. Optional so older test setups still run; the real job always has it. */
+  previews?: UnusedPreviewSweeper;
   now?: () => Date;
 }
 
@@ -56,6 +61,13 @@ export function assertCronAuthorized(request: Request, secret: string | undefine
 
 export async function runDailyCleanup(deps: CleanupJobDeps): Promise<CronCleanupResponse> {
   const now = deps.now ?? (() => new Date());
+  // Unused previews first, so their images go now rather than as orphans tomorrow.
+  let unusedPreviewsDeleted = 0;
+  if (deps.previews) {
+    const swept = await deps.previews.sweep(PREVIEW_UNUSED_SWEEP_SECONDS);
+    unusedPreviewsDeleted = swept.deleted;
+    if (swept.imageKeys.length > 0) await deps.storage.remove(STORAGE_BUCKETS.previews, swept.imageKeys);
+  }
   const images = await cleanUpOrphanedImages({ storage: deps.storage, references: deps.references, now });
   const linkImports = await cleanUpOldLinkImports(deps.linkImports, now);
   const signInAttemptsDeleted = await deps.signInAttempts.deleteCreatedBefore(new Date(now().getTime() - SIGN_IN_ATTEMPT_MAX_AGE_MS));
@@ -64,6 +76,7 @@ export async function runDailyCleanup(deps: CleanupJobDeps): Promise<CronCleanup
     orphanedImagesDeleted: images.deleted.length,
     linkImportsDeleted: linkImports.deleted,
     signInAttemptsDeleted,
+    unusedPreviewsDeleted,
   };
   console.info("Daily cleanup done", result);
   return result;

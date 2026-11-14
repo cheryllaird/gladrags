@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Outfit } from "@/contracts";
+import { NO_PREVIEW, type Outfit } from "@/contracts";
 import { MOCK_ITEMS } from "@/lib/mocks/fixtures";
 import { createOutfitsApi } from "./api";
 
@@ -17,6 +17,7 @@ const OUTFIT: Outfit = {
   status: "suggested",
   parentOutfitId: null,
   createdAt: "2026-10-25T10:00:00.000Z",
+  preview: { ...NO_PREVIEW },
 };
 
 function jsonResponse(status: number, body: unknown) {

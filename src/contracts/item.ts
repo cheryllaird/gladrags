@@ -153,8 +153,12 @@ export type ItemTags = z.infer<typeof ItemTagsSchema>;
 // Images
 // ---------------------------------------------------------------------------
 
-/** Buckets in Supabase Storage. Both private; served through signed URLs. */
-export const STORAGE_BUCKETS = { originals: "originals", cutouts: "cutouts" } as const;
+/**
+ * Buckets in Supabase Storage. All private; served through signed URLs.
+ * `previews` (round 2) holds generated outfit previews, `<user id>/<uuid>.webp`.
+ * Account deletion and the orphaned-image cleanup go through every bucket here.
+ */
+export const STORAGE_BUCKETS = { originals: "originals", cutouts: "cutouts", previews: "previews" } as const;
 
 /**
  * Object key inside a bucket: `<user id>/<uuid>.<ext>`. The first folder must

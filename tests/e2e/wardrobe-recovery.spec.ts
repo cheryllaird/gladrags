@@ -400,8 +400,11 @@ test.describe("link flow retries", () => {
           outfitRequestsToday: { used: 0, limit: 25 },
           emailsToday: { used: 0, limit: 10 },
           shopSearchesToday: { used: 0, limit: 10 },
+          outfitPreviewsToday: { used: 0, limit: 12 },
           dailyResetAt: "2030-01-01T00:00:00.000Z",
           aiPaused: linkSent,
+          previewsPaused: linkSent,
+          shopSearchPaused: linkSent,
         },
       });
     });

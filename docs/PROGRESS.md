@@ -89,7 +89,7 @@ Integration branch for this round: `claude/cheryl-test-feedback-5xw3vb` (started
 
 | # | Item | Owner | Status |
 | --- | --- | --- | --- |
-| S1 | Shop search spend: book real cost from grounding query count + tokens; own clamp or ~10p estimate; at most 3 shops per search; cap 3–5 searches a day; pause shop search alone at ~£2/month | outfit-engine | ☐ |
+| S1 | Shop search spend: book real cost from grounding query count + tokens; own clamp or ~10p estimate; at most 3 shops per search; cap 3–5 searches a day; pause shop search alone at ~£2/month | outfit-engine | ◐ The £2 shop search share is done (foundations, `r2/contracts`: `MONTHLY_SPEND_SHARES.shop_search`, enforced in `reserve_usage`). Real cost booking, shops per search and the cap value remain. |
 | S2 | Privacy note: Postmark (US, retention), what Gemini sees for emails and shop search, server visits to email links and shop pages, card pictures load from shops, settings and email records deleted with the account | orchestrator (Cheryl approves) | ☐ |
 | S3 | Record two real Postmark payloads (a real forwarded order; a forged one) as fixtures and confirm the "above the second Received" trust rule, or anchor on a Postmark-only header | link-import + Cheryl | ☐ needs Postmark |
 | S4 | Live two-user RLS check on the real project, now incl. `user_settings`, `email_imports`; buckets private | orchestrator + Cheryl | ☐ (from milestone 4) |
@@ -118,10 +118,10 @@ Decisions (SPEC.md "Generated outfit preview"): a preview image for every outfit
 
 | # | Task | Owner | Branch | Status | Depends on |
 | --- | --- | --- | --- | --- | --- |
-| P1 | Contracts + migration 8: model presets list (id, label, gender, build, skin tone, image path), `user_settings.model_preset_id`, outfit preview fields (key, status), preview route contracts, cap kind `outfit_previews_per_day`, cost kind `image_generation`, a per-kind monthly spend share for images, private previews storage, account/outfit deletion of previews; CONTRACTS.md | foundations | `r2/contracts` | ◐ built (af72826); in review and QA. Orchestrator: retry `ai_failed` previews after ~1 h; refresh keeps the old image until the new one is ready | Spec |
-| P2 | Image generation provider (Gemini image model), prompt from preset + item images + gap descriptions, output checks, retry once, storage, cap and image spend share, preview route | outfit-engine | `r2/previews` | ☐ | P1 |
-| P3 | Preview in results and saved outfits: collage as placeholder, previews generated one after another, fallback to collage, "Pick your model" prompt on first use, save image | outfit-ui | `r2/preview-ui` | ☐ | P1 (mocks) |
-| P4 | Settings: preset model picker grid | wardrobe-ui | `r2/model-picker` | ☐ | P1 (mocks) |
+| P1 | Contracts + migration 8: model presets list (id, label, gender, build, skin tone, image path), `user_settings.model_preset_id`, outfit preview fields (key, status), preview route contracts, cap kind `outfit_previews_per_day`, cost kind `image_generation`, a per-kind monthly spend share for images, private previews storage, account/outfit deletion of previews; CONTRACTS.md | foundations | `r2/contracts` | ☑ merged. Review: changes needed (stuck outdated) + 6 minor → fixed, approved at 6c975bd. QA: ~180 tests, 1 medium race + 3 low, fixed. Hardening follow-ups (lock order on photo change, sweep DB test, cleanup try/catch, `attempted_at` alter, `preview_stands` grants) in `r2/contracts-hardening`. | Spec |
+| P2 | Image generation provider (Gemini image model), prompt from preset + item images + gap descriptions, output checks, retry once, storage, cap and image spend share, preview route | outfit-engine | `r2/previews` | ◐ building | P1 |
+| P3 | Preview in results and saved outfits: collage as placeholder, previews generated one after another, fallback to collage, "Pick your model" prompt on first use, save image | outfit-ui | `r2/preview-ui` | ◐ building | P1 (mocks) |
+| P4 | Settings: preset model picker grid | wardrobe-ui | `r2/model-picker` | ◐ building | P1 (mocks) |
 | P5 | Preset model images: placeholders now; generate the real set once with the paid tier and check them with Cheryl | orchestrator | | ☐ | Gemini paid tier |
 | P6 | Journey tests with previews (mock provider) | qa | `r2/journeys` | ☐ | P2–P4 |
 | P7 | Security and privacy re-check (previews storage, deletion, what Gemini sees, privacy note) | security | | ☐ | P2–P4 |

@@ -7,7 +7,14 @@ import type { OrderEmailProvider, RankingProvider, ShopSearchProvider, TaggingPr
 export * from "./types";
 export { canTagFromText } from "./tagging-input";
 export { callWithValidation, type ValidatedCallResult, type CallWithValidationOptions } from "./validate";
-export { FakeOrderEmailProvider, FakeRankingProvider, FakeShopSearchProvider, FakeTaggingProvider } from "./fakes";
+export {
+  FakeImageGenerationProvider,
+  FakeOrderEmailProvider,
+  FakeRankingProvider,
+  FakeShopSearchProvider,
+  FakeTaggingProvider,
+  type FakeImageReply,
+} from "./fakes";
 
 /** Gemini tagging. Throws ConfigError if GEMINI_API_KEY isn't set. */
 export function getTaggingProvider(): TaggingProvider {

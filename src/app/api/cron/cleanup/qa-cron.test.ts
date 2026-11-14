@@ -197,7 +197,7 @@ describe("what the job keeps", () => {
     const res = await call({ authorization: `Bearer ${SECRET}` });
     expect(res.status).toBe(200);
     const body = CronCleanupResponseSchema.strict().parse(await res.json());
-    expect(body).toEqual({ imagesChecked: 5, orphanedImagesDeleted: 2, linkImportsDeleted: 1, signInAttemptsDeleted: 1 });
+    expect(body).toEqual({ imagesChecked: 5, orphanedImagesDeleted: 2, linkImportsDeleted: 1, signInAttemptsDeleted: 1, unusedPreviewsDeleted: 0 });
 
     const exists = (bucket: "originals" | "cutouts", key: string) => state.deps.storage.exists(STORAGE_BUCKETS[bucket], key);
     expect(await exists("originals", keys.usedOriginal)).toBe(true);

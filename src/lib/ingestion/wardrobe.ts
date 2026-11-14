@@ -142,6 +142,7 @@ export async function markWardrobeItemsReviewed(deps: Pick<WardrobeDeps, "items"
  * the orphaned-image cleanup removes them later.
  */
 export async function deleteWardrobeItem(deps: WardrobeDeps, userId: string, id: string): Promise<void> {
+  const previews = await previewKeysShowing(deps, userId, id);
   const row = await deps.items.delete(userId, id);
   if (!row) throw notFound("That item");
   try {
@@ -149,5 +150,31 @@ export async function deleteWardrobeItem(deps: WardrobeDeps, userId: string, id:
     if (row.cutout_image_key) await deps.storage.remove(STORAGE_BUCKETS.cutouts, [row.cutout_image_key]);
   } catch (error) {
     console.error("Item deleted but its images weren't", { itemId: id, error: error instanceof Error ? error.message : "unknown" });
+  }
+  await removePreviewImages(deps, previews, id);
+}
+
+/**
+ * Round 2: the stored outfit previews showing this item, read before the
+ * item is deleted or its photo replaced (the database then deletes their
+ * rows). Never fails the request: the daily cleanup is the backstop.
+ */
+export async function previewKeysShowing(deps: WardrobeDeps, userId: string, itemId: string): Promise<string[]> {
+  if (!deps.items.previewImageKeysShowing) return [];
+  try {
+    return await deps.items.previewImageKeysShowing(userId, itemId);
+  } catch (error) {
+    console.error("Couldn't look up the item's outfit previews", { itemId, error: error instanceof Error ? error.message : "unknown" });
+    return [];
+  }
+}
+
+/** Remove preview images whose rows the database has deleted. Never fails the request. */
+export async function removePreviewImages(deps: WardrobeDeps, keys: readonly string[], itemId: string): Promise<void> {
+  if (keys.length === 0) return;
+  try {
+    await deps.storage.remove(STORAGE_BUCKETS.previews, keys);
+  } catch (error) {
+    console.error("Outfit previews deleted but their images weren't", { itemId, error: error instanceof Error ? error.message : "unknown" });
   }
 }

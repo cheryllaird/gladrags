@@ -11,6 +11,7 @@ import {
   uniqueArray,
   type Category,
 } from "./item";
+import { NO_PREVIEW, OutfitPreviewSchema } from "./previews";
 import { ShopProductSchema, SHOP_PRODUCTS_PER_GAP } from "./shops";
 import { StyleChoiceSchema } from "./styles";
 
@@ -174,6 +175,11 @@ export const OutfitSchema = z
     /** Set when this outfit came from refining another one. */
     parentOutfitId: IdSchema.nullable(),
     createdAt: TimestampSchema,
+    /**
+     * Round 2: the generated "wearing it" image (previews.ts). Missing reads
+     * as no preview yet, so outfits built before round 2 still parse.
+     */
+    preview: OutfitPreviewSchema.default(() => ({ ...NO_PREVIEW, suggestedSlots: [] })),
   })
   .refine(
     (o) => {

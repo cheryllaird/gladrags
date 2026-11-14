@@ -6,6 +6,7 @@ export * from "./common";
 export * from "./styles";
 export * from "./item";
 export * from "./shops";
+export * from "./previews";
 export * from "./outfit";
 export * from "./feedback";
 export * from "./model-output";

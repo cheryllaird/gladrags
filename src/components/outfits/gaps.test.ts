@@ -4,7 +4,7 @@
  * calls and error copy, and the "Include items from my shops" flag.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { checkComposition, type Category, type Outfit, type OutfitGap, type ShopProduct } from "@/contracts";
+import { NO_PREVIEW, checkComposition, type Category, type Outfit, type OutfitGap, type ShopProduct } from "@/contracts";
 import { MOCK_ITEMS } from "@/lib/mocks/fixtures";
 import { createOutfitsApi } from "./api";
 import { drawCollage, fitGapText } from "./collage-draw";
@@ -499,6 +499,7 @@ const GAP_OUTFIT: Outfit = {
   status: "suggested",
   parentOutfitId: null,
   createdAt: "2026-10-31T10:00:00.000Z",
+  preview: { ...NO_PREVIEW },
 };
 
 function json(status: number, body: unknown) {

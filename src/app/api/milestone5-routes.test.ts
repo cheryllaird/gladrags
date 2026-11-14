@@ -260,6 +260,7 @@ describe("settings", () => {
   it("shows the default shops and the forwarding address, and changes the shops", async () => {
     const before = UserSettingsSchema.parse(await (await settings.GET(get("/api/settings"))).json());
     expect(before).toEqual({
+      modelPresetId: "women_average_medium",
       favouriteShopIds: ["next", "marks_and_spencer", "new_look"],
       forwardingAddress: `${MOCK_FORWARDING_TOKEN}@inbound.gladrags.test`,
     });

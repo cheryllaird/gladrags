@@ -1026,8 +1026,11 @@ describe("usage summary", () => {
       outfitRequestsToday: { used: 0, limit: 25 },
       emailsToday: { used: 0, limit: 10 },
       shopSearchesToday: { used: 0, limit: 10 },
+      outfitPreviewsToday: { used: 0, limit: 12 },
       dailyResetAt: NOW,
       aiPaused: false,
+      previewsPaused: false,
+      shopSearchPaused: false,
     };
     expect(UsageSummarySchema.safeParse(summary).success).toBe(true);
     const { emailsToday: _e, ...noEmails } = summary;

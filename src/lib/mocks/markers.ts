@@ -21,6 +21,12 @@ export const MOCK_MARKERS = {
   dailyCap: "mock-daily-cap",
   /** Outfits: canned outfits with a shoes gap (as does includeShopItems: true). */
   gaps: "mock-gaps",
+  /** Round 2, previews of these outfits: generation fails twice (502 ai_failed; the preview reads failed). */
+  previewFails: "mock-preview-fails",
+  /** Round 2, previews: 429 daily_cap_reached (outfit_previews_per_day; the preview reads skipped). */
+  previewCap: "mock-preview-cap",
+  /** Round 2, previews: 503 ai_paused, the images share spent (monthly_image_spend; the preview reads skipped). */
+  previewPaused: "mock-preview-paused",
 } as const;
 
 const CAP_KIND_FOR_ACTION: Record<CappedAction, CapKind> = {
@@ -29,6 +35,7 @@ const CAP_KIND_FOR_ACTION: Record<CappedAction, CapKind> = {
   link_fetch: "link_fetches_per_day",
   email_import: "emails_per_day",
   shop_search: "shop_searches_per_day",
+  outfit_preview: "outfit_previews_per_day",
 };
 
 export function hasMarker(texts: readonly (string | null | undefined)[], marker: string): boolean {

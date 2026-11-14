@@ -120,7 +120,7 @@ describe("the cleanup", () => {
     const response = await call({ authorization: `Bearer ${SECRET}` });
     expect(response.status).toBe(200);
     const body = CronCleanupResponseSchema.strict().parse(await response.json());
-    expect(body).toEqual({ imagesChecked: 2, orphanedImagesDeleted: 1, linkImportsDeleted: 1, signInAttemptsDeleted: 1 });
+    expect(body).toEqual({ imagesChecked: 2, orphanedImagesDeleted: 1, linkImportsDeleted: 1, signInAttemptsDeleted: 1, unusedPreviewsDeleted: 0 });
 
     expect(await state.deps.storage.exists(STORAGE_BUCKETS.originals, orphan)).toBe(false);
     expect(await state.deps.storage.exists(STORAGE_BUCKETS.originals, used)).toBe(true);
@@ -135,6 +135,6 @@ describe("the cleanup", () => {
 
   it("an empty run reports zeros", async () => {
     const response = await call({ authorization: `Bearer ${SECRET}` });
-    expect(await response.json()).toEqual({ imagesChecked: 0, orphanedImagesDeleted: 0, linkImportsDeleted: 0, signInAttemptsDeleted: 0 });
+    expect(await response.json()).toEqual({ imagesChecked: 0, orphanedImagesDeleted: 0, linkImportsDeleted: 0, signInAttemptsDeleted: 0, unusedPreviewsDeleted: 0 });
   });
 });

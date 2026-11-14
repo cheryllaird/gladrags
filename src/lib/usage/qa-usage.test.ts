@@ -34,7 +34,7 @@ async function capOf(promise: Promise<unknown>): Promise<CapReachedError | null>
 
 describe("configured caps match CONTRACTS.md section 7", () => {
   it("is 40 items, 25 outfit requests, 80 link fetches, 10 emails, 10 shop searches, £5 a month, UK time", () => {
-    expect(DAILY_CAPS).toEqual({ item_ingest: 40, outfit_request: 25, link_fetch: 80, email_import: 10, shop_search: 10 });
+    expect(DAILY_CAPS).toEqual({ item_ingest: 40, outfit_request: 25, link_fetch: 80, email_import: 10, shop_search: 10, outfit_preview: 12 });
     expect(MONTHLY_AI_SPEND_CAP_PENCE).toBe(500);
     expect(USAGE_TIME_ZONE).toBe(UK);
     expect(ESTIMATED_COST_PENCE).toEqual({
@@ -43,6 +43,7 @@ describe("configured caps match CONTRACTS.md section 7", () => {
       ranking_final: 0.5,
       email_extraction: 0.5,
       shop_grounding: 3,
+      image_generation: 4,
     });
   });
 });
@@ -341,8 +342,11 @@ describe("summary", () => {
       outfitRequestsToday: { used: 0, limit: 25 },
       emailsToday: { used: 0, limit: 10 },
       shopSearchesToday: { used: 0, limit: 10 },
+      outfitPreviewsToday: { used: 0, limit: 12 },
       dailyResetAt: "2026-10-21T23:00:00.000Z",
       aiPaused: true,
+      previewsPaused: true,
+      shopSearchPaused: true,
     });
   });
 });
