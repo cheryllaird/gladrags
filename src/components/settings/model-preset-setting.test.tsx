@@ -3,7 +3,7 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { UserSettings } from "@/contracts";
+import type { ModelPresetId, UserSettings } from "@/contracts";
 import { ApiClientError } from "@/lib/client/api";
 import { ModelPresetSetting } from "./model-preset-setting";
 
@@ -21,8 +21,8 @@ afterEach(() => {
 });
 
 /** The section as the settings screen uses it: what's saved comes back through onSaved. */
-function Harness({ initial }: { initial: string | null }) {
-  const [saved, setSaved] = useState<string | null>(initial);
+function Harness({ initial }: { initial: ModelPresetId | null }) {
+  const [saved, setSaved] = useState<ModelPresetId | null>(initial);
   return <ModelPresetSetting saved={saved} onSaved={(s) => setSaved(s.modelPresetId)} />;
 }
 
@@ -47,6 +47,34 @@ describe("ModelPresetSetting", () => {
     expect(screen.getByRole("radio", { name: "Women's, average build, medium skin tone" })).toBeChecked();
     // Nothing saved yet, so the default can be saved as it is.
     expect(screen.getByRole("button", { name: "Save model" })).toBeEnabled();
+  });
+
+  it("moves focus to the selected preset when the picker opens", async () => {
+    const user = userEvent.setup();
+    render(<Harness initial="men_broad_light" />);
+    await user.click(screen.getByRole("button", { name: "Change model" }));
+    expect(screen.getByRole("radio", { name: "Men's, broad build, light skin tone" })).toHaveFocus();
+  });
+
+  it("moves focus to the default when none is picked yet", async () => {
+    const user = userEvent.setup();
+    render(<Harness initial={null} />);
+    await user.click(screen.getByRole("button", { name: "Choose a model" }));
+    expect(screen.getByRole("radio", { name: "Women's, average build, medium skin tone" })).toHaveFocus();
+  });
+
+  it("keeps one status container in the page and only changes its text", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.updateModelPreset).mockResolvedValue({ ...SETTINGS, modelPresetId: "women_slim_light" });
+    render(<Harness initial="women_average_medium" />);
+    const status = screen.getByRole("status");
+    expect(status).toBeEmptyDOMElement();
+    await user.click(screen.getByRole("button", { name: "Change model" }));
+    expect(screen.getByRole("status")).toBe(status);
+    await user.click(screen.getByRole("radio", { name: "Women's, slim build, light skin tone" }));
+    await user.click(screen.getByRole("button", { name: "Save model" }));
+    await vi.waitFor(() => expect(status).toHaveTextContent("Model saved."));
+    expect(screen.getByRole("status")).toBe(status);
   });
 
   it("changes the model: picks a men's figure, saves, and shows the new one", async () => {
