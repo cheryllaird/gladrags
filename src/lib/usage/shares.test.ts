@@ -39,9 +39,9 @@ async function capOf(promise: Promise<unknown>): Promise<CapReachedError | null>
 }
 
 describe("config (round 2)", () => {
-  it("12 previews a day, 4p an image settled at most 20p, and 2 pound shares for images and shop search", () => {
+  it("12 previews a day, 8p an image settled at most 20p, and 2 pound shares for images and shop search", () => {
     expect(DAILY_CAPS.outfit_preview).toBe(12);
-    expect(ESTIMATED_COST_PENCE.image_generation).toBe(4);
+    expect(ESTIMATED_COST_PENCE.image_generation).toBe(8);
     expect(MAX_SETTLED_COST_PENCE.image_generation).toBe(20);
     expect(maxSettledCost("image_generation")).toBe(20);
     expect(maxSettledCost("tagging")).toBeCloseTo(0.6);
@@ -70,7 +70,7 @@ describe("the outfit preview daily cap", () => {
 describe("monthly spend shares", () => {
   it("image calls stop at the images share (reached, not approached); other AI keeps working", async () => {
     const { guard } = setup();
-    for (let i = 0; i < 3; i++) await guard.reserveAiCost(ALICE, "image_generation", "gemini"); // 12p >= 10p
+    for (let i = 0; i < 2; i++) await guard.reserveAiCost(ALICE, "image_generation", "gemini"); // 16p >= 10p
     const error = await capOf(guard.reserveAiCost(ALICE, "image_generation", "gemini"));
     expect(error?.cap).toBe("monthly_image_spend");
     expect(isAiPausedError(error)).toBe(true);
@@ -84,7 +84,7 @@ describe("monthly spend shares", () => {
 
   it("the preview action is refused (before counting) once the images share is spent", async () => {
     const { guard, store } = setup();
-    for (let i = 0; i < 3; i++) await guard.reserveAiCost(null, "image_generation");
+    for (let i = 0; i < 2; i++) await guard.reserveAiCost(null, "image_generation"); // 16p >= 10p
     expect((await capOf(guard.assertCanStart(ALICE, "outfit_preview")))?.cap).toBe("monthly_image_spend");
     expect((await capOf(guard.reserveAction(ALICE, "outfit_preview")))?.cap).toBe("monthly_image_spend");
     expect(store.events.filter((e) => e.kind === "outfit_preview")).toHaveLength(0);
@@ -118,7 +118,7 @@ describe("monthly spend shares", () => {
 
   it("the cap error serialises as the API's error shape", async () => {
     const { guard } = setup();
-    for (let i = 0; i < 3; i++) await guard.reserveAiCost(null, "image_generation");
+    for (let i = 0; i < 2; i++) await guard.reserveAiCost(null, "image_generation"); // 16p >= 10p
     const error = await capOf(guard.reserveAiCost(null, "image_generation"));
     const api = error!.toApiException();
     const body = { error: { code: api.code, message: api.message, ...api.extras } };

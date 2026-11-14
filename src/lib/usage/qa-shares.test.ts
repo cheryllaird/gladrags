@@ -34,7 +34,7 @@ describe("QA: the images share at £2", () => {
     const { guard } = setup();
     await guard.recordAiCost(null, "image_generation", 199.99);
     await expect(guard.reserveAction(ALICE, "outfit_preview")).resolves.toBeDefined();
-    await expect(guard.reserveAiCost(ALICE, "image_generation")).resolves.toBeTypeOf("string"); // now 203.99p
+    await expect(guard.reserveAiCost(ALICE, "image_generation")).resolves.toBeTypeOf("string"); // now 207.99p
     expect(await capOf(guard.reserveAiCost(ALICE, "image_generation"))).toBe("monthly_image_spend");
     expect(await capOf(guard.reserveAction(BOB, "outfit_preview"))).toBe("monthly_image_spend");
     expect(await capOf(guard.assertCanStart(BOB, "outfit_preview"))).toBe("monthly_image_spend");
@@ -123,11 +123,11 @@ describe("QA: the overall £5 still pauses everything", () => {
 });
 
 describe("QA: bursts", () => {
-  it("100 image reservations at once stop at the share: exactly 50 at 4p under £2", async () => {
+  it("100 image reservations at once stop at the share: exactly 25 at 8p under £2", async () => {
     const { guard, store } = setup();
     const results = await Promise.all(Array.from({ length: 100 }, () => capOf(guard.reserveAiCost(ALICE, "image_generation"))));
     expect(results.filter((r) => r === null)).toHaveLength(MONTHLY_SPEND_SHARES.images.capPence / ESTIMATED_COST_PENCE.image_generation);
-    expect(results.filter((r) => r === "monthly_image_spend")).toHaveLength(50);
+    expect(results.filter((r) => r === "monthly_image_spend")).toHaveLength(75);
     expect(await store.spendSince(new Date("2026-11-01T00:00:00Z"), ["image_generation"])).toBe(200);
   });
 
@@ -135,13 +135,13 @@ describe("QA: bursts", () => {
     const limits: UsageLimits = {
       ...DEFAULT_USAGE_LIMITS,
       monthlySpendCapPence: 30,
-      spendShares: { images: { kinds: ["image_generation"], capPence: 12 }, shop_search: { kinds: ["shop_grounding"], capPence: 9 } },
+      spendShares: { images: { kinds: ["image_generation"], capPence: 16 }, shop_search: { kinds: ["shop_grounding"], capPence: 9 } },
     };
     const { guard, store } = setup(limits);
     const kinds = ["image_generation", "shop_grounding", "tagging"] as const;
     await Promise.all(Array.from({ length: 300 }, (_, i) => capOf(guard.reserveAiCost(BOB, kinds[i % 3]!))));
     const since = new Date("2026-11-01T00:00:00Z");
-    expect(await store.spendSince(since, ["image_generation"])).toBe(12);
+    expect(await store.spendSince(since, ["image_generation"])).toBe(16); // two 8p images (share 16p, a multiple of the 8p estimate)
     expect(await store.spendSince(since, ["shop_grounding"])).toBe(9);
     // Overall: the last call starts below 30p, so the month ends at most one call over.
     const total = await store.spendSince(since);

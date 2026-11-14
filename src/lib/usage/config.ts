@@ -49,16 +49,17 @@ export const ESTIMATED_COST_PENCE: Readonly<Record<AiCostKind, number>> = {
   // so this is set high.
   shop_grounding: 3,
   // One image-model call for an outfit preview. UNVERIFIED (Google's price
-  // page couldn't be reached): list prices suggest 3p-4p an image.
-  image_generation: 4,
+  // page couldn't be reached). The P2 builder priced one image at about
+  // 7.8p with headroom, so the estimate is 8p.
+  image_generation: 8,
 };
 
 /**
  * A settled cost is recorded at most this many pence, for kinds whose
  * bound isn't MAX_SETTLED_COST_MULTIPLE × the estimate. Image generation's
- * estimate is unverified, so it gets a looser, explicit bound: 20p, five
- * times the 4p estimate (a call in flight can take the month past a cap
- * by at most 16p).
+ * estimate is unverified, so it gets a looser, explicit bound: 20p, two
+ * and a half times the 8p estimate (a call in flight can take the month
+ * past a cap by at most 12p).
  */
 export const MAX_SETTLED_COST_PENCE: Readonly<Partial<Record<AiCostKind, number>>> = {
   image_generation: 20,

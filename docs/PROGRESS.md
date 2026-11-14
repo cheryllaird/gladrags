@@ -127,7 +127,7 @@ Decisions (SPEC.md "Generated outfit preview"): a preview image for every outfit
 | P7 | Security and privacy re-check (previews storage, deletion, what Gemini sees, privacy note) | security | | ☐ | P2–P4 |
 | P8 | Preview deploy, checkpoint for Cheryl | orchestrator | | ☐ | P6, P7 |
 
-Budget note for Cheryl: at an estimated 3–4p per image (unverified; Google's price page is blocked here), about £2 a month buys roughly 50–65 previews across all testers, about 13–16 outfit requests' worth. The daily cap starts at 12 previews per user (3 requests). Expect to raise the cap or the budget once real prices are known.
+Budget note for Cheryl: at an estimated 8p per image (unverified; Google's price page is blocked here, and the P2 builder priced one at about 7.8p with headroom), about £2 a month buys roughly 25 previews across all testers, about 6 outfit requests' worth. The daily cap starts at 12 previews per user (3 requests). Expect to raise the cap or the budget once real prices are known.
 
 ## Handoff notes for a new session
 
