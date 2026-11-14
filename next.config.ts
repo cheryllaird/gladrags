@@ -57,6 +57,12 @@ const nextConfig: NextConfig = {
   // The dev-tools bubble sits bottom-left, on top of the bottom navigation's
   // Wardrobe tab, which blocks taps in dev (and in dev-server e2e runs).
   devIndicators: false,
+  // The preview route reads the preset figures' pictures from disk
+  // (src/lib/outfits/preview-presets.ts); nothing imports them, so they're
+  // added to its serverless bundle here.
+  outputFileTracingIncludes: {
+    "/api/outfits/[id]/preview": ["./public/presets/*.webp"],
+  },
   async headers() {
     return [
       {

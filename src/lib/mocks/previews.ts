@@ -11,7 +11,8 @@ import { CapReachedError } from "@/lib/usage/errors";
 import { MONTHLY_SPEND_SHARES, DAILY_CAPS, USAGE_TIME_ZONE } from "@/lib/usage/config";
 import { startOfNextDay, startOfNextMonth } from "@/lib/usage/time";
 import type { UsageGuard } from "@/lib/usage/guard";
-import { PREVIEW_NEEDS_PRESET_ISSUE_PATH, previewCacheKey, type Outfit } from "@/contracts";
+import { previewCacheKey, type Outfit } from "@/contracts";
+import { needsPresetError } from "@/lib/outfits/preview";
 import { MOCK_MARKERS, hasMarker } from "./markers";
 import * as mock from "./store";
 
@@ -25,11 +26,8 @@ function delayMs(): number {
   return Number.isFinite(fromEnv) && fromEnv >= 0 ? fromEnv : 1200;
 }
 
-export function needsPresetError(): ApiException {
-  return new ApiException("bad_request", "Pick a model for your outfit pictures first.", {
-    issues: [{ path: PREVIEW_NEEDS_PRESET_ISSUE_PATH, message: "No model preset picked yet" }],
-  });
-}
+// Lives next to the real route now; re-exported for existing imports.
+export { needsPresetError };
 
 /** POST /api/outfits/[id]/preview in mock mode. */
 export async function mockPreview(userId: string, outfitId: string, refresh: boolean, usage: UsageGuard): Promise<Outfit> {

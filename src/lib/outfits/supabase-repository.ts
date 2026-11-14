@@ -35,6 +35,23 @@ const OUTFIT_COLUMNS =
 const PREVIEW_COLUMNS =
   "id, user_id, cache_key, preset_id, item_ids, suggested_slots, status, image_key, failure_reason, attempted_at, created_at, updated_at";
 
+/** An item as the engine sees it: tags, and its cut-out (or original) as its picture. */
+export function itemRowToWardrobeEntry(row: ItemRow): WardrobeEntry {
+  const item = itemRowToWardrobeItem(row, { originalUrl: "", cutoutUrl: null });
+  return {
+    id: row.id,
+    tags: item.tags,
+    // An item waiting for a photo has only a placeholder picture: ranking and previews use its tags.
+    image: row.needs_photo
+      ? null
+      : row.cutout_image_key
+        ? { bucket: STORAGE_BUCKETS.cutouts, key: row.cutout_image_key }
+        : { bucket: STORAGE_BUCKETS.originals, key: row.original_image_key },
+  };
+}
+
+export { ITEM_COLUMNS, OUTFIT_COLUMNS, PREVIEW_COLUMNS };
+
 function fail(what: string, error: { message: string }): never {
   throw new Error(`Couldn't ${what}: ${error.message}`);
 }
@@ -49,19 +66,7 @@ export class SupabaseOutfitRepository implements OutfitRepository {
   async listWardrobe(userId: string): Promise<WardrobeEntry[]> {
     const { data, error } = await this.client.from("items").select(ITEM_COLUMNS).eq("user_id", userId);
     if (error) fail("load the wardrobe", error);
-    return parseRows(ItemRowSchema, data).map((row) => {
-      const item = itemRowToWardrobeItem(row, { originalUrl: "", cutoutUrl: null });
-      return {
-        id: row.id,
-        tags: item.tags,
-        // An item waiting for a photo has only a placeholder picture: ranking uses its tags.
-        image: row.needs_photo
-          ? null
-          : row.cutout_image_key
-            ? { bucket: STORAGE_BUCKETS.cutouts, key: row.cutout_image_key }
-            : { bucket: STORAGE_BUCKETS.originals, key: row.original_image_key },
-      };
-    });
+    return parseRows(ItemRowSchema, data).map(itemRowToWardrobeEntry);
   }
 
   async listOutfits(userId: string, status?: OutfitStatus): Promise<Outfit[]> {
