@@ -15,6 +15,7 @@ import {
   resetForwardingAddress,
   updateFavouriteShops,
   updateItemTags,
+  updateModelPreset,
   uploadPhoto,
   uploadPhotoForReview,
 } from "./api";
@@ -200,6 +201,21 @@ describe("settings", () => {
   it("refuses an empty shop list before sending", async () => {
     const fetchMock = respond(200, settings);
     await expect(updateFavouriteShops([])).rejects.toThrow();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("saves the model preset alone, and returns it", async () => {
+    const fetchMock = respond(200, { ...settings, modelPresetId: "men_broad_deep" });
+    const saved = await updateModelPreset("men_broad_deep");
+    expect(saved.modelPresetId).toBe("men_broad_deep");
+    expect(fetchMock.mock.calls[0]![0]).toBe("/api/settings");
+    expect(fetchMock.mock.calls[0]![1]!.method).toBe("PUT");
+    expect(JSON.parse(fetchMock.mock.calls[0]![1]!.body as string)).toEqual({ modelPresetId: "men_broad_deep" });
+  });
+
+  it("refuses a preset that isn't in the list before sending", async () => {
+    const fetchMock = respond(200, settings);
+    await expect(updateModelPreset("women_tall_light" as never)).rejects.toThrow();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
