@@ -57,9 +57,13 @@ export async function encodePreviewForStorage(data: Uint8Array): Promise<ImageIn
   const top = Math.floor((padded.height - info.height) / 2);
   const target = storedPortraitSize(padded);
 
+  // Two pipelines: within one, sharp resizes before it extends.
+  const paddedRaw = await sharp(raw, { raw: { width: info.width, height: info.height, channels: info.channels } })
+    .extend({ left, right: padded.width - info.width - left, top, bottom: padded.height - info.height - top, background })
+    .raw()
+    .toBuffer();
   for (const quality of WEBP_QUALITIES) {
-    const out = await sharp(raw, { raw: { width: info.width, height: info.height, channels: info.channels } })
-      .extend({ left, right: padded.width - info.width - left, top, bottom: padded.height - info.height - top, background })
+    const out = await sharp(paddedRaw, { raw: { width: padded.width, height: padded.height, channels: info.channels } })
       .resize(target.width, target.height, { fit: "fill" })
       .webp({ quality })
       .toBuffer();
