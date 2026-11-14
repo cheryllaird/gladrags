@@ -1,4 +1,9 @@
 import { expect, test, type Locator, type Page, type Request } from "@playwright/test";
+import { collagesOnlyForFile } from "./helpers";
+
+// These tests are about the collage, which round 2 shows only while a picture
+// is made or when it can't be (tests/e2e/outfit-previews.spec.ts covers pictures).
+collagesOnlyForFile();
 
 // Outfit screens (journeys 2–5) on a 390 px phone viewport, in mock mode.
 //
