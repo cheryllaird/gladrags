@@ -10,7 +10,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   FavouriteShopIdsSchema,
   ForwardingTokenSchema,
-  ModelPresetIdSchema,
+  StoredModelPresetIdSchema,
   forwardingAddress,
   type ForwardingAddressConfig,
   type ShopId,
@@ -53,7 +53,7 @@ export function toUserSettings(stored: StoredSettings, config: ForwardingAddress
 const RowSchema = z.object({
   favourite_shop_ids: FavouriteShopIdsSchema,
   forwarding_token: ForwardingTokenSchema,
-  model_preset_id: ModelPresetIdSchema.nullable(),
+  model_preset_id: StoredModelPresetIdSchema,
 });
 const COLUMNS = "favourite_shop_ids, forwarding_token, model_preset_id";
 

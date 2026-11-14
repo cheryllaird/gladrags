@@ -20,7 +20,7 @@ import {
 } from "./item";
 import { OutfitSchema, OutfitStatusSchema } from "./outfit";
 import { FavouriteShopIdsSchema } from "./shops";
-import { ModelPresetIdSchema } from "./previews";
+import { ModelPresetIdSchema, StoredModelPresetIdSchema } from "./previews";
 import { PresetStyleIdSchema } from "./styles";
 
 // Other route bodies live next to their domain types:
@@ -387,7 +387,7 @@ export const UserSettingsSchema = z.object({
    * or null until the user picks one. Changing it doesn't touch existing
    * previews; new outfits use the new one.
    */
-  modelPresetId: ModelPresetIdSchema.nullable().default(null),
+  modelPresetId: StoredModelPresetIdSchema,
   /** The shops "Find in my shops" searches, from SHOPS. New users get DEFAULT_FAVOURITE_SHOP_IDS. */
   favouriteShopIds: FavouriteShopIdsSchema,
   /**
