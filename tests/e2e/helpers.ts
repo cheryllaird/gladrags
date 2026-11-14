@@ -28,8 +28,12 @@ export async function blockOutfitPreviews(page: Page): Promise<void> {
   await page.route(/\/api\/outfits\/[^/]+\/preview(\?.*)?$/, async (route) => {
     const url = new URL(route.request().url());
     const outfitUrl = `${url.origin}${url.pathname.replace(/\/preview$/, "")}`;
-    const response = await route.fetch({ url: outfitUrl, method: "GET" });
-    await route.fulfill({ response });
+    try {
+      const response = await route.fetch({ url: outfitUrl, method: "GET" });
+      await route.fulfill({ response });
+    } catch {
+      // The test ended while this was in flight: nothing is waiting for it.
+    }
   });
 }
 
