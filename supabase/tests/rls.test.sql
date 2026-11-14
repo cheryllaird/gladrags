@@ -1298,6 +1298,49 @@ select pg_temp.expect_count(
   'select 1 from public.outfit_previews where user_id = ''8b000000-0000-4000-8000-00000000008b''', 0,
   'R2: Q''s previews are deleted with the account');
 
+-- The daily sweep: unused rows past the age go (and their image keys come
+-- back); a row an outfit shows, and a fresh unused row, stay.
+do $$
+declare
+  p constant uuid := '8a000000-0000-4000-8000-00000000008a';
+  tee constant uuid[] := array['8a100000-0000-4000-8000-000000000001']::uuid[];
+  old_key constant text := '8a000000-0000-4000-8000-00000000008a/00000000-0000-4000-8000-0000000000a1.webp';
+  old_id uuid;
+  used_id uuid;
+  fresh_id uuid;
+  r jsonb;
+begin
+  insert into public.outfit_previews (user_id, cache_key, preset_id, item_ids, status, image_key, updated_at)
+  values (p, repeat('6', 64), 'men_broad_deep', tee, 'ready', old_key, now() - interval '2 hours')
+  returning id into old_id;
+  insert into public.outfit_previews (user_id, cache_key, preset_id, item_ids, updated_at)
+  values (p, repeat('7', 64), 'men_broad_deep', tee, now() - interval '2 hours')
+  returning id into used_id;
+  insert into public.outfit_previews (user_id, cache_key, preset_id, item_ids)
+  values (p, repeat('8', 64), 'men_broad_deep', tee)
+  returning id into fresh_id;
+  -- Linking touches only the outfit, so the in-use row stays two hours old.
+  update public.outfits set preview_id = used_id where id = '8a200000-0000-4000-8000-000000000001';
+
+  r := public.sweep_unused_outfit_previews(3600);
+  if exists (select 1 from public.outfit_previews where id = old_id) then raise exception 'FAIL: the old unused preview stayed: %', r; end if;
+  if (r ->> 'deleted')::int < 1 or not (r -> 'image_keys') ? old_key then raise exception 'FAIL: the sweep did not return the deleted key: %', r; end if;
+  if not exists (select 1 from public.outfit_previews where id = used_id) then raise exception 'FAIL: the sweep deleted a preview in use'; end if;
+  if not exists (select 1 from public.outfit_previews where id = fresh_id) then raise exception 'FAIL: the sweep deleted a fresh preview'; end if;
+  raise notice 'ok: R2: the sweep deletes old unused previews, returns their keys, and keeps used and fresh ones';
+
+  -- Tidy up.
+  update public.outfits set preview_id = null where id = '8a200000-0000-4000-8000-000000000001';
+  delete from public.outfit_previews where id in (used_id, fresh_id);
+end;
+$$;
+select pg_temp.expect_error('select public.sweep_unused_outfit_previews(59)', 'R2: a sweep age under 60 seconds');
+select pg_temp.expect_error('select public.sweep_unused_outfit_previews(null)', 'R2: a sweep with no age');
+select pg_temp.expect_count(
+  $$select 1 from unnest(array['anon', 'authenticated']) r
+    where has_function_privilege(r, 'public.preview_stands(text, text, timestamptz, int, int)', 'execute')$$, 0,
+  'R2: preview_stands is server only (an execute grant to public would show here too)');
+
 -- New usage kinds, and a spend share in reserve_usage.
 select pg_temp.expect_rows(
   $$insert into public.usage_events (user_id, kind, cost_pence) values (null, 'image_generation', 0), ('8a000000-0000-4000-8000-00000000008a', 'outfit_preview', 0)$$, 2,

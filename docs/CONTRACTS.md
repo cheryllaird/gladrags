@@ -781,6 +781,8 @@ A refresh counts like any new preview, unless the new look already has a ready p
 
 **Races.** A preview is released (deleted when no outfit shows it or waits for it) by `release_outfit_preview`, which locks the row and then checks again in a new statement. A reuse locks the row before linking it, so a release running at the same moment waits and then sees the new link; two outfits leaving one preview together take turns, and the second deletes it. `pnpm db:verify` runs both races with two sessions.
 
+**Lock order and deadlock retry.** Everything that touches previews locks the outfits first (in id order), then the preview rows: `claim_outfit_preview`, `finish_outfit_preview`, and the item triggers that run when an item is deleted or gets a new photo. A deadlock is still possible in rare interleavings, so **every route that calls `claim_outfit_preview` or `finish_outfit_preview` retries the call once if it fails with SQLSTATE `40P01` (deadlock detected)**; Postgres has already rolled the losing call back, so the retry starts clean. A second failure is handled like any other database error.
+
 ### Never the same look twice
 One stored picture per user and look, shared by every outfit with that look: a new request, a refinement or a swap that lands on a look you already have reuses it for free. Loading an outfit again only signs a fresh URL. A look that failed for good (`blocked`, `invalid_image`) isn't retried; one that failed for a passing reason (`ai_failed`, `internal`) is retried once it's an hour old **[Decision, orchestrator]**. A `skipped` one is tried again the next time.
 

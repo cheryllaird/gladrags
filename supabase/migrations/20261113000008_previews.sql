@@ -84,6 +84,9 @@ create table if not exists public.outfit_previews (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+-- For a table made by an earlier draft of this migration, before
+-- attempted_at existed ("create table if not exists" skips it there).
+alter table public.outfit_previews add column if not exists attempted_at timestamptz not null default now();
 
 alter table public.outfit_previews drop constraint if exists outfit_previews_cache_key_check;
 alter table public.outfit_previews add constraint outfit_previews_cache_key_check check (cache_key ~ '^[0-9a-f]{64}$');
@@ -296,12 +299,49 @@ security definer
 set search_path = ''
 as $$
 begin
+  -- Same lock order as claim_outfit_preview and finish_outfit_preview:
+  -- the outfits showing or waiting for these previews (in id order), then
+  -- the previews (in id order). Deleting a preview sets those outfits'
+  -- preview_id or pending_preview_id to null, so without this a photo
+  -- change could lock a preview, then wait on an outfit a claim holds
+  -- while the claim waits on the preview.
+  perform 1 from public.outfits o
+  where o.user_id = old.user_id
+    and (
+      o.preview_id in (select p.id from public.outfit_previews p where p.user_id = old.user_id and old.id = any (p.item_ids))
+      or o.pending_preview_id in (select p.id from public.outfit_previews p where p.user_id = old.user_id and old.id = any (p.item_ids))
+    )
+  order by o.id
+  for update;
+  perform 1 from public.outfit_previews p
+  where p.user_id = old.user_id and old.id = any (p.item_ids)
+  order by p.id
+  for update;
   delete from public.outfit_previews p
   where p.user_id = old.user_id and old.id = any (p.item_ids);
   return null;
 end;
 $$;
 revoke execute on function public.items_drop_previews() from public, anon, authenticated;
+
+-- Deleting an item deletes the outfits that used it (migration 1). Redefined
+-- here to lock those outfits in id order first, so the previews their
+-- deletion releases are locked after them, as in claim and finish. Still
+-- runs as the caller (RLS applies), as before.
+create or replace function public.delete_outfits_using_item()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  perform 1 from public.outfits
+  where user_id = old.user_id and old.id = any (item_ids)
+  order by id
+  for update;
+  delete from public.outfits where user_id = old.user_id and old.id = any (item_ids);
+  return old;
+end;
+$$;
 
 drop trigger if exists items_drop_previews_on_delete on public.items;
 create trigger items_drop_previews_on_delete
@@ -338,6 +378,7 @@ as $$
     else false
   end;
 $$;
+revoke execute on function public.preview_stands(text, text, timestamptz, int, int) from public, anon, authenticated;
 
 -- Called by POST /api/outfits/[id]/preview with the secret key, after the
 -- app has worked out the look's cache key (previewCacheKey) with the
