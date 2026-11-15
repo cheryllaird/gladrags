@@ -20,7 +20,7 @@ import { LinkProductSchema } from "./api";
 import { FeedbackKindSchema } from "./feedback";
 import { OutfitGapsSchema, OutfitStatusSchema, StoredOutfitRequestSchema } from "./outfit";
 import { FavouriteShopIdsSchema } from "./shops";
-import { ModelPresetIdSchema, PREVIEW_FAILURE_REASONS, PreviewCacheKeySchema } from "./previews";
+import { ModelPresetIdSchema, PREVIEW_FAILURE_REASONS, PreviewCacheKeySchema, StoredModelPresetIdSchema } from "./previews";
 import { EmailImportErrorSchema, EmailImportStatusSchema, ForwardingTokenSchema } from "./email";
 import { PresetStyleIdSchema } from "./styles";
 import { UsageEventKindSchema } from "./usage";
@@ -202,7 +202,7 @@ export const UserSettingsRowSchema = z.object({
   favourite_shop_ids: FavouriteShopIdsSchema,
   forwarding_token: ForwardingTokenSchema,
   /** Round 2: the model figure previews are made on; null until the user picks one. */
-  model_preset_id: ModelPresetIdSchema.nullable().default(null),
+  model_preset_id: StoredModelPresetIdSchema,
   updated_at: DbTimestampSchema,
 });
 export type UserSettingsRow = z.infer<typeof UserSettingsRowSchema>;

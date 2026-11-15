@@ -136,8 +136,14 @@ describe("QA: SupabaseSettingsRepository.update", () => {
     expect(calls.update).toEqual({ favourite_shop_ids: ["zara"] });
   });
 
-  it("refuses a row whose stored preset isn't on the list (fails loudly rather than reading as null)", async () => {
+  // Changed by the orchestrator (QA finding on P4): a row whose stored preset
+  // isn't on the list used to fail the read (and with it GET /api/settings).
+  // It now reads as null, "not picked yet", and the rest of the row is kept.
+  it("reads a row whose stored preset isn't on the list as no preset, keeping the rest", async () => {
     const { client } = recordingClient({ ...stored, model_preset_id: "retired_preset" });
-    await expect(new SupabaseSettingsRepository(client as never).get(TEST_USER)).rejects.toThrow();
+    const row = await new SupabaseSettingsRepository(client as never).get(TEST_USER);
+    expect(row).not.toBeNull();
+    expect(row!.modelPresetId).toBeNull();
+    expect(row!.favouriteShopIds).toEqual(stored.favourite_shop_ids);
   });
 });

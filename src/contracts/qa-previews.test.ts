@@ -92,8 +92,11 @@ describe("QA: settings schemas with the preset", () => {
     expect(parsed).toEqual({ modelPresetId: "men_plus_light" });
   });
 
-  it("GET refuses a stored preset that's not on the list (a removed preset would surface, not pass silently)", () => {
-    expect(UserSettingsSchema.safeParse({ ...settings, modelPresetId: "women_broad_deep" }).success).toBe(false);
+  // Changed by the orchestrator (QA finding on P4): an unknown stored preset
+  // used to fail the whole settings read. It now reads as null ("not picked
+  // yet"), so the user is simply asked to pick again. Setting one stays strict.
+  it("GET reads a stored preset that's not on the list as null (not picked yet)", () => {
+    expect(UserSettingsSchema.parse({ ...settings, modelPresetId: "women_broad_deep" }).modelPresetId).toBeNull();
     expect(UserSettingsSchema.parse({ ...settings, modelPresetId: undefined }).modelPresetId).toBeNull();
   });
 });

@@ -43,7 +43,7 @@ describe("configured caps match CONTRACTS.md section 7", () => {
       ranking_final: 0.5,
       email_extraction: 0.5,
       shop_grounding: 3,
-      image_generation: 4,
+      image_generation: 8,
     });
   });
 });

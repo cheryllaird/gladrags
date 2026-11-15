@@ -196,12 +196,33 @@ describe("QA: the daily cap at exactly 12", () => {
 });
 
 describe("QA: reuse across outfits", () => {
-  it("a twin of a failed look reads failed at once, with no cost and no retry", async () => {
+  // Changed by the orchestrator (P3 finding): mock markers are checked before
+  // any reuse, so a marked outfit's failure stays its own (e2e tests can rely
+  // on the marker even when another test pictured the same look). A twin
+  // without the marker therefore generates its own picture. Sharing a failed
+  // look between real outfits is covered in SQL (qa-previews.test.sql,
+  // rls.test.sql), where there are no markers.
+  it("a failure forced by a marker stays with its outfit: an unmarked twin generates its own picture", async () => {
     const [failing] = await makeOutfits({ guidance: "mock-preview-fails" });
     await expectError(await postPreview(failing!.id), 502, "ai_failed");
     const twin = mockStore.insertOutfit({ ...failing!, id: crypto.randomUUID(), request: { ...failing!.request, guidance: "fine now" } });
-    expect((await previewOk(twin.id)).preview).toMatchObject({ status: "failed", failureReason: "ai_failed" });
-    expect(await previewsToday()).toBe(1);
+    expect((await previewOk(twin.id)).preview).toMatchObject({ status: "ready", failureReason: null });
+    expect(await previewsToday()).toBe(2);
+    // And the marked outfit still reads failed (not retried within the hour).
+    expect((await previewOk(failing!.id)).preview).toMatchObject({ status: "failed", failureReason: "ai_failed" });
+  });
+
+  it("a marker applies even when the look was already pictured by another outfit", async () => {
+    const [plain] = await makeOutfits();
+    await previewOk(plain!.id);
+    for (const [guidance, status, code] of [
+      ["mock-preview-fails", 502, "ai_failed"],
+      ["mock-preview-cap", 429, "daily_cap_reached"],
+      ["mock-preview-paused", 503, "ai_paused"],
+    ] as const) {
+      const marked = mockStore.insertOutfit({ ...plain!, id: crypto.randomUUID(), request: { ...plain!.request, guidance } });
+      await expectError(await postPreview(marked.id), status, code);
+    }
   });
 
   it("a twin of a skipped look generates it (skipped isn't final), and the first outfit then shows it too", async () => {
