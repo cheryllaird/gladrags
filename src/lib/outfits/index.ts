@@ -3,11 +3,18 @@
  * see README.md in this folder for how the pipeline works.
  */
 import "server-only";
-import { getRankingProvider, getShopSearchProvider } from "@/lib/ai";
+import { getImageGenerationProvider, getRankingProvider, getShopSearchProvider } from "@/lib/ai";
 import { describeError } from "@/lib/api/http";
 import { isMockMode } from "@/lib/env";
+import { inspectGeneratedImage } from "@/lib/images/preview-check";
 import { getServerImageProcessor } from "@/lib/images/server";
+import { SupabaseImageStorage } from "@/lib/ingestion/storage";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { PreviewService } from "./preview";
+import { SafeFetchProductImageFetcher, encodePreviewForStorage } from "./preview-image";
+import { FilePresetImageSource } from "./preview-presets";
+import { SupabasePreviewRepository } from "./preview-repository";
 import { getUsageGuard } from "@/lib/usage";
 import { MockRankingProvider } from "./mock-ranking";
 import { MockOutfitRepository } from "./mock-repository";
@@ -20,6 +27,7 @@ import { PlaceholderThumbnailSource, ResizingThumbnailSource, SupabaseImageStore
 
 export { OutfitService } from "./service";
 export { ShopSearchService } from "./shop-search";
+export { PreviewService, needsPresetError } from "./preview";
 
 /**
  * Thumbnails need the server image processor (built by ingestion). It's
@@ -65,6 +73,34 @@ export async function getOutfitService(): Promise<OutfitService> {
     usage,
   });
 }
+
+/**
+ * Round 2: the real preview route (not used in mock mode, which keeps
+ * src/lib/mocks/previews.ts). Supabase as the signed-in user for reads and
+ * item pictures; the admin client for the server-only preview functions
+ * and the previews bucket; Gemini's image model; link-import's safe
+ * fetcher for picked shop products' pictures.
+ */
+export async function getPreviewService(): Promise<PreviewService> {
+  const client = await createClient();
+  const admin = createAdminClient();
+  const outfits = new SupabaseOutfitRepository(client);
+  return new PreviewService({
+    repository: new SupabasePreviewRepository(client, admin),
+    outfits,
+    usage: getUsageGuard(),
+    provider: getImageGenerationProvider,
+    itemImages: new SupabaseImageStore(client),
+    previewStorage: new SupabaseImageStorage(admin),
+    presets: presetImages,
+    productImages: new SafeFetchProductImageFetcher(getServerImageProcessor()),
+    prepareForModel: (image, maxPx) => getServerImageProcessor().prepareForModel(image, maxPx),
+    inspect: inspectGeneratedImage,
+    encodeForStorage: encodePreviewForStorage,
+  });
+}
+
+const presetImages = new FilePresetImageSource();
 
 /**
  * "Find in my shops" and choosing a gap's product. Mock mode: canned
