@@ -638,6 +638,24 @@ describe("POST /api/outfits/[id]/preview: the image model's quota (429)", () => 
     expect((await ok(await post(id))).preview.status).toBe("ready");
   });
 
+  it("a 503 then a quota refusal books [estimate, 0], keeps the count and ends skipped (ai_paused)", async () => {
+    let calls = 0;
+    fake.provider = {
+      name: "fake",
+      generatePreview: async () => {
+        calls++;
+        if (calls === 1) throw Object.assign(new Error("got status: 503 UNAVAILABLE"), { status: 503 });
+        throw new ProviderQuotaError();
+      },
+    };
+    const id = addOutfit();
+    await expectError(await post(id), "ai_paused");
+    expect(calls).toBe(2);
+    expect(events("image_generation").map((e) => e.costPence)).toEqual([EST, 0]);
+    expect(events("outfit_preview")).toHaveLength(1);
+    expect(previewRow(outfitRow(id).preview_id)).toMatchObject({ status: "skipped", failure_reason: "ai_paused" });
+  });
+
   it("a 503 still retries and books the estimate for each attempt", async () => {
     const calls = providerThrowing(() => Object.assign(new Error("got status: 503 UNAVAILABLE"), { status: 503 }));
     const id = addOutfit();

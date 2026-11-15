@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GenerateContentParameters } from "@google/genai";
 import { PREVIEW_ASPECT_RATIO } from "@/contracts";
 import { ConfigError } from "@/lib/env";
-import { ProviderQuotaError } from "./errors";
+import { ProviderQuotaError, isGeminiQuotaRefusal } from "./errors";
 import {
   GEMINI_IMAGE_REPLY_BAD_USAGE,
   GEMINI_IMAGE_REPLY_IMAGE_SAFETY,
@@ -184,5 +184,17 @@ describe("environment and client options", () => {
 
   it("sets a timeout and turns the SDK's own retries off", () => {
     expect(geminiImageClientOptions("k").httpOptions).toEqual({ timeout: 35_000, retryOptions: { attempts: 1 } });
+  });
+});
+
+describe("isGeminiQuotaRefusal", () => {
+  it("trusts a numeric status over the message", () => {
+    expect(isGeminiQuotaRefusal(Object.assign(new Error("x"), { status: 429 }))).toBe(true);
+    expect(isGeminiQuotaRefusal(Object.assign(new Error('{"status":"RESOURCE_EXHAUSTED"}'), { status: 400 }))).toBe(false);
+  });
+
+  it("without a status, needs the structured RESOURCE_EXHAUSTED status, not just the word", () => {
+    expect(isGeminiQuotaRefusal(new Error('{"error":{"code":429,"status":"RESOURCE_EXHAUSTED"}}'))).toBe(true);
+    expect(isGeminiQuotaRefusal(new Error("description: RESOURCE_EXHAUSTED please"))).toBe(false);
   });
 });
