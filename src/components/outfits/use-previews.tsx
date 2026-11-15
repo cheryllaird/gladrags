@@ -26,8 +26,9 @@ export function previewAnnouncement(state: PreviewRunnerState): string {
 
 /**
  * Outfit pictures for one screen: a PreviewRunner that lives as long as the
- * screen, its state for rendering, the "Pick your model" sheet, and one
- * live region that announces progress for the whole screen.
+ * screen, its state for rendering, the "Pick your model" sheet, and the
+ * screen's one spoken progress line (`announcement`, for a screen with a
+ * live line of its own, or `announcer` for one without).
  *
  * `onOutfit` gets each outfit as the preview route returns it; the screen
  * puts it in place of its copy. `policy` says which outfits are asked for
@@ -57,11 +58,13 @@ export function usePreviews(onOutfit: (outfit: Outfit) => void, policy: PreviewP
   const activity = useCallback((outfitId: string): PreviewActivity => runner.activityFor(state, outfitId), [runner, state]);
 
   const sheet = <PickModelSheet open={state.needsPreset} onSaved={() => runner.resume()} onDismissed={() => runner.dismissPreset()} />;
+  // Screens with a live line of their own put `announcement` in it; others render `announcer`.
+  const announcement = previewAnnouncement(state);
   const announcer = (
     <p role="status" aria-live="polite" className="sr-only" data-testid="preview-announcer">
-      {previewAnnouncement(state)}
+      {announcement}
     </p>
   );
 
-  return { enqueue, ask, refresh, activity, sheet, announcer };
+  return { enqueue, ask, refresh, activity, sheet, announcement, announcer };
 }

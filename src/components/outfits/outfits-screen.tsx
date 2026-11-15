@@ -297,6 +297,8 @@ export function OutfitsScreen({ initialAnchorId }: { initialAnchorId: string | n
             {pending?.kind === "request" && "Putting outfits together…"}
             {pending?.kind === "refine" && `Working on it: ${pending.label.toLowerCase()}…`}
             {pending?.kind === "refresh" && "Getting those ideas back…"}
+            {/* The screen's one live line also speaks for the pictures. */}
+            {!pending && <span data-testid="preview-announcer">{previews.announcement}</span>}
           </p>
 
           {error && <ApiErrorNotice error={error.error} onRetry={error.retry ?? undefined} />}
@@ -361,7 +363,6 @@ export function OutfitsScreen({ initialAnchorId }: { initialAnchorId: string | n
           )}
         </section>
       )}
-      {previews.announcer}
       {previews.sheet}
     </main>
   );
