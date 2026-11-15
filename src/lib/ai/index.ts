@@ -6,6 +6,7 @@ import { createGeminiTaggingProvider } from "./gemini-tagging";
 import type { ImageGenerationProvider, OrderEmailProvider, RankingProvider, ShopSearchProvider, TaggingProvider } from "./types";
 
 export * from "./types";
+export { ProviderQuotaError, isGeminiQuotaRefusal } from "./errors";
 export { canTagFromText } from "./tagging-input";
 export { callWithValidation, type ValidatedCallResult, type CallWithValidationOptions } from "./validate";
 export {
