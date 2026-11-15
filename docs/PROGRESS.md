@@ -2,7 +2,7 @@
 
 Maintained by the orchestrator (main Claude Code session). Source of truth for scope: `docs/SPEC.md`.
 
-**Current status:** Milestone 5 round 2 (generated outfit previews) planned 2026-11-13; round 1 done and on a preview (2026-11-04): https://gladrags-git-claude-cheryl-test-fe-1c492c-cheryllairds-projects.vercel.app. Waiting for Cheryl: apply migration 7, then test. Sign-in links now return to the address they were requested from (fixed 2026-11-04); Supabase's Redirect URLs must allow the preview address. Email import needs Postmark; shop search and tagging need the Gemini paid tier. Gemini is still on the free tier.
+**Current status:** Milestone 5 round 2 (generated outfit previews) merged and on the preview 2026-11-15; waiting for Cheryl (migration 8, Gemini paid tier, S12 decision). Earlier: round 1 done and on a preview (2026-11-04): https://gladrags-git-claude-cheryl-test-fe-1c492c-cheryllairds-projects.vercel.app. Waiting for Cheryl: apply migration 7, then test. Sign-in links now return to the address they were requested from (fixed 2026-11-04); Supabase's Redirect URLs must allow the preview address. Email import needs Postmark; shop search and tagging need the Gemini paid tier. Gemini is still on the free tier.
 
 Legend: ☐ not started · ◐ in progress · ☑ done · ⛔ blocked
 
@@ -130,7 +130,7 @@ Decisions (SPEC.md "Generated outfit preview"): a preview image for every outfit
 | P5 | Preset model images: placeholders now; generate the real set once with the paid tier and check them with Cheryl | orchestrator | | ☐ | Gemini paid tier |
 | P6 | Journey tests with previews (mock provider) | qa | `r2/journeys` | ☑ folded into P3: `journeys-previews.spec.ts` runs journeys 2 and 5 with previews on. Full e2e on the merged round 2 tree (33ae607): 401 passed, 21 opt-in skipped, 0 failed; 4,633 unit tests; build green. | P2–P4 |
 | P7 | Security and privacy re-check (previews storage, deletion, what Gemini sees, privacy note) | security | | ☑ done on 33ae607: no security blocker; storage, deletion, SSRF and output checks hold. Preview blocker A (free-tier 429s booked as 8p) fixed and merged (`r2/previews-quota`, approved): a quota refusal books 0p, isn't retried, gives the count back and ends skipped. Known wording gap: the outfit screen then says the monthly budget is used up "until next month". Before-testers items S12–S16 below. | P2–P4 |
-| P8 | Preview deploy, checkpoint for Cheryl | orchestrator | | ☐ | P6, P7 |
+| P8 | Preview deploy, checkpoint for Cheryl | orchestrator | | ☑ 2026-11-15: round 2 on the preview (a0fb182). **Stopped for Cheryl.** Before trying it: apply migration 8. Real pictures need the Gemini paid tier; until then outfits show collages. Open decision: per-user image allowance or a lower daily cap (S12). | P6, P7 |
 
 Budget note for Cheryl: at an estimated 8p per image (unverified; Google's price page is blocked here, and the P2 builder priced one at about 7.8p with headroom), about £2 a month buys roughly 25 previews across all testers, about 6 outfit requests' worth. The daily cap starts at 12 previews per user (3 requests). Expect to raise the cap or the budget once real prices are known.
 
