@@ -57,9 +57,10 @@ export const ESTIMATED_COST_PENCE: Readonly<Record<AiCostKind, number>> = {
 /**
  * A settled cost is recorded at most this many pence, for kinds whose
  * bound isn't MAX_SETTLED_COST_MULTIPLE × the estimate. Image generation's
- * estimate is unverified, so it gets a looser, explicit bound: 20p, two
- * and a half times the 8p estimate (a call in flight can take the month
- * past a cap by at most 12p).
+ * estimate is unverified, so it gets its own explicit bound: 20p, two and
+ * a half times the 8p estimate (tighter than the default 3×, 24p; still
+ * well above the ~7.8p priced cost). A call in flight can take the month
+ * past a cap by at most 12p.
  */
 export const MAX_SETTLED_COST_PENCE: Readonly<Partial<Record<AiCostKind, number>>> = {
   image_generation: 20,

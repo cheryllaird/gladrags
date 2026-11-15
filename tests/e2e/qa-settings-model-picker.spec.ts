@@ -285,7 +285,9 @@ test.describe("QA settings model picker: saves", () => {
   test("a save whose reply isn't valid settings is treated as a failure", async ({ page }) => {
     await fakeSettings(page, {}, {
       onPut: async (route) => {
-        await route.fulfill({ json: { modelPresetId: "robot", favouriteShopIds: ["next"], forwardingAddress: null } });
+        // An unknown preset ID now reads as null (StoredModelPresetIdSchema), so
+        // break a field that's still strict: the shop list.
+        await route.fulfill({ json: { modelPresetId: "women_slim_medium", favouriteShopIds: "not-a-list", forwardingAddress: null } });
         return "handled";
       },
     });
@@ -326,11 +328,8 @@ test.describe("QA settings model picker: saves", () => {
 
   test("a stored preset ID that isn't on the list reads as not picked, and the rest of settings still works", async ({ page }) => {
     // E.g. a preset retired after a user picked it. The grid treats unknown IDs as none.
-    // KNOWN BUG (reported to the orchestrator): UserSettingsSchema rejects the
-    // whole GET /api/settings reply, so the settings screen shows "GladRags
-    // sent back something unexpected" and no section is usable. Remove
-    // test.fail once fixed.
-    test.fail();
+    // Was a bug: the whole GET /api/settings reply was rejected. Fixed by
+    // StoredModelPresetIdSchema (unknown stored IDs read as null).
     const fake = await fakeSettings(page, { modelPresetId: "women_tall_light" });
     await page.goto("/settings");
     await expect(page.getByRole("heading", { name: "Favourite shops" })).toBeVisible();
