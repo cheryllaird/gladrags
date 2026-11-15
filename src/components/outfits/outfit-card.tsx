@@ -52,8 +52,8 @@ interface OutfitCardProps {
   previewActivity?: PreviewActivity;
   /** "Update preview" on an outdated picture. */
   onUpdatePreview?: () => void;
-  /** Ask for the picture once the card is near the screen (saved list). */
-  onNearPreview?: () => void;
+  /** "See it worn" (saved list): ask for this outfit's picture, which counts against the cap. */
+  onSeeItWorn?: () => void;
 }
 
 export function OutfitCard(props: OutfitCardProps) {
@@ -116,7 +116,7 @@ export function OutfitCard(props: OutfitCardProps) {
           outfit={outfit}
           activity={props.previewActivity ?? IDLE_ACTIVITY}
           onUpdatePreview={props.onUpdatePreview}
-          onNear={props.onNearPreview}
+          onSeeItWorn={props.onSeeItWorn}
           lazyCollage={props.lazyCollage}
           onReloadPictures={props.onReloadPictures}
         />

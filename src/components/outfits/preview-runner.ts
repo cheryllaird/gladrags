@@ -2,26 +2,68 @@
  * Asks for outfit pictures one after another (docs/CONTRACTS.md, section 12:
  * "The client calls it once per outfit in a new set, one after another").
  *
- * - `enqueue(outfits)` adds the outfits that still need a picture and that
- *   this runner hasn't seen, so a refinement or swap asks for its new
- *   outfits only, and going back to an earlier set asks for nothing.
+ * - `enqueue(outfits, policy)` adds the outfits the policy says need a
+ *   request and that this runner hasn't seen, so a refinement or swap asks
+ *   for its new outfits only, and going back to an earlier set asks for
+ *   nothing. Results use RESULTS_POLICY; the saved list uses SAVED_POLICY,
+ *   which only picks up pictures already being made (they cost nothing new).
+ * - `ask(outfit)` is "See it worn" on the saved list: that outfit, now,
+ *   whatever it has been seen before. It may count against the daily cap.
  * - While a preview is `pending` (or `refreshing`), the same POST is sent
- *   again every PREVIEW_POLL_INTERVAL_MS, up to `maxPolls` times.
+ *   again every PREVIEW_POLL_INTERVAL_MS: at most `maxPolls` POSTs in all.
  * - `refresh(id)` is "Update preview": `?refresh=true`, ahead of the queue.
  * - A `bad_request` on `modelPresetId` (no model picked) pauses the queue
- *   until `resume()`; so does a settings check that finds none picked.
- * - The daily cap or the pause ends the queue: the rest would be refused too.
+ *   and opens "Pick your model" (`needsPreset`); so does a settings check
+ *   that finds none picked. `resume()` carries on once it's saved;
+ *   `dismissPreset()` (the sheet closed and the default couldn't be saved)
+ *   leaves the queue waiting, and the next enqueue asks again.
+ * - The daily cap or the pause ends the queue, and is remembered for the
+ *   runner's life: later enqueues get the same note without asking.
  * - `stop()` (the screen going away) drops whatever is in flight; `start()`
  *   picks the queue up again (React's development double mount).
  *
  * Plain TypeScript with injected dependencies, so it's unit-tested without React.
  */
-import { PREVIEW_NEEDS_PRESET_ISSUE_PATH, PREVIEW_POLL_INTERVAL_MS, type Outfit } from "@/contracts";
+import {
+  PREVIEW_NEEDS_PRESET_ISSUE_PATH,
+  PREVIEW_POLL_INTERVAL_MS,
+  PREVIEW_RETRYABLE_FAILED_REASONS,
+  type Outfit,
+} from "@/contracts";
 import type { ApiFailure, ApiResult } from "./api";
-import { problemForError, previewNeedsRequest, type PreviewActivity, type PreviewProblem } from "./preview-view";
+import { problemForError, type PreviewActivity, type PreviewProblem } from "./preview-view";
 
-/** Polls of a pending preview before giving up for now: about 3 minutes, past the 150 s takeover. */
+/** POSTs for one outfit before giving up for now: about 3 minutes of polling, past the 150 s takeover. */
 export const PREVIEW_MAX_POLLS = 60;
+
+/** Which outfits a screen asks for on its own. */
+export type PreviewPolicy = (outfit: Pick<Outfit, "preview">) => boolean;
+
+function isRetryableFailure(outfit: Pick<Outfit, "preview">): boolean {
+  const { status, failureReason } = outfit.preview;
+  return status === "failed" && (PREVIEW_RETRYABLE_FAILED_REASONS as readonly string[]).includes(failureReason ?? "");
+}
+
+/** Being made, or being refreshed: asking costs nothing new. */
+export function previewInProgress(outfit: Pick<Outfit, "preview">): boolean {
+  return outfit.preview.status === "pending" || outfit.preview.refreshing;
+}
+
+/**
+ * Results: not made yet, being made or refreshed, skipped earlier, or failed
+ * for a passing reason (the server answers that row free within its hour,
+ * and tries again after it).
+ */
+export const RESULTS_POLICY: PreviewPolicy = (outfit) =>
+  outfit.preview.status === "none" || outfit.preview.status === "skipped" || previewInProgress(outfit) || isRetryableFailure(outfit);
+
+/** Saved list: only pictures already being made. Others wait for "See it worn". */
+export const SAVED_POLICY: PreviewPolicy = previewInProgress;
+
+/** Whether "See it worn" is offered: no picture yet, but one could be made. */
+export function canAskForPicture(outfit: Pick<Outfit, "preview">): boolean {
+  return outfit.preview.status === "none" || outfit.preview.status === "skipped" || isRetryableFailure(outfit);
+}
 
 export interface PreviewRunnerDeps {
   requestPreview(outfitId: string, options: { refresh: boolean }): Promise<ApiResult<{ outfit: Outfit }>>;
@@ -37,13 +79,27 @@ export interface PreviewRunnerDeps {
 }
 
 export interface PreviewRunnerState {
-  /** Outfits queued or being asked for, in order (the first is in flight while `busy`). */
+  /** Outfits queued or being asked for, in order (the first is in flight while one is). */
   queuedIds: readonly string[];
   problems: Readonly<Record<string, PreviewProblem>>;
+  /** "Pick your model" is showing. */
   needsPreset: boolean;
+  /** It was closed without a model saved: the queue waits, and the next enqueue asks again. */
+  presetDismissed: boolean;
+  /** The outfit being asked for right now, and whether that's an "Update preview". */
+  active: { id: string; refresh: boolean } | null;
+  /** Progress through the current run of requests, for the screen's one live line. */
+  progress: { done: number; total: number };
 }
 
-export const EMPTY_RUNNER_STATE: PreviewRunnerState = { queuedIds: [], problems: {}, needsPreset: false };
+export const EMPTY_RUNNER_STATE: PreviewRunnerState = {
+  queuedIds: [],
+  problems: {},
+  needsPreset: false,
+  presetDismissed: false,
+  active: null,
+  progress: { done: 0, total: 0 },
+};
 
 interface Entry {
   id: string;
@@ -77,7 +133,13 @@ export class PreviewRunner {
   private readonly seen = new Set<string>();
   private problems: Record<string, PreviewProblem> = {};
   private needsPreset = false;
+  private presetDismissed = false;
   private presetChecked = false;
+  /** Today's cap or the pause, once met: every later outfit gets it without asking. */
+  private halted: PreviewProblem | null = null;
+  /** Requests finished and started in the current run (reset when the queue empties). */
+  private done = 0;
+  private total = 0;
   /** Bumped by start() and stop(); a loop from an older generation stops. */
   private generation = 0;
   private runningGeneration = -1;
@@ -98,15 +160,23 @@ export class PreviewRunner {
 
   state(): PreviewRunnerState {
     const ids = [...(this.active ? [this.active.id] : []), ...this.queue.map((e) => e.id)];
-    return { queuedIds: ids, problems: { ...this.problems }, needsPreset: this.needsPreset };
+    return {
+      queuedIds: ids,
+      problems: { ...this.problems },
+      needsPreset: this.needsPreset,
+      presetDismissed: this.presetDismissed,
+      active: this.active ? { ...this.active } : null,
+      progress: { done: this.done, total: this.total },
+    };
   }
 
   /** What the runner is doing with one outfit, for previewView. */
   activityFor(state: PreviewRunnerState, outfitId: string): PreviewActivity {
-    const inProgress = state.queuedIds.includes(outfitId);
+    const queued = state.queuedIds.includes(outfitId);
+    const waiting = state.needsPreset || (state.presetDismissed ?? false);
     return {
-      inProgress: inProgress && !state.needsPreset,
-      awaitingPreset: inProgress && state.needsPreset,
+      inProgress: queued && !waiting,
+      awaitingPreset: queued && waiting,
       problem: state.problems[outfitId] ?? null,
     };
   }
@@ -129,20 +199,25 @@ export class PreviewRunner {
     }
   }
 
-  /** Queue the outfits that still need a picture and haven't been queued before. */
-  enqueue(outfits: readonly Outfit[]): void {
-    let added = false;
+  /** Queue the outfits the policy picks that haven't been seen before. */
+  enqueue(outfits: readonly Outfit[], policy: PreviewPolicy = RESULTS_POLICY): void {
+    let changed = false;
     for (const outfit of outfits) {
       if (this.seen.has(outfit.id)) continue;
       this.seen.add(outfit.id);
-      if (!previewNeedsRequest(outfit)) continue;
-      this.queue.push({ id: outfit.id, refresh: outfit.preview.refreshing });
-      added = true;
+      if (!policy(outfit)) continue;
+      changed = this.add({ id: outfit.id, refresh: outfit.preview.refreshing }, "back") || changed;
     }
-    if (added) {
-      this.emit();
-      void this.pump();
-    }
+    if (changed) this.kick();
+  }
+
+  /** "See it worn": ask for this outfit's picture now, even if it was seen before. */
+  ask(outfit: Outfit): void {
+    this.seen.add(outfit.id);
+    if (this.isQueued(outfit.id)) return;
+    delete this.problems[outfit.id];
+    this.add({ id: outfit.id, refresh: outfit.preview.refreshing }, "back");
+    this.kick();
   }
 
   /** "Update preview": ask for a new picture of an outdated one, next in line. */
@@ -150,16 +225,50 @@ export class PreviewRunner {
     this.seen.add(outfitId);
     if (this.active?.id === outfitId) return;
     this.queue = this.queue.filter((e) => e.id !== outfitId);
-    this.queue.unshift({ id: outfitId, refresh: true });
     delete this.problems[outfitId];
-    this.emit();
-    void this.pump();
+    this.add({ id: outfitId, refresh: true }, "front");
+    this.kick();
   }
 
   /** A model preset has been saved: carry on. */
   resume(): void {
     this.needsPreset = false;
+    this.presetDismissed = false;
     this.presetChecked = true;
+    this.emit();
+    void this.pump();
+  }
+
+  /** "Pick your model" closed without a model saved: wait, and ask again on the next enqueue. */
+  dismissPreset(): void {
+    if (!this.needsPreset) return;
+    this.needsPreset = false;
+    this.presetDismissed = true;
+    this.emit();
+  }
+
+  private isQueued(id: string): boolean {
+    return this.active?.id === id || this.queue.some((e) => e.id === id);
+  }
+
+  /** Add one entry, or give it the remembered cap or pause. Returns whether anything changed. */
+  private add(entry: Entry, where: "front" | "back"): boolean {
+    if (this.halted) {
+      this.problems[entry.id] = this.halted;
+      return true;
+    }
+    if (where === "front") this.queue.unshift(entry);
+    else this.queue.push(entry);
+    this.total++;
+    return true;
+  }
+
+  /** Something changed: tell the screen, ask again for a dismissed model, and get going. */
+  private kick() {
+    if (this.presetDismissed && this.queue.length > 0) {
+      this.presetDismissed = false;
+      this.needsPreset = true;
+    }
     this.emit();
     void this.pump();
   }
@@ -168,9 +277,13 @@ export class PreviewRunner {
     this.deps.onChange(this.state());
   }
 
+  private waitingForPreset(): boolean {
+    return this.needsPreset || this.presetDismissed;
+  }
+
   private async pump(): Promise<void> {
     const generation = this.generation;
-    if (!this.started || this.needsPreset || this.runningGeneration === generation) return;
+    if (!this.started || this.waitingForPreset() || this.runningGeneration === generation) return;
     if (this.queue.length === 0) return;
     this.runningGeneration = generation;
     try {
@@ -184,7 +297,7 @@ export class PreviewRunner {
           return;
         }
       }
-      while (this.queue.length > 0 && generation === this.generation && !this.needsPreset) {
+      while (this.queue.length > 0 && generation === this.generation && !this.waitingForPreset()) {
         const entry = this.queue.shift()!;
         this.active = entry;
         this.emit();
@@ -194,11 +307,19 @@ export class PreviewRunner {
         if (outcome === "needs_preset") {
           this.queue.unshift(entry);
           this.needsPreset = true;
-        } else if (outcome === "halt") {
-          // Today's cap or the pause: the rest would be refused the same way.
-          const problem = this.problems[entry.id]!;
-          for (const rest of this.queue) this.problems[rest.id] = problem;
-          this.queue = [];
+        } else {
+          this.done++;
+          if (outcome === "halt") {
+            // Today's cap or the pause: the rest would be refused the same way, now and later.
+            const problem = this.problems[entry.id]!;
+            this.halted = problem;
+            for (const rest of this.queue) this.problems[rest.id] = problem;
+            this.queue = [];
+          }
+        }
+        if (this.queue.length === 0 && !this.waitingForPreset()) {
+          this.done = 0;
+          this.total = 0;
         }
         this.emit();
       }
@@ -206,7 +327,7 @@ export class PreviewRunner {
       if (this.runningGeneration === generation) this.runningGeneration = -1;
     }
     // Something may have been queued while the last request was finishing.
-    if (generation === this.generation && this.queue.length > 0 && !this.needsPreset) void this.pump();
+    if (generation === this.generation && this.queue.length > 0 && !this.waitingForPreset()) void this.pump();
   }
 
   private async process(entry: Entry, generation: number): Promise<Outcome> {
@@ -214,7 +335,7 @@ export class PreviewRunner {
     const maxPolls = this.deps.maxPolls ?? PREVIEW_MAX_POLLS;
     const sleep = this.deps.sleep ?? defaultSleep;
     let refresh = entry.refresh;
-    for (let polls = 0; ; polls++) {
+    for (let sent = 1; ; sent++) {
       const result = await this.deps.requestPreview(entry.id, { refresh });
       if (generation !== this.generation) return "stopped";
       if (!result.ok) {
@@ -227,7 +348,7 @@ export class PreviewRunner {
       delete this.problems[entry.id];
       this.onOutfit(outfit);
       if (outfit.preview.status !== "pending" && !outfit.preview.refreshing) return "done";
-      if (polls >= maxPolls) {
+      if (sent >= maxPolls) {
         this.problems[entry.id] = { kind: "slow" };
         return "done";
       }

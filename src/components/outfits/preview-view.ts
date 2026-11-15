@@ -7,7 +7,7 @@
  * is the placeholder while the picture is made, and the fallback when it
  * can't be.
  */
-import type { Category, Outfit, OutfitGap, OutfitPreview, PreviewFailureReason } from "@/contracts";
+import type { Category, OutfitGap, OutfitPreview, PreviewFailureReason } from "@/contracts";
 import type { ApiFailure } from "./api";
 import { CATEGORY_LABELS, formatResetTime, subcategoryLabel } from "./copy";
 
@@ -68,13 +68,16 @@ export function problemForError(error: ApiFailure): PreviewProblem {
 export function previewView(preview: OutfitPreview, activity: PreviewActivity): PreviewView {
   const problem = activity.problem;
   if (preview.status === "ready" && preview.imageUrl) {
+    // The runner gave up on (or was refused) the update: the old picture
+    // stays, with Update preview again, whatever the server last said.
+    const gaveUp = problem !== null && !activity.inProgress;
     return {
       kind: "image",
       imageUrl: preview.imageUrl,
-      outdated: preview.outdated,
+      outdated: preview.outdated || (gaveUp && preview.refreshing),
       // The runner is asking for the update: show "Updating…" from the tap, not only once the server says so.
-      refreshing: preview.refreshing || (activity.inProgress && preview.outdated),
-      note: problem && !activity.inProgress ? previewNote(problem, "update") : null,
+      refreshing: !gaveUp && (preview.refreshing || (activity.inProgress && preview.outdated)),
+      note: gaveUp ? previewNote(problem, "update") : null,
     };
   }
   if (activity.awaitingPreset) return { kind: "making", awaitingPreset: true };
@@ -88,6 +91,12 @@ export function previewView(preview: OutfitPreview, activity: PreviewActivity): 
   if (preview.status === "pending") return { kind: "making", awaitingPreset: false };
   return { kind: "collage", note: null, reason: null };
 }
+
+/** An update that failed or got stuck: the earlier picture stays, with Update preview. */
+const UPDATE_FAILED_NOTE: PreviewNote = {
+  title: "Couldn't update the picture",
+  message: "Try again later. The earlier picture stays for now.",
+};
 
 /**
  * The note under the collage (or under an outdated picture that couldn't be
@@ -114,16 +123,24 @@ export function previewNote(problem: PreviewProblem, attempt: "make" | "update")
       };
     }
     case "slow":
+      if (attempt === "update") return UPDATE_FAILED_NOTE;
       return {
         title: "This picture is taking a while",
         message: "Here are the pieces for now. Come back to this outfit later to see it worn.",
       };
     case "failed":
+      if (attempt === "update") return UPDATE_FAILED_NOTE;
       return {
-        title: attempt === "make" ? "We couldn't picture this one" : "We couldn't update the picture",
+        title: "We couldn't picture this one",
         message: `Sorry, the picture didn't work out this time. ${fallback}`,
       };
   }
+}
+
+/** One label per suggested slot (duplicates dropped), keyed by slot. */
+export interface SuggestedPiece {
+  slot: Category;
+  label: string;
 }
 
 /**
@@ -131,16 +148,15 @@ export function previewNote(problem: PreviewProblem, attempt: "make" | "update")
  * generated piece for one they own. Uses the gap's subcategory when the
  * outfit still has that gap, otherwise the slot's name.
  */
-export function suggestedLabels(slots: readonly Category[], gaps: readonly OutfitGap[]): string[] {
-  return slots.map((slot) => {
+export function suggestedPieces(slots: readonly Category[], gaps: readonly OutfitGap[]): SuggestedPiece[] {
+  return [...new Set(slots)].map((slot) => {
     const gap = gaps.find((g) => g.category === slot);
     const what = gap?.subcategory ? subcategoryLabel(gap.subcategory) : CATEGORY_LABELS[slot].singular;
-    return `${what} suggested`;
+    return { slot, label: `${what} suggested` };
   });
 }
 
-/** Whether the outfit's preview needs the runner: not made yet, being made, being refreshed, or skipped earlier. */
-export function previewNeedsRequest(outfit: Pick<Outfit, "preview">): boolean {
-  const { status, refreshing } = outfit.preview;
-  return status === "none" || status === "pending" || status === "skipped" || refreshing;
+/** The labels alone, in slot order. */
+export function suggestedLabels(slots: readonly Category[], gaps: readonly OutfitGap[]): string[] {
+  return suggestedPieces(slots, gaps).map((piece) => piece.label);
 }

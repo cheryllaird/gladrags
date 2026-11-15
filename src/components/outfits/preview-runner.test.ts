@@ -1,7 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 import { NO_PREVIEW, type Outfit, type OutfitPreview } from "@/contracts";
 import type { ApiFailure, ApiResult } from "./api";
-import { PreviewRunner, isNeedsPresetError, type PreviewRunnerDeps, type PreviewRunnerState } from "./preview-runner";
+import {
+  PreviewRunner,
+  RESULTS_POLICY,
+  SAVED_POLICY,
+  canAskForPicture,
+  isNeedsPresetError,
+  type PreviewRunnerDeps,
+  type PreviewRunnerState,
+} from "./preview-runner";
+import { previewView } from "./preview-view";
 
 const READY: OutfitPreview = {
   ...NO_PREVIEW,
@@ -122,12 +131,13 @@ describe("PreviewRunner", () => {
     runner.start();
     const a = outfit(1);
     runner.enqueue([a]);
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 2; i++) {
       await flush();
       calls[i]!.resolve({ ok: true, data: { outfit: { ...a, preview: PENDING } } });
     }
     await flush();
-    expect(calls).toHaveLength(3);
+    // Exactly maxPolls POSTs in all.
+    expect(calls).toHaveLength(2);
     expect(last().problems[a.id]).toEqual({ kind: "slow" });
     expect(last().queuedIds).toEqual([]);
   });
@@ -245,5 +255,113 @@ describe("PreviewRunner", () => {
     expect(isNeedsPresetError(NEEDS_PRESET)).toBe(true);
     expect(isNeedsPresetError({ code: "bad_request", message: "x", issues: [{ path: "refresh", message: "x" }] })).toBe(false);
     expect(isNeedsPresetError({ code: "not_found", message: "x" })).toBe(false);
+  });
+
+  it("results also ask again for a failure from a passing reason, not a final one", () => {
+    const failed = (failureReason: "ai_failed" | "internal" | "blocked" | "invalid_image") => ({
+      preview: { ...NO_PREVIEW, status: "failed" as const, failureReason, presetId: "women_average_medium" as const },
+    });
+    expect(RESULTS_POLICY(failed("ai_failed"))).toBe(true);
+    expect(RESULTS_POLICY(failed("internal"))).toBe(true);
+    expect(RESULTS_POLICY(failed("blocked"))).toBe(false);
+    expect(RESULTS_POLICY(failed("invalid_image"))).toBe(false);
+    expect(RESULTS_POLICY({ preview: READY })).toBe(false);
+  });
+
+  it("the saved list only picks up pictures already being made; the rest wait for See it worn", async () => {
+    const { runner, calls } = harness();
+    runner.start();
+    const skipped = outfit(2, { ...NO_PREVIEW, status: "skipped", failureReason: "daily_cap_reached" });
+    const retryable = outfit(3, { ...NO_PREVIEW, status: "failed", failureReason: "ai_failed" });
+    const none = outfit(1);
+    const pending = outfit(4, PENDING);
+    runner.enqueue([none, skipped, retryable, pending, outfit(5, READY)], SAVED_POLICY);
+    await flush();
+    expect(calls.map((c) => c.id)).toEqual([pending.id]);
+    for (const o of [none, skipped, retryable]) expect(canAskForPicture(o)).toBe(true);
+    expect(canAskForPicture(outfit(6, READY))).toBe(false);
+    expect(canAskForPicture(outfit(7, { ...NO_PREVIEW, status: "failed", failureReason: "blocked" }))).toBe(false);
+
+    calls[0]!.resolve({ ok: true, data: { outfit: { ...pending, preview: READY } } });
+    await flush();
+    // "See it worn" on one that was seen but not asked for.
+    runner.ask(none);
+    await flush();
+    expect(calls.map((c) => c.id)).toEqual([pending.id, none.id]);
+  });
+
+  it("remembers the cap for its whole life: later outfits get the note without asking", async () => {
+    const { runner, calls, last } = harness();
+    runner.start();
+    const a = outfit(1);
+    runner.enqueue([a]);
+    await flush();
+    calls[0]!.resolve({ ok: false, error: CAP });
+    await flush();
+    const [later, seeItWorn] = [outfit(2), outfit(3)];
+    runner.enqueue([later]);
+    runner.ask(seeItWorn);
+    runner.refresh(outfit(4, { ...READY, outdated: true }).id);
+    await flush();
+    expect(calls).toHaveLength(1);
+    expect(last().problems[later.id]).toEqual({ kind: "daily_cap", error: CAP });
+    expect(last().problems[seeItWorn.id]).toEqual({ kind: "daily_cap", error: CAP });
+    expect(last().queuedIds).toEqual([]);
+  });
+
+  it("a refresh poll that errors ends Updating…: the old picture stays with Update preview and a short note", async () => {
+    const { runner, calls, last } = harness();
+    runner.start();
+    const o = outfit(1, { ...READY, outdated: true });
+    runner.refresh(o.id);
+    await flush();
+    const refreshing = { ...READY, outdated: true, refreshing: true };
+    calls[0]!.resolve({ ok: true, data: { outfit: { ...o, preview: refreshing } } });
+    await flush();
+    calls[1]!.resolve({ ok: false, error: FAILED });
+    await flush();
+    const view = previewView(refreshing, runner.activityFor(last(), o.id));
+    expect(view).toMatchObject({
+      kind: "image",
+      refreshing: false,
+      outdated: true,
+      note: { title: "Couldn't update the picture", message: "Try again later. The earlier picture stays for now." },
+    });
+  });
+
+  it("a sheet closed without a saved model leaves the queue waiting, and the next enqueue asks again", async () => {
+    const { runner, calls, last } = harness();
+    runner.start();
+    const a = outfit(1);
+    runner.enqueue([a]);
+    await flush();
+    calls[0]!.resolve({ ok: false, error: NEEDS_PRESET });
+    await flush();
+    runner.dismissPreset();
+    expect(last()).toMatchObject({ needsPreset: false, presetDismissed: true });
+    expect(runner.activityFor(last(), a.id)).toMatchObject({ awaitingPreset: true, inProgress: false });
+    await flush();
+    expect(calls).toHaveLength(1);
+
+    runner.enqueue([outfit(2)]);
+    expect(last()).toMatchObject({ needsPreset: true, presetDismissed: false });
+    runner.resume();
+    await flush();
+    expect(calls.map((c) => c.id)).toEqual([a.id, a.id]);
+  });
+
+  it("reports progress through a run for the screen's live line", async () => {
+    const { runner, calls, last } = harness();
+    runner.start();
+    const [a, b] = [outfit(1), outfit(2)];
+    runner.enqueue([a, b]);
+    await flush();
+    expect(last()).toMatchObject({ active: { id: a.id, refresh: false }, progress: { done: 0, total: 2 } });
+    calls[0]!.resolve({ ok: true, data: { outfit: { ...a, preview: READY } } });
+    await flush();
+    expect(last()).toMatchObject({ active: { id: b.id }, progress: { done: 1, total: 2 } });
+    calls[1]!.resolve({ ok: true, data: { outfit: { ...b, preview: READY } } });
+    await flush();
+    expect(last()).toMatchObject({ active: null, progress: { done: 0, total: 0 } });
   });
 });

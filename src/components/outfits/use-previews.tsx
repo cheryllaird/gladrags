@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { Outfit } from "@/contracts";
 import { outfitsApi } from "./api";
 import { PickModelSheet } from "./pick-model-sheet";
-import { EMPTY_RUNNER_STATE, PreviewRunner, type PreviewRunnerState } from "./preview-runner";
+import { EMPTY_RUNNER_STATE, PreviewRunner, RESULTS_POLICY, type PreviewPolicy, type PreviewRunnerState } from "./preview-runner";
 import type { PreviewActivity } from "./preview-view";
 
 /** Is a model preset picked? Anything but a clear answer lets the preview route decide. */
@@ -14,14 +14,26 @@ async function checkPreset(): Promise<"picked" | "missing" | "unknown"> {
   return result.data.modelPresetId ? "picked" : "missing";
 }
 
+/** The screen's one spoken progress line for pictures. Pure, so it's unit-tested. */
+export function previewAnnouncement(state: PreviewRunnerState): string {
+  if (state.needsPreset) return "";
+  if (state.presetDismissed && state.queuedIds.length > 0) return "Outfit pictures are waiting until you pick a model.";
+  if (!state.active) return "";
+  if (state.active.refresh) return "Updating the picture…";
+  const { done, total } = state.progress;
+  return total > 1 ? `Making picture ${Math.min(done + 1, total)} of ${total}…` : "Making the picture…";
+}
+
 /**
  * Outfit pictures for one screen: a PreviewRunner that lives as long as the
- * screen, its state for rendering, and the "Pick your model" sheet.
+ * screen, its state for rendering, the "Pick your model" sheet, and one
+ * live region that announces progress for the whole screen.
  *
  * `onOutfit` gets each outfit as the preview route returns it; the screen
- * puts it in place of its copy.
+ * puts it in place of its copy. `policy` says which outfits are asked for
+ * on their own (results: RESULTS_POLICY; saved list: SAVED_POLICY).
  */
-export function usePreviews(onOutfit: (outfit: Outfit) => void) {
+export function usePreviews(onOutfit: (outfit: Outfit) => void, policy: PreviewPolicy = RESULTS_POLICY) {
   const [state, setState] = useState<PreviewRunnerState>(EMPTY_RUNNER_STATE);
   const [runner] = useState(
     () =>
@@ -39,11 +51,17 @@ export function usePreviews(onOutfit: (outfit: Outfit) => void) {
     return () => runner.stop();
   }, [runner]);
 
-  const enqueue = useCallback((outfits: readonly Outfit[]) => runner.enqueue(outfits), [runner]);
+  const enqueue = useCallback((outfits: readonly Outfit[]) => runner.enqueue(outfits, policy), [runner, policy]);
+  const ask = useCallback((outfit: Outfit) => runner.ask(outfit), [runner]);
   const refresh = useCallback((outfitId: string) => runner.refresh(outfitId), [runner]);
   const activity = useCallback((outfitId: string): PreviewActivity => runner.activityFor(state, outfitId), [runner, state]);
 
-  const sheet = <PickModelSheet open={state.needsPreset} onSaved={() => runner.resume()} />;
+  const sheet = <PickModelSheet open={state.needsPreset} onSaved={() => runner.resume()} onDismissed={() => runner.dismissPreset()} />;
+  const announcer = (
+    <p role="status" aria-live="polite" className="sr-only" data-testid="preview-announcer">
+      {previewAnnouncement(state)}
+    </p>
+  );
 
-  return { enqueue, refresh, activity, sheet };
+  return { enqueue, ask, refresh, activity, sheet, announcer };
 }

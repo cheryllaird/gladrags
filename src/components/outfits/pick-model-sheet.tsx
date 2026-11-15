@@ -14,19 +14,25 @@ import { ApiErrorNotice } from "./result-notices";
  * model"). The default is preselected. Confirming saves the choice;
  * closing the sheet saves the default, so the user is asked exactly once.
  * Either way `onSaved` runs and the pictures start.
+ *
+ * If "Use this model" can't be saved, the sheet stays open with the error
+ * to try again. If closing can't save the default, the sheet closes anyway
+ * (`onDismissed`): the pictures wait, and the next time pictures are
+ * wanted the user is asked again.
  */
-export function PickModelSheet({ open, onSaved }: { open: boolean; onSaved: () => void }) {
+export function PickModelSheet({ open, onSaved, onDismissed }: { open: boolean; onSaved: () => void; onDismissed: () => void }) {
   const [selected, setSelected] = useState<ModelPresetId>(DEFAULT_MODEL_PRESET_ID);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<ApiFailure | null>(null);
 
-  async function save(id: ModelPresetId) {
+  async function save(id: ModelPresetId, closing: boolean) {
     if (saving) return;
     setSaving(true);
     setError(null);
     const result = await outfitsApi.saveModelPreset(id);
     setSaving(false);
     if (result.ok) onSaved();
+    else if (closing) onDismissed();
     // The sheet stays open with the error, so the choice can be saved again.
     else setError(result.error);
   }
@@ -36,7 +42,7 @@ export function PickModelSheet({ open, onSaved }: { open: boolean; onSaved: () =
       open={open}
       onOpenChange={(next) => {
         // Closing keeps the default (contract): save it, then the pictures start.
-        if (!next) void save(DEFAULT_MODEL_PRESET_ID);
+        if (!next) void save(DEFAULT_MODEL_PRESET_ID, true);
       }}
     >
       <SheetContent
@@ -56,7 +62,7 @@ export function PickModelSheet({ open, onSaved }: { open: boolean; onSaved: () =
         </div>
         <SheetFooter className="border-t pt-3">
           {error && <ApiErrorNotice error={error} context="outfits" />}
-          <Button type="button" className="w-full" disabled={saving} onClick={() => void save(selected)}>
+          <Button type="button" className="w-full" disabled={saving} onClick={() => void save(selected, false)}>
             {saving ? "Saving…" : "Use this model"}
           </Button>
         </SheetFooter>

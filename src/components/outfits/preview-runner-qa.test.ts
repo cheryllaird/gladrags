@@ -308,12 +308,9 @@ describe("slow and stuck", () => {
     );
   });
 
-  // BUG (low): a refresh that is still pending at the polling limit keeps the
-  // old picture with the server's `refreshing: true`, so "Updating…" stays up
-  // for good, and the slow note says "Here are the pieces for now" though the
-  // picture, not the pieces, is showing (preview-view.ts previewNote "slow"
-  // ignores `attempt`; previewView takes `refreshing` from the server only).
-  it.fails(
+  // Was BUG (low), fixed: a refresh still pending at the polling limit no
+  // longer keeps "Updating…" up, and its note doesn't claim the pieces show.
+  it(
     "a stuck refresh doesn't keep saying Updating… or claim the pieces are shown",
     async () => {
       const h = harness({ maxPolls: 2 });
@@ -418,7 +415,7 @@ describe("refresh keeps the old picture", () => {
     await flush();
     let view = previewView(OUTDATED, h.runner.activityFor(h.last(), o.id));
     expect(view.kind === "image" && view.note?.title).toBe(
-      "We couldn't update the picture",
+      "Couldn't update the picture",
     );
     h.runner.refresh(o.id);
     view = previewView(OUTDATED, h.runner.activityFor(h.last(), o.id));

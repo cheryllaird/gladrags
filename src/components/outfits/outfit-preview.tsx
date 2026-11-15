@@ -1,27 +1,31 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { DownloadIcon, ImageIcon, LayoutGridIcon, LoaderCircleIcon, RefreshCwIcon, SparklesIcon } from "lucide-react";
 import type { Outfit } from "@/contracts";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { canvasToPng, loadImage, saveImageBlob } from "./collage-draw";
 import { OutfitCollage } from "./outfit-collage";
-import { previewView, suggestedLabels, type PreviewActivity, type PreviewNote } from "./preview-view";
+import { canAskForPicture } from "./preview-runner";
+import { previewView, suggestedPieces, type PreviewActivity, type PreviewNote } from "./preview-view";
 
 interface OutfitPreviewProps {
   outfit: Outfit;
   activity: PreviewActivity;
   /** "Update preview" on an outdated picture. Hidden without it. */
   onUpdatePreview?: () => void;
-  /** Called once when the panel comes near the screen (saved list: ask for pictures as they're reached). */
-  onNear?: () => void;
+  /**
+   * "See it worn" (saved list): ask for this outfit's picture. Offered when
+   * it has none yet but could; it counts against the daily picture cap.
+   */
+  onSeeItWorn?: () => void;
   /** Draw the collage only near the screen (long lists). */
   lazyCollage?: boolean;
   onReloadPictures?: () => Promise<void>;
 }
 
-/** The generated picture as a PNG, so "Save image" can share it straight from the tap. */
+/** The generated picture as a PNG, for "Save image". */
 async function pictureToPng(url: string): Promise<Blob> {
   const img = await loadImage(url);
   const canvas = document.createElement("canvas");
@@ -42,50 +46,25 @@ async function pictureToPng(url: string): Promise<Blob> {
  * An outfit's picture: the generated "wearing it" image when it's ready,
  * otherwise the collage (the placeholder while it's made, and the
  * fallback when it can't be). See preview-view.ts for which is shown.
+ *
+ * Progress ("Making picture 2 of 4", "Updating…") is announced once for
+ * the whole screen by PreviewAnnouncer, not by each card.
  */
 export function OutfitPreviewPanel(props: OutfitPreviewProps) {
   const { outfit, activity } = props;
   const view = previewView(outfit.preview, activity);
-  const rootRef = useRef<HTMLDivElement>(null);
   const [showPieces, setShowPieces] = useState(false);
   /** The picture URL that failed to load (an expired link, say); a fresh URL gets a fresh try. */
   const [brokenUrl, setBrokenUrl] = useState<string | null>(null);
 
-  // Saved list: ask for this outfit's picture once it's within a screen or so.
-  // A ref, so a new callback each render doesn't start a new observer.
-  const onNearRef = useRef(props.onNear);
-  useEffect(() => {
-    onNearRef.current = props.onNear;
-  }, [props.onNear]);
-  const wantsNear = props.onNear !== undefined;
-  useEffect(() => {
-    if (!wantsNear) return;
-    const onNear = () => onNearRef.current?.();
-    const el = rootRef.current;
-    if (!el || typeof IntersectionObserver === "undefined") {
-      onNear();
-      return;
-    }
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) {
-          observer.disconnect();
-          onNear();
-        }
-      },
-      { rootMargin: "800px 0px" },
-    );
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [wantsNear]);
-
   const imageUrl = view.kind === "image" ? view.imageUrl : null;
   const pictureShown = view.kind === "image" && brokenUrl !== imageUrl;
-  const labels = suggestedLabels(outfit.preview.suggestedSlots, outfit.gaps);
+  const pieces = suggestedPieces(outfit.preview.suggestedSlots, outfit.gaps);
+  const refused = activity.problem?.kind === "daily_cap" || activity.problem?.kind === "paused";
+  const offerSeeItWorn = props.onSeeItWorn && view.kind === "collage" && !refused && canAskForPicture(outfit);
 
   return (
     <div
-      ref={rootRef}
       className="space-y-2"
       data-testid="outfit-preview"
       data-state={pictureShown ? "ready" : view.kind === "making" ? "making" : "collage"}
@@ -100,7 +79,7 @@ export function OutfitPreviewPanel(props: OutfitPreviewProps) {
           <img
             key={imageUrl}
             src={imageUrl!}
-            alt={`${outfit.name}, worn by your model${labels.length ? ` (${labels.join(", ").toLowerCase()})` : ""}`}
+            alt={`${outfit.name}, worn by your model${pieces.length ? ` (${pieces.map((p) => p.label).join(", ").toLowerCase()})` : ""}`}
             crossOrigin="anonymous"
             data-testid="preview-image"
             onError={() => setBrokenUrl(imageUrl)}
@@ -139,13 +118,13 @@ export function OutfitPreviewPanel(props: OutfitPreviewProps) {
         />
       )}
 
-      {pictureShown && labels.length > 0 && (
+      {pictureShown && pieces.length > 0 && (
         <ul className="flex flex-wrap gap-1.5" aria-label="Suggested pieces, not from your wardrobe" data-testid="suggested-labels">
-          {labels.map((label) => (
-            <li key={label}>
+          {pieces.map((piece) => (
+            <li key={piece.slot}>
               <Badge variant="outline" className="border-dashed">
                 <SparklesIcon aria-hidden />
-                {label}
+                {piece.label}
               </Badge>
             </li>
           ))}
@@ -166,13 +145,20 @@ export function OutfitPreviewPanel(props: OutfitPreviewProps) {
 
       {view.kind === "image" && view.note && <PreviewNoteBox note={view.note} />}
       {view.kind === "collage" && view.note && <PreviewNoteBox note={view.note} />}
+
+      {offerSeeItWorn && (
+        <Button type="button" variant="outline" className="w-full" onClick={props.onSeeItWorn}>
+          <SparklesIcon aria-hidden />
+          See it worn
+        </Button>
+      )}
     </div>
   );
 }
 
 function MakingNotice({ awaitingPreset }: { awaitingPreset: boolean }) {
   return (
-    <p role="status" className="flex min-h-11 items-center gap-2 text-sm font-medium" data-testid="preview-making">
+    <p className="flex min-h-11 items-center gap-2 text-sm font-medium" data-testid="preview-making">
       {awaitingPreset ? (
         <>
           <ImageIcon aria-hidden className="text-muted-foreground size-4 shrink-0" />
@@ -208,31 +194,39 @@ function PictureControls(props: {
   onUpdatePreview?: () => void;
 }) {
   const { imageUrl, outfitName } = props;
-  const pngRef = useRef<{ url: string; png: Blob } | null>(null);
+  /**
+   * The PNG, started on the first sign the user is about to tap (pointer
+   * down, focus or hover) rather than for every picture on the screen, so
+   * it's usually ready by the click and the share sheet opens inside the tap.
+   */
+  const pngRef = useRef<{ url: string; png: Promise<Blob>; ready: Blob | null } | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
 
-  // Make the PNG ahead, so the share sheet can open inside the tap.
-  useEffect(() => {
-    let cancelled = false;
-    pictureToPng(imageUrl).then(
-      (png) => {
-        if (!cancelled) pngRef.current = { url: imageUrl, png };
+  function prepare(): Promise<Blob> {
+    const current = pngRef.current;
+    if (current?.url === imageUrl) return current.png;
+    const entry: { url: string; png: Promise<Blob>; ready: Blob | null } = { url: imageUrl, png: pictureToPng(imageUrl), ready: null };
+    entry.png.then(
+      (blob) => {
+        entry.ready = blob;
       },
       () => {
-        // Saving will try again, and say so if it still can't.
+        // A failed attempt is tried again on the next tap.
+        if (pngRef.current === entry) pngRef.current = null;
       },
     );
-    return () => {
-      cancelled = true;
-    };
-  }, [imageUrl]);
+    pngRef.current = entry;
+    return entry.png;
+  }
 
   function handleSave() {
     setSaving(true);
     setSaveMessage(null);
-    const ready = pngRef.current?.url === imageUrl ? pngRef.current.png : null;
-    const save = ready ? saveImageBlob(ready, outfitName) : pictureToPng(imageUrl).then((png) => saveImageBlob(png, outfitName));
+    const current = pngRef.current;
+    const ready = current?.url === imageUrl ? current.ready : null;
+    // Nothing is awaited before sharing when the PNG is ready (see saveImageBlob).
+    const save = ready ? saveImageBlob(ready, outfitName) : prepare().then((png) => saveImageBlob(png, outfitName));
     save
       .then((result) => {
         if (result === "downloaded") setSaveMessage("Image saved to your downloads.");
@@ -245,8 +239,8 @@ function PictureControls(props: {
     <div className="space-y-1">
       <div className="flex flex-wrap items-center justify-between gap-1">
         <Button type="button" variant="ghost" aria-pressed={props.showPieces} onClick={props.onTogglePieces}>
-          {props.showPieces ? <ImageIcon aria-hidden /> : <LayoutGridIcon aria-hidden />}
-          {props.showPieces ? "Show the picture" : "Show the pieces"}
+          <LayoutGridIcon aria-hidden />
+          Show the pieces
         </Button>
         <div className="flex gap-1">
           {/* While refreshing, the "Updating…" badge on the picture says so. */}
@@ -256,7 +250,16 @@ function PictureControls(props: {
               Update preview
             </Button>
           )}
-          <Button type="button" variant="ghost" onClick={handleSave} disabled={saving} aria-label={`Save image of ${outfitName}`}>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={handleSave}
+            onPointerDown={() => void prepare().catch(() => {})}
+            onPointerEnter={() => void prepare().catch(() => {})}
+            onFocus={() => void prepare().catch(() => {})}
+            disabled={saving}
+            aria-label={`Save image of ${outfitName}`}
+          >
             <DownloadIcon aria-hidden />
             Save image
           </Button>

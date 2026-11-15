@@ -361,6 +361,7 @@ export function OutfitsScreen({ initialAnchorId }: { initialAnchorId: string | n
           )}
         </section>
       )}
+      {previews.announcer}
       {previews.sheet}
     </main>
   );

@@ -330,7 +330,7 @@ describe("PickModelSheet", () => {
       },
     });
     const onSaved = vi.fn();
-    render(<PickModelSheet open onSaved={onSaved} />);
+    render(<PickModelSheet open onSaved={onSaved} onDismissed={vi.fn()} />);
     const sheet = screen.getByTestId("pick-model-sheet");
     expect(
       within(sheet).getByRole("radio", {
@@ -355,7 +355,7 @@ describe("PickModelSheet", () => {
       },
     });
     const onSaved = vi.fn();
-    render(<PickModelSheet open onSaved={onSaved} />);
+    render(<PickModelSheet open onSaved={onSaved} onDismissed={vi.fn()} />);
     await userEvent.keyboard("{Escape}");
     await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
     expect(outfitsApi.saveModelPreset).toHaveBeenCalledWith(
@@ -378,7 +378,7 @@ describe("PickModelSheet", () => {
         },
       });
     const onSaved = vi.fn();
-    render(<PickModelSheet open onSaved={onSaved} />);
+    render(<PickModelSheet open onSaved={onSaved} onDismissed={vi.fn()} />);
     const sheet = screen.getByTestId("pick-model-sheet");
     await userEvent.click(
       within(sheet).getByRole("radio", {
@@ -406,20 +406,24 @@ describe("PickModelSheet", () => {
     ).toEqual(["women_plus_deep", "women_plus_deep"]);
   });
 
-  it("a failed save on close keeps the sheet open too", async () => {
+  // Orchestrator decision (review round 1): closing can't be refused. A
+  // failed save of the default dismisses the sheet; the pictures wait and
+  // the user is asked again next time (the runner's dismissPreset).
+  it("a failed save on close lets the sheet go, without starting the pictures", async () => {
     vi.mocked(outfitsApi.saveModelPreset).mockResolvedValue({
       ok: false,
       error: { code: "internal", message: "Down" },
     });
     const onSaved = vi.fn();
-    render(<PickModelSheet open onSaved={onSaved} />);
+    const onDismissed = vi.fn();
+    render(<PickModelSheet open onSaved={onSaved} onDismissed={onDismissed} />);
     await userEvent.click(
       within(screen.getByTestId("pick-model-sheet")).getByRole("button", {
         name: "Close",
       }),
     );
-    expect(await screen.findByTestId("api-error")).toBeInTheDocument();
-    expect(screen.getByTestId("pick-model-sheet")).toBeInTheDocument();
+    await waitFor(() => expect(onDismissed).toHaveBeenCalledTimes(1));
+    expect(outfitsApi.saveModelPreset).toHaveBeenCalledWith(DEFAULT_MODEL_PRESET_ID);
     expect(onSaved).not.toHaveBeenCalled();
   });
 
@@ -431,7 +435,7 @@ describe("PickModelSheet", () => {
       () => new Promise((r) => (resolve = r)),
     );
     const onSaved = vi.fn();
-    render(<PickModelSheet open onSaved={onSaved} />);
+    render(<PickModelSheet open onSaved={onSaved} onDismissed={vi.fn()} />);
     const button = within(screen.getByTestId("pick-model-sheet")).getByRole(
       "button",
       { name: "Use this model" },

@@ -3,7 +3,6 @@ import { NO_PREVIEW, type OutfitGap, type OutfitPreview } from "@/contracts";
 import type { ApiFailure } from "./api";
 import {
   IDLE_ACTIVITY,
-  previewNeedsRequest,
   previewNote,
   previewView,
   problemForError,
@@ -95,7 +94,7 @@ describe("previewNote", () => {
   });
 
   it("words an update failure differently from a first failure", () => {
-    expect(previewNote({ kind: "failed", error: null }, "update").title).toBe("We couldn't update the picture");
+    expect(previewNote({ kind: "failed", error: null }, "update").title).toBe("Couldn't update the picture");
     expect(previewNote({ kind: "failed", error: null }, "update").message).toMatch(/earlier picture stays/);
   });
 });
@@ -107,16 +106,5 @@ describe("suggestedLabels", () => {
 
   it("falls back to the slot's name", () => {
     expect(suggestedLabels(["outerwear", "shoes"], [gap("shoes", null)])).toEqual(["Outerwear suggested", "Shoes suggested"]);
-  });
-});
-
-describe("previewNeedsRequest", () => {
-  it("is true for none, pending, skipped and refreshing; false for ready and failed", () => {
-    expect(previewNeedsRequest({ preview: NO_PREVIEW })).toBe(true);
-    expect(previewNeedsRequest({ preview: { ...NO_PREVIEW, status: "pending" } })).toBe(true);
-    expect(previewNeedsRequest({ preview: { ...NO_PREVIEW, status: "skipped", failureReason: "ai_paused" } })).toBe(true);
-    expect(previewNeedsRequest({ preview: { ...READY, outdated: true, refreshing: true } })).toBe(true);
-    expect(previewNeedsRequest({ preview: READY })).toBe(false);
-    expect(previewNeedsRequest({ preview: { ...NO_PREVIEW, status: "failed", failureReason: "ai_failed" } })).toBe(false);
   });
 });
