@@ -100,6 +100,11 @@ Integration branch for this round: `claude/cheryl-test-feedback-5xw3vb` (started
 | S9 | Per-shop image host list (drop other hosts; build CSP `img-src` from it; relative paths mock-only) | foundations + outfit-engine | ☐ minor |
 | S10 | Cut-out uploads: light daily limit (~200) and a minimum size | ingestion | ☐ minor |
 | S11 | Postmark spam filtering on; rotate the Vercel bypass secret after previews; check Google grounding terms (Search Suggestions display) | Cheryl | ☐ |
+| S12 | One tester can use the whole £2 image share in a day or two (12/day × up to 2 attempts × 8p): per-user monthly image allowance, or a lower daily cap counting attempts | foundations + outfit-engine (Cheryl decides the numbers) | ☐ blocker before testers |
+| S13 | Previews send item originals (possibly with bedroom backgrounds) when no cut-out exists yet: client waits for that outfit's cut-outs before requesting its preview | outfit-ui | ☐ |
+| S14 | Privacy note: add previews (model figure, item pictures incl. originals, descriptions, picked shop pictures, stored privately, AI-made and suggested pieces, deletion), with S2's email and shop search text; drop "(paid tier)" until true | orchestrator (Cheryl approves) | ☐ blocker before testers |
+| S15 | Real preset figures (P5): generate on the paid tier with the prompt and script kept in the repo; check Gemini terms and prohibited-use policy; no real-person likeness; Cheryl reviews labels; then flip `MODEL_PRESET_IMAGES_ARE_PLACEHOLDERS`. Label previews as AI-made (badge, alt text, file name) | orchestrator + outfit-ui | ☐ |
+| S16 | Minor: drop the users' "previews: delete own" storage policy (or accept it); abort timed-out item picture loads | foundations / outfit-engine | ☐ minor |
 
 Decisions made by the orchestrator within Cheryl's choices (tell her at the checkpoint):
 
@@ -124,7 +129,7 @@ Decisions (SPEC.md "Generated outfit preview"): a preview image for every outfit
 | P4 | Settings: preset model picker grid | wardrobe-ui | `r2/model-picker` | ☑ merged. Review: approved with 1 medium a11y + 4 minor → fixed (97320f6). QA: 22 e2e tests; 1 low bug (unknown stored preset breaks settings) → contract follow-up in `r2/contracts-followups`. | P1 (mocks) |
 | P5 | Preset model images: placeholders now; generate the real set once with the paid tier and check them with Cheryl | orchestrator | | ☐ | Gemini paid tier |
 | P6 | Journey tests with previews (mock provider) | qa | `r2/journeys` | ☑ folded into P3: `journeys-previews.spec.ts` runs journeys 2 and 5 with previews on. Full e2e on the merged round 2 tree (33ae607): 401 passed, 21 opt-in skipped, 0 failed; 4,633 unit tests; build green. | P2–P4 |
-| P7 | Security and privacy re-check (previews storage, deletion, what Gemini sees, privacy note) | security | | ◐ running | P2–P4 |
+| P7 | Security and privacy re-check (previews storage, deletion, what Gemini sees, privacy note) | security | | ☑ done on 33ae607: no security blocker; storage, deletion, SSRF and output checks hold. Preview blocker A (free-tier 429s booked as 8p) being fixed in `r2/previews-quota`. Before-testers items S12–S16 below. | P2–P4 |
 | P8 | Preview deploy, checkpoint for Cheryl | orchestrator | | ☐ | P6, P7 |
 
 Budget note for Cheryl: at an estimated 8p per image (unverified; Google's price page is blocked here, and the P2 builder priced one at about 7.8p with headroom), about £2 a month buys roughly 25 previews across all testers, about 6 outfit requests' worth. The daily cap starts at 12 previews per user (3 requests). Expect to raise the cap or the budget once real prices are known.
