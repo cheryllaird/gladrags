@@ -123,7 +123,7 @@ Decisions (SPEC.md "Generated outfit preview"): a preview image for every outfit
 | P3 | Preview in results and saved outfits: collage as placeholder, previews generated one after another, fallback to collage, "Pick your model" prompt on first use, save image | outfit-ui | `r2/preview-ui` | ☑ merged. Review: changes needed (saved list spent the image cap on view) + 8 minor → fixed, re-approved at 7d994e1. QA: ~60 tests, 5 low → fixed. Saved outfits without a picture show "See it worn" (orchestrator decision). | P1 (mocks), P4 grid |
 | P4 | Settings: preset model picker grid | wardrobe-ui | `r2/model-picker` | ☑ merged. Review: approved with 1 medium a11y + 4 minor → fixed (97320f6). QA: 22 e2e tests; 1 low bug (unknown stored preset breaks settings) → contract follow-up in `r2/contracts-followups`. | P1 (mocks) |
 | P5 | Preset model images: placeholders now; generate the real set once with the paid tier and check them with Cheryl | orchestrator | | ☐ | Gemini paid tier |
-| P6 | Journey tests with previews (mock provider) | qa | `r2/journeys` | ☐ | P2–P4 |
+| P6 | Journey tests with previews (mock provider) | qa | `r2/journeys` | ☑ folded into P3: `journeys-previews.spec.ts` runs journeys 2 and 5 with previews on. Full e2e on the merged round 2 tree (33ae607): 401 passed, 21 opt-in skipped, 0 failed; 4,633 unit tests; build green. | P2–P4 |
 | P7 | Security and privacy re-check (previews storage, deletion, what Gemini sees, privacy note) | security | | ◐ running | P2–P4 |
 | P8 | Preview deploy, checkpoint for Cheryl | orchestrator | | ☐ | P6, P7 |
 
