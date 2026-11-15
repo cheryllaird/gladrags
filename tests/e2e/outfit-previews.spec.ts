@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page, type Request } from "@playwright/test";
-import { installFakeBackgroundRemover } from "./helpers";
+import { blockOutfitPreviews, installFakeBackgroundRemover } from "./helpers";
 import { checkPhoneLayout } from "./phone-layout";
 
 // Round 2, P3: generated outfit pictures on the results and saved screens,
@@ -8,12 +8,11 @@ import { checkPhoneLayout } from "./phone-layout";
 // (docs/CONTRACTS.md section 1). The mock store is shared by every test
 // on the server, so each test picks out its own outfits.
 //
-// The failure, cap and pause states answer the preview route with the
-// contract-shaped error each marker (mock-preview-fails, -cap, -paused)
-// stands for. The markers alone aren't reliable in this shared store: an
-// outfit whose look another test already pictured reuses that picture
-// before the marker is looked at, and a failed look stays failed for an
-// hour, which would leak into the other tests. "Pick your model" is reached by answering
+// The failure, cap and pause states use the mock markers in the guidance
+// (mock-preview-fails, -cap, -paused); the mock checks them before any
+// reuse, per outfit, so they don't leak into other tests. "Update preview"
+// plays the route's answers with page.route, because the shared store may
+// already hold the refreshed look. "Pick your model" is reached by answering
 // GET /api/settings with modelPresetId: null and the preview route with
 // the no-preset bad_request until a preset is saved.
 
@@ -93,10 +92,13 @@ test.describe("pictures in results", () => {
 
     // The item list stays, and the collage is one tap away.
     await expect(first.getByRole("list", { name: "Items in this outfit" })).toBeVisible();
-    await first.getByRole("button", { name: "Show the pieces" }).click();
+    const toggle = first.getByRole("button", { name: "Show the pieces" });
+    await expect(toggle).toHaveAttribute("aria-pressed", "false");
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-pressed", "true");
     await expect(first.getByTestId("outfit-collage")).toHaveAttribute("data-state", "ready");
     await expect(first.getByTestId("preview-image")).toHaveCount(0);
-    await first.getByRole("button", { name: "Show the picture" }).click();
+    await toggle.click();
     await expect(first.getByTestId("preview-image")).toBeVisible();
 
     // "Save image" saves the picture, as a PNG.
@@ -149,14 +151,15 @@ test.describe("pictures in results", () => {
   test("picking a shop product marks the picture outdated; Update preview makes a new one, keeping the old one meanwhile", async ({
     page,
   }) => {
+    const fake = await playPreviewRoute(page);
     const watch = watchPreviewRequests(page);
     await requestOutfits(page, { shopItems: true, guidance: "update my picture" });
     const card = cards(page).first();
-    // QA: wait for every picture in the set, so the next request counted is the refresh.
     const count = await cards(page).count();
     for (let i = 0; i < count; i++) {
       await expect(preview(cards(page).nth(i))).toHaveAttribute("data-state", "ready", { timeout: 15_000 });
     }
+    await expect(card.getByTestId("preview-image")).toHaveAttribute("src", fake.OLD);
 
     await card.getByRole("button", { name: "Find in my shops" }).click();
     const products = card.getByTestId("product-card");
@@ -168,45 +171,94 @@ test.describe("pictures in results", () => {
     await expect(update).toBeVisible();
     const before = watch.sent.length;
     await update.click();
-    // The old picture stays, with "Updating…", until the new one is ready.
+    // The old picture stays, with "Updating…", until the new one is ready; the screen says so once.
     await expect(card.getByTestId("preview-updating")).toBeVisible();
-    await expect(card.getByTestId("preview-image")).toBeVisible();
-    await expect(card.getByTestId("preview-updating")).toHaveCount(0, { timeout: 15_000 });
+    await expect(card.getByTestId("preview-image")).toHaveAttribute("src", fake.OLD);
+    await expect(page.getByTestId("preview-announcer")).toHaveText("Updating the picture…");
+    await expect(card.getByTestId("preview-image")).toHaveAttribute("src", fake.NEW, { timeout: 15_000 });
+    await expect(card.getByTestId("preview-updating")).toHaveCount(0);
     await expect(update).toHaveCount(0);
-    expect(watch.sent.slice(before)[0]).toEqual({ outfitId: await card.getAttribute("data-outfit-id"), refresh: true });
+    const id = await card.getAttribute("data-outfit-id");
+    // The refresh, then one poll while it was still being made.
+    expect(watch.sent.slice(before)).toEqual([
+      { outfitId: id, refresh: true },
+      { outfitId: id, refresh: true },
+    ]);
     await checkPhoneLayout(page, "results with an updated picture");
+  });
+
+  test("an update that can't be made keeps the old picture, with a short note and Update preview again", async ({ page }) => {
+    const fake = await playPreviewRoute(page, { refreshFails: true });
+    await requestOutfits(page, { shopItems: true, guidance: "update that fails" });
+    const card = cards(page).first();
+    await expect(preview(card)).toHaveAttribute("data-state", "ready", { timeout: 15_000 });
+    await card.getByRole("button", { name: "Find in my shops" }).click();
+    await card.getByTestId("product-card").first().getByRole("button", { name: "Pick this" }).click();
+    await card.getByRole("button", { name: "Update preview" }).click();
+    await expect(card.getByTestId("preview-note")).toContainText("Couldn't update the picture", { timeout: 15_000 });
+    await expect(card.getByTestId("preview-updating")).toHaveCount(0);
+    await expect(card.getByTestId("preview-image")).toHaveAttribute("src", fake.OLD);
+    await expect(card.getByRole("button", { name: "Update preview" })).toBeVisible();
   });
 });
 
-/** What the mock route answers for each preview marker (docs/CONTRACTS.md, section 1). */
-const MARKER_ERRORS = {
-  "mock-preview-fails": { status: 502, error: { code: "ai_failed", message: "We couldn't make a picture of this outfit." } },
-  "mock-preview-cap": {
-    status: 429,
-    error: {
-      code: "daily_cap_reached",
-      message: "Daily cap reached",
-      cap: { kind: "outfit_previews_per_day", limit: 12, resetsAt: "2026-11-15T00:00:00.000Z" },
-    },
-  },
-  "mock-preview-paused": {
-    status: 503,
-    error: {
-      code: "ai_paused",
-      message: "Paused",
-      cap: { kind: "monthly_image_spend", limit: 200, resetsAt: "2026-12-01T00:00:00.000Z" },
-    },
-  },
-} as const;
-
-async function previewsAnswer(page: Page, marker: keyof typeof MARKER_ERRORS) {
-  const { status, error } = MARKER_ERRORS[marker];
-  await page.route(/\/api\/outfits\/[^/]+\/preview(\?.*)?$/, (route) => route.fulfill({ status, json: { error } }));
+/**
+ * Plays the preview route for "Update preview": each outfit's picture is
+ * ready (OLD) at once; a gap pick marks it outdated; a refresh answers
+ * `refreshing` first, then the NEW picture on the next poll (or, with
+ * `refreshFails`, ai_failed). Deterministic whatever the shared store holds.
+ */
+async function playPreviewRoute(page: Page, options: { refreshFails?: boolean } = {}) {
+  const OLD = "/mock/previews/preview.svg";
+  const NEW = "/mock/previews/preview-suggested.svg";
+  const state = new Map<string, { phase: "old" | "refreshing" | "new"; outdated: boolean }>();
+  type Body = { outfit: { id: string; gaps: { category: string }[]; preview: unknown } };
+  const previewFor = (body: Body) => {
+    const s = state.get(body.outfit.id) ?? { phase: "old", outdated: false };
+    state.set(body.outfit.id, s);
+    return {
+      status: "ready",
+      imageUrl: s.phase === "new" ? NEW : OLD,
+      failureReason: null,
+      presetId: "women_average_medium",
+      suggestedSlots: body.outfit.gaps.map((g) => g.category),
+      outdated: s.outdated,
+      refreshing: s.phase === "refreshing",
+    };
+  };
+  await page.route(/\/api\/outfits\/[^/]+\/preview(\?.*)?$/, async (route) => {
+    const url = new URL(route.request().url());
+    const id = url.pathname.split("/")[3]!;
+    const s = state.get(id) ?? { phase: "old" as const, outdated: false };
+    state.set(id, s);
+    if (url.searchParams.get("refresh") === "true") {
+      if (s.phase !== "refreshing") s.phase = "refreshing";
+      else if (options.refreshFails) {
+        s.phase = "old";
+        return route.fulfill({ status: 502, json: { error: { code: "ai_failed", message: "No picture" } } });
+      } else {
+        s.phase = "new";
+        s.outdated = false;
+      }
+    }
+    const response = await route.fetch({ url: `${url.origin}/api/outfits/${id}`, method: "GET" });
+    const body = (await response.json()) as Body;
+    await route.fulfill({ response, json: { ...body, outfit: { ...body.outfit, preview: previewFor(body) } } });
+  });
+  await page.route(/\/api\/outfits\/[^/]+\/gaps\/[^/]+$/, async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as Body;
+    if (!response.ok()) return route.fulfill({ response });
+    const s = state.get(body.outfit.id) ?? { phase: "old" as const, outdated: false };
+    s.outdated = true;
+    state.set(body.outfit.id, s);
+    await route.fulfill({ response, json: { ...body, outfit: { ...body.outfit, preview: previewFor(body) } } });
+  });
+  return { OLD, NEW };
 }
 
 test.describe("when there's no picture", () => {
   test("a failed picture keeps the collage with a short, kind note", async ({ page }) => {
-    await previewsAnswer(page, "mock-preview-fails");
     await requestOutfits(page, { guidance: "mock-preview-fails" });
     const first = cards(page).first();
     await expect(preview(first)).toHaveAttribute("data-reason", "failed", { timeout: 15_000 });
@@ -218,7 +270,6 @@ test.describe("when there's no picture", () => {
 
   test("the daily cap: the collages show, the cap is explained once per card, and no more pictures are asked for", async ({ page }) => {
     const watch = watchPreviewRequests(page);
-    await previewsAnswer(page, "mock-preview-cap");
     await requestOutfits(page, { guidance: "mock-preview-cap" });
     const count = await cards(page).count();
     for (let i = 0; i < count; i++) {
@@ -232,7 +283,6 @@ test.describe("when there's no picture", () => {
   });
 
   test("a pause has its own wording", async ({ page }) => {
-    await previewsAnswer(page, "mock-preview-paused");
     await requestOutfits(page, { guidance: "mock-preview-paused" });
     const first = cards(page).first();
     await expect(preview(first)).toHaveAttribute("data-reason", "paused", { timeout: 15_000 });
@@ -305,6 +355,35 @@ test.describe("Pick your model", () => {
 });
 
 test.describe("saved outfits", () => {
+  test("viewing the list asks for nothing; See it worn asks for that outfit only", async ({ page }) => {
+    // Save an outfit that has no picture yet.
+    await blockOutfitPreviews(page);
+    await requestOutfits(page, { guidance: "saved without a picture" });
+    const card = cards(page).first();
+    const id = (await card.getAttribute("data-outfit-id"))!;
+    const save = page.waitForResponse((r) => r.request().method() === "PATCH" && r.url().endsWith(`/api/outfits/${id}`));
+    await card.getByRole("group", { name: /^Feedback on / }).getByRole("button", { name: "Save", exact: true }).click();
+    expect((await save).status()).toBe(200);
+    await page.unrouteAll({ behavior: "wait" });
+
+    const watch = watchPreviewRequests(page);
+    await page.goto("/outfits/saved");
+    const savedCard = page.locator(`[data-testid="outfit-card"][data-outfit-id="${id}"]`);
+    await savedCard.scrollIntoViewIfNeeded();
+    await expect(preview(savedCard)).toHaveAttribute("data-state", "collage");
+    await expect(savedCard.getByTestId("outfit-collage")).toBeVisible();
+    // Scrolling the whole list asks for nothing.
+    await page.mouse.wheel(0, 20_000);
+    await page.waitForTimeout(500);
+    expect(watch.sent).toEqual([]);
+
+    await savedCard.scrollIntoViewIfNeeded();
+    await savedCard.getByRole("button", { name: "See it worn" }).click();
+    await expect(preview(savedCard)).toHaveAttribute("data-state", "ready", { timeout: 15_000 });
+    expect(watch.sent).toEqual([{ outfitId: id, refresh: false }]);
+    await checkPhoneLayout(page, "saved outfits with See it worn");
+  });
+
   test("show their pictures the same way, with the pieces a tap away", async ({ page }) => {
     await requestOutfits(page, { guidance: "saved with a picture" });
     const card = cards(page).first();

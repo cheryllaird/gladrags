@@ -542,7 +542,10 @@ test.describe("QA: Pick your model", () => {
     return { puts, fake };
   }
 
-  test("a failed save on close keeps the sheet open with an error; trying again saves and the pictures start", async ({
+  // Orchestrator decision (review round 1): closing can't be refused. When
+  // the default can't be saved on close, the sheet goes, the cards say the
+  // pictures wait for a model, and the next request asks again.
+  test("a failed save on close lets the sheet go; pictures wait, and the next set asks again", async ({
     page,
   }) => {
     const { puts, fake } = await withoutPreset(page, [500]);
@@ -552,11 +555,20 @@ test.describe("QA: Pick your model", () => {
       sheet.getByRole("heading", { name: "Pick your model" }),
     ).toBeVisible();
     await sheet.getByRole("button", { name: "Close" }).click();
-    await expect(sheet.getByTestId("api-error")).toBeVisible();
-    await expect(sheet).toBeVisible();
+    await expect(sheet).toHaveCount(0);
+    const first = cards(page).first();
+    await expect(first.getByText("Pick your model to see this outfit worn.")).toBeVisible();
+    await expect(page.getByTestId("preview-announcer")).toHaveText(
+      "Outfit pictures are waiting until you pick a model.",
+    );
     // No picture is asked for while the model isn't saved.
     expect(fake.calls).toHaveLength(0);
-    await checkPhoneLayout(page, "QA Pick your model with an error");
+    await checkPhoneLayout(page, "QA pictures waiting for a model");
+
+    // A tweak brings new outfits, and the question back.
+    await first.getByRole("button", { name: "Tweak this outfit" }).click();
+    await first.getByRole("button", { name: "Warmer" }).click();
+    await expect(sheet.getByRole("heading", { name: "Pick your model" })).toBeVisible();
     await sheet.getByRole("button", { name: "Use this model" }).click();
     await expect(sheet).toHaveCount(0);
     expect(puts).toEqual([
@@ -721,13 +733,18 @@ test.describe("QA: picture images", () => {
 });
 
 test.describe("QA: saved outfits", () => {
-  test("pictures are asked for lazily as cards come near, one at a time, and ready ones are never asked for", async ({
+  // Orchestrator decision (review round 1): viewing the saved list never
+  // spends the daily picture cap. Only pictures already being made
+  // (pending or refreshing) are picked up on their own; the rest wait for
+  // "See it worn", which asks for that outfit alone.
+  test("a long list asks only for pictures being made; See it worn asks for the tapped ones, one at a time", async ({
     page,
   }) => {
     const fake = await fakePreviews(page, ({ id }) => ({
       preview: ready(`/qa-previews/${id}.png`),
     }));
-    // A long saved list: the first real saved outfit, repeated under new ids; every third already pictured.
+    // A long saved list: the first real saved outfit, repeated under new ids:
+    // every third already pictured, every third with none, every third pending.
     const fakeIds: string[] = [];
     await page.route(LIST_ROUTE, async (route) => {
       if (route.request().method() !== "GET") return route.fallback();
@@ -749,7 +766,12 @@ test.describe("QA: saved outfits", () => {
           id,
           name: `QA saved ${i + 1}`,
           status: "saved",
-          preview: i % 3 === 0 ? ready(`/qa-previews/${id}-stored.png`) : NONE,
+          preview:
+            i % 3 === 0
+              ? ready(`/qa-previews/${id}-stored.png`)
+              : i % 3 === 1
+                ? NONE
+                : pending(),
         };
         fake.templates.set(id, o);
         return o;
@@ -758,8 +780,7 @@ test.describe("QA: saved outfits", () => {
     });
 
     // Make sure at least one outfit is saved in the shared store.
-    await requestOutfits(page, "qa saved lazy");
-    // Let the results screen's own pictures finish, so only the saved list's are counted.
+    await requestOutfits(page, "qa saved see it worn");
     const resultCount = await cards(page).count();
     for (let i = 0; i < resultCount; i++) {
       await expect(panel(cards(page).nth(i))).toHaveAttribute(
@@ -784,29 +805,37 @@ test.describe("QA: saved outfits", () => {
 
     await page.goto("/outfits/saved");
     await expect(cards(page)).toHaveCount(24);
-    await page.waitForTimeout(2_000);
-    const early = fake.calls.slice(beforeSaved).map((c) => c.id);
-    const needing = fakeIds.filter((_, i) => i % 3 !== 0);
-    expect(early.length).toBeGreaterThan(0);
-    expect(early.length).toBeLessThan(needing.length);
     for (let i = 0; i < 24; i++) {
       await cards(page).nth(i).scrollIntoViewIfNeeded();
     }
+    const pendingIds = fakeIds.filter((_, i) => i % 3 === 2);
     await expect
-      .poll(
-        () => new Set(fake.calls.slice(beforeSaved).map((c) => c.id)).size,
-        { timeout: 20_000 },
-      )
-      .toBe(needing.length);
-    const asked = fake.calls.slice(beforeSaved).map((c) => c.id);
-    expect(new Set(asked)).toEqual(new Set(needing));
-    expect(asked.length).toBe(needing.length);
+      .poll(() => new Set(fake.calls.slice(beforeSaved).map((c) => c.id)).size, { timeout: 20_000 })
+      .toBe(pendingIds.length);
+    await page.waitForTimeout(1_000);
+    expect(new Set(fake.calls.slice(beforeSaved).map((c) => c.id))).toEqual(new Set(pendingIds));
+
+    // The ones with no picture show the collage and See it worn.
+    const noneIds = fakeIds.filter((_, i) => i % 3 === 1);
+    const byId = (cardId: string) => page.locator(`[data-testid="outfit-card"][data-outfit-id="${cardId}"]`);
+    for (const noneId of noneIds) {
+      await expect(panel(byId(noneId))).toHaveAttribute("data-state", "collage");
+      await expect(byId(noneId).getByRole("button", { name: "See it worn" })).toBeVisible();
+    }
+    for (const readyId of fakeIds.filter((_, i) => i % 3 === 0)) {
+      await expect(byId(readyId).getByRole("button", { name: "See it worn" })).toHaveCount(0);
+    }
+
+    const afterView = fake.calls.length;
+    for (const tapped of [noneIds[0]!, noneIds[3]!]) {
+      await byId(tapped).scrollIntoViewIfNeeded();
+      await byId(tapped).getByRole("button", { name: "See it worn" }).click();
+    }
+    for (const tapped of [noneIds[0]!, noneIds[3]!]) {
+      await expect(panel(byId(tapped))).toHaveAttribute("data-state", "ready", { timeout: 15_000 });
+    }
+    expect(fake.calls.slice(afterView).map((c) => c.id)).toEqual([noneIds[0], noneIds[3]]);
     expect(fake.maxInFlight()).toBe(1);
-    await expect(panel(cards(page).last())).toHaveAttribute(
-      "data-state",
-      "ready",
-      { timeout: 10_000 },
-    );
     await checkPhoneLayout(page, "QA long saved list with pictures");
   });
 });
