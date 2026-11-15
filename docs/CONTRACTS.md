@@ -46,7 +46,7 @@ Try it: `GLADRAGS_MOCK_MODE=true pnpm dev`, then open <http://localhost:3000> or
 Where to put them:
 - Add by photo: in the original file's name, e.g. `shirt-mock-no-tags.jpg`.
 - Add by link: anywhere in the URL, e.g. `https://shop.example.com/p?x=mock-ai-paused`.
-- Outfits and refinements: in the guidance or the custom style text. **(R2)** The preview markers go there too, on the request that made the outfits.
+- Outfits and refinements: in the guidance or the custom style text. **(R2)** The preview markers go there too, on the request that made the outfits. They are checked before any reuse: a marked outfit gets a look of its own (its key is salted with the marker and its ID), so it gives its error even when another outfit already pictured the same look.
 
 On top of that, a link whose host contains `blocked`, `nodata` or `noimage` gives the screenshot fallback, with that reason.
 

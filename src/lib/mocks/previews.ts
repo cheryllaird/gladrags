@@ -38,28 +38,36 @@ export async function mockPreview(userId: string, outfitId: string, refresh: boo
   const { modelPresetId } = mock.getSettings();
   if (!modelPresetId) throw needsPresetError();
 
-  const cacheKey = await previewCacheKey({ presetId: modelPresetId, itemIds: outfit.itemIds, gaps: outfit.gaps });
   const texts = [outfit.request.guidance, outfit.request.style.kind === "custom" ? outfit.request.style.text : null];
   const now = new Date();
   const capError = () => new CapReachedError("outfit_previews_per_day", DAILY_CAPS.outfit_preview, startOfNextDay(now, USAGE_TIME_ZONE));
   const pausedError = () => new CapReachedError("monthly_image_spend", MONTHLY_SPEND_SHARES.images.capPence, startOfNextMonth(now, USAGE_TIME_ZONE));
 
+  // Markers are checked FIRST, before any reuse: an outfit carrying one
+  // must give its error even when another outfit (another test, say)
+  // already pictured the same look. So a marked outfit gets a look of its
+  // own: the key is salted with the marker and the outfit's ID, which
+  // keeps its state (skipped, failed) to itself and never reuses another's.
+  const marker = [MOCK_MARKERS.previewCap, MOCK_MARKERS.previewPaused, MOCK_MARKERS.previewFails].find((m) => hasMarker(texts, m)) ?? null;
+  const look = { presetId: modelPresetId, itemIds: outfit.itemIds, gaps: outfit.gaps };
+  const cacheKey = await previewCacheKey(marker ? { ...look, presetId: `${modelPresetId}|${marker}|${outfitId}` } : look);
+
   // "Update preview": check the cap and the pause BEFORE claiming, so a
   // refresh that can't run changes nothing (the outdated picture stays).
   if (refresh) {
-    if (hasMarker(texts, MOCK_MARKERS.previewCap)) throw capError();
-    if (hasMarker(texts, MOCK_MARKERS.previewPaused)) throw pausedError();
+    if (marker === MOCK_MARKERS.previewCap) throw capError();
+    if (marker === MOCK_MARKERS.previewPaused) throw pausedError();
     await usage.assertCanStart(userId, "outfit_preview");
   }
 
   const action = mock.claimPreview(outfitId, cacheKey, modelPresetId, refresh);
   if (action !== "generate") return mock.getOutfit(outfitId)!;
 
-  if (hasMarker(texts, MOCK_MARKERS.previewCap)) {
+  if (marker === MOCK_MARKERS.previewCap) {
     mock.finishPreview(cacheKey, { status: "skipped", failureReason: "daily_cap_reached" });
     throw capError();
   }
-  if (hasMarker(texts, MOCK_MARKERS.previewPaused)) {
+  if (marker === MOCK_MARKERS.previewPaused) {
     mock.finishPreview(cacheKey, { status: "skipped", failureReason: "ai_paused" });
     throw pausedError();
   }
@@ -74,7 +82,7 @@ export async function mockPreview(userId: string, outfitId: string, refresh: boo
   }
 
   await new Promise((resolve) => setTimeout(resolve, delayMs()));
-  if (hasMarker(texts, MOCK_MARKERS.previewFails)) {
+  if (marker === MOCK_MARKERS.previewFails) {
     mock.finishPreview(cacheKey, { status: "failed", failureReason: "ai_failed" });
     throw new ApiException("ai_failed", "We couldn't make a picture of this outfit. It shows as a collage instead.");
   }

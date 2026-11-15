@@ -185,26 +185,23 @@ describe("POST /api/outfits/[id]/preview (mock mode)", () => {
     expect(await previewsToday()).toBe(2);
   });
 
-  it("a failed refresh keeps the old picture (still outdated); it's unavailable for an hour, then tried again", async () => {
-    const [outfit] = await makeOutfits({ includeShopItems: true });
-    await readyOutfit(outfit!.id);
-    // The same outfit's look, but with the failure marker on its request.
-    const failing = mockStore.insertOutfit({ ...outfit!, id: crypto.randomUUID(), request: { ...outfit!.request, guidance: "mock-preview-fails" } });
-    await readyOutfit(failing.id); // reuses the ready picture: no generation, so no failure
-    const searched = OutfitResponseSchema.parse(await (await shopSearch.POST(json("/x", "POST"), ctx(failing.id))).json()).outfit;
-    const gap = searched.gaps[0]!;
-    await gapProduct.PUT(json("/x", "PUT", { productUrl: gap.shopResults[0]!.url }), { params: Promise.resolve({ id: failing.id, category: gap.category }) });
-    await expectError(await previewOf(failing.id, "?refresh=true"), 502, "ai_failed");
-    expect(mockStore.getOutfit(failing.id)!.preview).toMatchObject({ status: "ready", outdated: true, refreshing: false });
-    // Within the hour: unavailable, nothing generated, the old picture stays.
+  // (Keeping the old picture through a failed refresh, and "unavailable",
+  // are covered in SQL: rls.test.sql. In the mock a marker always fails, so
+  // a marked outfit never has a picture to keep.)
+  it("an ai_failed preview reads failed for an hour, then is tried again (and counted)", async () => {
+    const [failing] = await makeOutfits({ guidance: "mock-preview-fails" });
+    await expectError(await previewOf(failing!.id), 502, "ai_failed");
     const before = await previewsToday();
-    expect((await readyOutfit(failing.id, "?refresh=true")).preview).toMatchObject({ status: "ready", outdated: true });
+    expect((await readyOutfit(failing!.id)).preview).toMatchObject({ status: "failed", failureReason: "ai_failed" });
     expect(await previewsToday()).toBe(before);
-    // An hour on, ai_failed is tried again (and counted).
-    const picked = mockStore.getOutfit(failing.id)!;
-    const key = await previewCacheKey({ presetId: "women_average_medium", itemIds: picked.itemIds, gaps: picked.gaps });
+    // A marked outfit's look is salted with the marker and its ID (markers come before reuse).
+    const key = await previewCacheKey({
+      presetId: `women_average_medium|mock-preview-fails|${failing!.id}`,
+      itemIds: failing!.itemIds,
+      gaps: failing!.gaps,
+    });
     mockStore.agePreviewAttempt(key, 61 * 60 * 1000);
-    await expectError(await previewOf(failing.id, "?refresh=true"), 502, "ai_failed");
+    await expectError(await previewOf(failing!.id), 502, "ai_failed");
     expect(await previewsToday()).toBe(before + 1);
   });
 
