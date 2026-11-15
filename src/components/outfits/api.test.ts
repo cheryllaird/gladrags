@@ -128,4 +128,36 @@ describe("outfits API client", () => {
     expect(await api.getItem(trainers.id)).toEqual({ ok: true, data: { item: trainers } });
     expect(fetchImpl.mock.calls[0]?.[0]).toBe(`/api/items/${trainers.id}`);
   });
+
+  it("requestPreview POSTs to the preview route, with ?refresh=true for Update preview", async () => {
+    const { api, fetchImpl } = apiWith(jsonResponse(200, { outfit: OUTFIT }));
+    expect(await api.requestPreview(OUTFIT.id)).toEqual({ ok: true, data: { outfit: OUTFIT } });
+    expect(fetchImpl.mock.calls[0]?.[0]).toBe(`/api/outfits/${OUTFIT.id}/preview`);
+    expect(fetchImpl.mock.calls[0]?.[1]?.method).toBe("POST");
+    await api.requestPreview(OUTFIT.id, { refresh: true });
+    expect(fetchImpl.mock.calls[1]?.[0]).toBe(`/api/outfits/${OUTFIT.id}/preview?refresh=true`);
+  });
+
+  it("requestPreview passes the no-preset bad_request through with its issue path", async () => {
+    const error = { code: "bad_request", message: "Pick a model", issues: [{ path: "modelPresetId", message: "none" }] };
+    const { api } = apiWith(jsonResponse(400, { error }));
+    expect(await api.requestPreview(OUTFIT.id)).toEqual({ ok: false, error });
+  });
+
+  it("saveModelPreset PUTs the preset to settings, and refuses an unknown one without sending", async () => {
+    const settings = { modelPresetId: "men_slim_deep", favouriteShopIds: ["next"], forwardingAddress: null };
+    const { api, fetchImpl } = apiWith(jsonResponse(200, settings));
+    expect(await api.saveModelPreset("men_slim_deep")).toEqual({ ok: true, data: settings });
+    expect(fetchImpl.mock.calls[0]?.[1]?.method).toBe("PUT");
+    expect(JSON.parse(fetchImpl.mock.calls[0]?.[1]?.body as string)).toEqual({ modelPresetId: "men_slim_deep" });
+    const bad = await api.saveModelPreset("nobody" as never);
+    expect(bad.ok).toBe(false);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("getSettings reads a missing preset as null", async () => {
+    const { api } = apiWith(jsonResponse(200, { modelPresetId: null, favouriteShopIds: ["next"], forwardingAddress: null }));
+    const result = await api.getSettings();
+    expect(result.ok && result.data.modelPresetId).toBeNull();
+  });
 });

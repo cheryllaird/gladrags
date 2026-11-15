@@ -1,4 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
+import { collagesOnlyForFile } from "./helpers";
+
+// These tests are about the collage, which round 2 shows only while a picture
+// is made or when it can't be (tests/e2e/outfit-previews.spec.ts covers pictures).
+collagesOnlyForFile();
 
 // Outfit screens when things go wrong or come back short: anchor load
 // errors, expired image URLs, fewer outfits than asked for, a signed-out

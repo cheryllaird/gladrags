@@ -9,7 +9,11 @@ import {
   type Category,
   type Outfit,
 } from "@/contracts";
-import { fakeBackgroundRemoverForFile } from "./helpers";
+import { fakeBackgroundRemoverForFile, collagesOnlyForFile } from "./helpers";
+
+// These tests are about the collage, which round 2 shows only while a picture
+// is made or when it can't be (tests/e2e/outfit-previews.spec.ts covers pictures).
+collagesOnlyForFile();
 
 // The spec's five core journeys (docs/SPEC.md, "Users and core journeys"),
 // end to end across the integrated app: each starts at the front door and

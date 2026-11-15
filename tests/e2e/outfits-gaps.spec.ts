@@ -1,5 +1,9 @@
 import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
-import { installFakeBackgroundRemover } from "./helpers";
+import { installFakeBackgroundRemover, collagesOnlyForFile } from "./helpers";
+
+// These tests are about the collage, which round 2 shows only while a picture
+// is made or when it can't be (tests/e2e/outfit-previews.spec.ts covers pictures).
+collagesOnlyForFile();
 
 // Milestone 5 outfit screens on a 390 px phone, in mock mode (task C6):
 // "Include items from my shops", gaps in results and collages, "Find in my

@@ -18,7 +18,8 @@ import { QUICK_REFINEMENTS, styleLabel, subcategoryLabel } from "./copy";
 import { outfitsApi, type ApiFailure } from "./api";
 import { FeedbackBar } from "./feedback-bar";
 import { GapRow, ShopFinder } from "./gap-shop-panel";
-import { OutfitCollage } from "./outfit-collage";
+import { OutfitPreviewPanel } from "./outfit-preview";
+import { IDLE_ACTIVITY, type PreviewActivity } from "./preview-view";
 import { ApiErrorNotice } from "./result-notices";
 
 interface OutfitCardProps {
@@ -47,6 +48,12 @@ interface OutfitCardProps {
    * picking a product for a gap. Without it, shop features are hidden.
    */
   onOutfitChange?: (outfit: Outfit) => void;
+  /** What the screen's preview runner is doing with this outfit's picture. */
+  previewActivity?: PreviewActivity;
+  /** "Update preview" on an outdated picture. */
+  onUpdatePreview?: () => void;
+  /** "See it worn" (saved list): ask for this outfit's picture, which counts against the cap. */
+  onSeeItWorn?: () => void;
 }
 
 export function OutfitCard(props: OutfitCardProps) {
@@ -105,11 +112,12 @@ export function OutfitCard(props: OutfitCardProps) {
         )}
       </CardHeader>
       <CardContent className="space-y-4 px-4">
-        <OutfitCollage
-          name={outfit.name}
-          items={outfit.items}
-          gaps={outfit.gaps}
-          lazy={props.lazyCollage}
+        <OutfitPreviewPanel
+          outfit={outfit}
+          activity={props.previewActivity ?? IDLE_ACTIVITY}
+          onUpdatePreview={props.onUpdatePreview}
+          onSeeItWorn={props.onSeeItWorn}
+          lazyCollage={props.lazyCollage}
           onReloadPictures={props.onReloadPictures}
         />
 

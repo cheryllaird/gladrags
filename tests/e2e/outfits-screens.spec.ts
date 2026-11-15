@@ -1,4 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
+import { collagesOnlyForFile } from "./helpers";
+
+// These tests are about the collage, which round 2 shows only while a picture
+// is made or when it can't be (tests/e2e/outfit-previews.spec.ts covers pictures).
+collagesOnlyForFile();
 
 // Preview screenshots of every outfit screen and state at 390 px, for
 // Cheryl. Not a test: skipped unless CAPTURE_SCREENS=true, e.g.

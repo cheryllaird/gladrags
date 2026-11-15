@@ -9,8 +9,12 @@ import {
   type Outfit,
   type WardrobeItem,
 } from "@/contracts";
-import { installFakeBackgroundRemover } from "./helpers";
+import { installFakeBackgroundRemover, collagesOnlyForFile } from "./helpers";
 import { checkPhoneLayout } from "./phone-layout";
+
+// These tests are about the collage, which round 2 shows only while a picture
+// is made or when it can't be (tests/e2e/outfit-previews.spec.ts covers pictures).
+collagesOnlyForFile();
 
 // The spec's five core journeys as they stand after Cheryl's test
 // (docs/SPEC.md, "Users and core journeys" and "Changes from Cheryl's

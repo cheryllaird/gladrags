@@ -1,5 +1,10 @@
 import { deflateSync, crc32 } from "node:zlib";
 import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
+import { collagesOnlyForFile } from "./helpers";
+
+// These tests are about the collage, which round 2 shows only while a picture
+// is made or when it can't be (tests/e2e/outfit-previews.spec.ts covers pictures).
+collagesOnlyForFile();
 
 // QA gap tests for the outfit screens (journeys 2-5), 390 px, mock mode.
 // Complements outfits.spec.ts. Most outfit responses here are intercepted
