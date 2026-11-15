@@ -3,6 +3,7 @@
  * reply shapes, blocks, nonsense usage metadata, and prompt injection in
  * every free-text field. Recorded-style replies only; no network.
  */
+import type { MediaModality } from "@google/genai";
 import { describe, expect, it } from "vitest";
 import { PREVIEW_ASPECT_RATIO } from "@/contracts";
 import { GEMINI_IMAGE_REPLY_OK } from "./fixtures/gemini-image-replies";
@@ -113,13 +114,13 @@ describe("QA imageCostPenceFromUsage", () => {
   });
 
   it("without per-modality details, all output is priced as image tokens (the dearer rate)", () => {
-    const withDetails = imageCostPenceFromUsage({ promptTokenCount: 0, candidatesTokenCount: 1000, candidatesTokensDetails: [{ modality: "TEXT", tokenCount: 1000 }] }, PRICE)!;
+    const withDetails = imageCostPenceFromUsage({ promptTokenCount: 0, candidatesTokenCount: 1000, candidatesTokensDetails: [{ modality: "TEXT" as MediaModality, tokenCount: 1000 }] }, PRICE)!;
     const without = imageCostPenceFromUsage({ promptTokenCount: 0, candidatesTokenCount: 1000 }, PRICE)!;
     expect(without).toBeGreaterThan(withDetails);
   });
 
   it("image tokens reported over the candidates total don't make text tokens negative", () => {
-    const cost = imageCostPenceFromUsage({ promptTokenCount: 0, candidatesTokenCount: 10, candidatesTokensDetails: [{ modality: "IMAGE", tokenCount: 1290 }] }, PRICE)!;
+    const cost = imageCostPenceFromUsage({ promptTokenCount: 0, candidatesTokenCount: 10, candidatesTokensDetails: [{ modality: "IMAGE" as MediaModality, tokenCount: 1290 }] }, PRICE)!;
     expect(cost).toBeCloseTo((1290 * 60) / 1e6 * 100, 6);
   });
 

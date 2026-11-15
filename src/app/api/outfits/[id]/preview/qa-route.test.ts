@@ -26,7 +26,7 @@ import {
 } from "@/contracts";
 import { FakeImageGenerationProvider, type FakeImageReply } from "@/lib/ai/fakes";
 import { GEMINI_IMAGE_REPLY_OK, GEMINI_IMAGE_REPLY_TEXT_ONLY, GEMINI_IMAGE_REPLY_IMAGE_SAFETY } from "@/lib/ai/fixtures/gemini-image-replies";
-import { PREVIEW_REPLY_GOOD, PREVIEW_REPLY_SQUARE } from "@/lib/ai/fixtures/preview-fixtures";
+import { PREVIEW_REPLY_GOOD } from "@/lib/ai/fixtures/preview-fixtures";
 import { GeminiImageGenerationProvider, type GeminiImageResponse } from "@/lib/ai/gemini-image";
 import type { ImageGenerationCall, ImageGenerationInput, ImageGenerationProvider } from "@/lib/ai/types";
 import { SafeFetchError, type FetchFailure, type SafeFetchOptions } from "@/lib/link-import/safe-fetch";
@@ -88,7 +88,6 @@ const PRODUCT: ShopProduct = {
   imageUrl: "https://www.next.co.uk/images/trainers.jpg",
 };
 const JPEG_BYTES = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]);
-const GOOD = (PREVIEW_REPLY_GOOD as { image: { data: Uint8Array; mimeType: string } }).image;
 
 function post(id: string, refresh = false) {
   const url = `http://localhost:3000/api/outfits/${id}/preview${refresh ? "?refresh=true" : ""}`;

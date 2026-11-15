@@ -68,7 +68,7 @@ describe.runIf(hasOpenssl())("QA SafeFetchProductImageFetcher, real safeFetch ov
   const requests: string[] = [];
   let dns: Map<string, string[]>;
   let dialed: ResolvedAddress[];
-  const sockets = new Set<import("node:net").Socket>();
+  const sockets = new Set<import("node:stream").Duplex>();
 
   const network = (): NetworkDeps => ({
     async resolve(hostname) {
