@@ -152,7 +152,11 @@ test.describe("pictures in results", () => {
     const watch = watchPreviewRequests(page);
     await requestOutfits(page, { shopItems: true, guidance: "update my picture" });
     const card = cards(page).first();
-    await expect(preview(card)).toHaveAttribute("data-state", "ready", { timeout: 15_000 });
+    // QA: wait for every picture in the set, so the next request counted is the refresh.
+    const count = await cards(page).count();
+    for (let i = 0; i < count; i++) {
+      await expect(preview(cards(page).nth(i))).toHaveAttribute("data-state", "ready", { timeout: 15_000 });
+    }
 
     await card.getByRole("button", { name: "Find in my shops" }).click();
     const products = card.getByTestId("product-card");

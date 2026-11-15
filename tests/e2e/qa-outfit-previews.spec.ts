@@ -759,6 +759,15 @@ test.describe("QA: saved outfits", () => {
 
     // Make sure at least one outfit is saved in the shared store.
     await requestOutfits(page, "qa saved lazy");
+    // Let the results screen's own pictures finish, so only the saved list's are counted.
+    const resultCount = await cards(page).count();
+    for (let i = 0; i < resultCount; i++) {
+      await expect(panel(cards(page).nth(i))).toHaveAttribute(
+        "data-state",
+        "ready",
+        { timeout: 15_000 },
+      );
+    }
     const card = cards(page).first();
     const id = (await card.getAttribute("data-outfit-id"))!;
     const save = page.waitForResponse(
