@@ -62,11 +62,28 @@ export function assertCronAuthorized(request: Request, secret: string | undefine
 export async function runDailyCleanup(deps: CleanupJobDeps): Promise<CronCleanupResponse> {
   const now = deps.now ?? (() => new Date());
   // Unused previews first, so their images go now rather than as orphans tomorrow.
+  // A failure here is logged and doesn't stop the cleanups below; an image
+  // left behind is removed as an orphan on a later run.
   let unusedPreviewsDeleted = 0;
   if (deps.previews) {
-    const swept = await deps.previews.sweep(PREVIEW_UNUSED_SWEEP_SECONDS);
-    unusedPreviewsDeleted = swept.deleted;
-    if (swept.imageKeys.length > 0) await deps.storage.remove(STORAGE_BUCKETS.previews, swept.imageKeys);
+    try {
+      const swept = await deps.previews.sweep(PREVIEW_UNUSED_SWEEP_SECONDS);
+      unusedPreviewsDeleted = swept.deleted;
+      if (swept.imageKeys.length > 0) {
+        try {
+          await deps.storage.remove(STORAGE_BUCKETS.previews, swept.imageKeys);
+        } catch {
+          // Counts only (the error could name image keys).
+          console.error("Daily cleanup: couldn't remove unused preview images; the orphan cleanup will retry", {
+            images: swept.imageKeys.length,
+          });
+        }
+      }
+    } catch (error) {
+      console.error("Daily cleanup: the unused preview sweep failed; carrying on with the other cleanups", {
+        error: error instanceof Error ? error.message : "unknown error",
+      });
+    }
   }
   const images = await cleanUpOrphanedImages({ storage: deps.storage, references: deps.references, now });
   const linkImports = await cleanUpOldLinkImports(deps.linkImports, now);

@@ -9,8 +9,8 @@ import { findPreset, genderOf, presetRows } from "./presets";
 
 afterEach(cleanup);
 
-function Controlled({ initial = null, onChange }: { initial?: string | null; onChange?: (id: ModelPresetId) => void }) {
-  const [value, setValue] = useState<string | null>(initial);
+function Controlled({ initial = null, onChange }: { initial?: ModelPresetId | null; onChange?: (id: ModelPresetId) => void }) {
+  const [value, setValue] = useState<ModelPresetId | null>(initial);
   return (
     <ModelPresetGrid
       value={value}
@@ -106,6 +106,22 @@ describe("ModelPresetGrid", () => {
     expect(screen.getByRole("radio", { name: "Men's figures" })).toBeChecked();
     rerender(<ModelPresetGrid value={null} onChange={() => {}} gender="women" onGenderChange={onGenderChange} />);
     expect(screen.getByRole("radio", { name: "Women's figures" })).toBeChecked();
+  });
+
+  it("switches to the figure of a new value set from outside (e.g. settings loading after mount)", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<ModelPresetGrid value={null} onChange={() => {}} />);
+    expect(screen.getByRole("radio", { name: "Women's figures" })).toBeChecked();
+    rerender(<ModelPresetGrid value="men_plus_light" onChange={() => {}} />);
+    expect(screen.getByRole("radio", { name: "Men's figures" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Men's, plus size build, light skin tone" })).toBeChecked();
+    // The user can still look at the other figure while the value stays put.
+    await user.click(screen.getByRole("radio", { name: "Women's figures" }));
+    rerender(<ModelPresetGrid value="men_plus_light" onChange={() => {}} />);
+    expect(screen.getByRole("radio", { name: "Women's figures" })).toBeChecked();
+    // A controlled figure wins over the value's.
+    rerender(<ModelPresetGrid value="women_slim_deep" onChange={() => {}} gender="men" />);
+    expect(screen.getByRole("radio", { name: "Men's figures" })).toBeChecked();
   });
 
   it("can't be changed while disabled", async () => {

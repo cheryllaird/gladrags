@@ -113,7 +113,7 @@ export class FakeImageGenerationProvider implements ImageGenerationProvider {
     this.next = queue(replies);
   }
 
-  async generatePreview(input: ImageGenerationInput): Promise<ImageGenerationCall> {
+  async generatePreview(input: ImageGenerationInput, _options?: { signal?: AbortSignal }): Promise<ImageGenerationCall> {
     this.calls.push(input);
     const reply = this.next() as FakeImageReply;
     const base = { provider: this.name, model: "fake-image-model" };

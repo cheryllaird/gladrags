@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { DEFAULT_MODEL_PRESET_ID, type ModelPresetId, type UserSettings } from "@/contracts";
 import { ModelPresetGrid, findPreset } from "@/components/model-presets";
 import { Button } from "@/components/ui/button";
@@ -14,7 +14,7 @@ import { updateModelPreset } from "@/lib/client/api";
  * { modelPresetId }; on failure the saved one stays and the picker stays
  * open with the user's choice, to try again.
  */
-export function ModelPresetSetting({ saved, onSaved }: { saved: string | null; onSaved: (settings: UserSettings) => void }) {
+export function ModelPresetSetting({ saved, onSaved }: { saved: ModelPresetId | null; onSaved: (settings: UserSettings) => void }) {
   const current = findPreset(saved);
   const [picking, setPicking] = useState(false);
   // What's tapped in the open picker. Starts on the saved one, or the default when none is picked.
@@ -23,9 +23,16 @@ export function ModelPresetSetting({ saved, onSaved }: { saved: string | null; o
   const [error, setError] = useState<unknown>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const changeButton = useRef<HTMLButtonElement>(null);
+  const picker = useRef<HTMLDivElement>(null);
+
+  // The Change button goes away while picking, so focus moves into the grid
+  // (to the selected preset) rather than dropping to the page.
+  useEffect(() => {
+    if (picking) picker.current?.querySelector<HTMLInputElement>('[data-testid="model-preset-grid"] input[type="radio"]:checked')?.focus();
+  }, [picking]);
 
   function open() {
-    setDraft((current?.id as ModelPresetId | undefined) ?? DEFAULT_MODEL_PRESET_ID);
+    setDraft(current?.id ?? DEFAULT_MODEL_PRESET_ID);
     setError(null);
     setNotice(null);
     setPicking(true);
@@ -80,14 +87,13 @@ export function ModelPresetSetting({ saved, onSaved }: { saved: string | null; o
         )}
       </div>
 
-      {notice && !picking && (
-        <p role="status" className="bg-muted rounded-md px-3 py-2 text-sm">
-          {notice}
-        </p>
-      )}
+      {/* Always in the page, so screen readers announce the text when it appears. */}
+      <p role="status" className={notice && !picking ? "bg-muted rounded-md px-3 py-2 text-sm" : "sr-only"}>
+        {notice && !picking ? notice : ""}
+      </p>
 
       {picking && (
-        <div className="space-y-3" data-testid="model-picker">
+        <div ref={picker} className="space-y-3" data-testid="model-picker">
           <ModelPresetGrid value={draft} onChange={setDraft} disabled={busy} label="Your model" />
           {draftPreset && (
             <p className="text-sm" aria-live="polite">

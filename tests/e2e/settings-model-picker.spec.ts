@@ -135,16 +135,22 @@ test.describe("settings: your model", () => {
     await expect(page.getByRole("radio", { name: "Women's, average build, deep skin tone", exact: true })).toBeFocused();
   });
 
-  test("the real mock route accepts a preset on its own", async ({ page }) => {
-    const before = await (await page.request.get("/api/settings")).json();
-    // Saving the preset it already has, so tests running alongside see no change.
-    const presetId = before.modelPresetId ?? DEFAULT_PRESET;
-    const response = await page.request.put("/api/settings", { data: { modelPresetId: presetId } });
-    expect(response.status()).toBe(200);
-    const after = await response.json();
-    expect(after.modelPresetId).toBe(presetId);
-    expect(after.favouriteShopIds).toEqual(before.favouriteShopIds);
+  test("a preset is saved on its own, without touching the shops", async ({ page }) => {
+    // Under the fake route: a write to the real mock preset would race the
+    // preview tests running alongside.
+    const fake = await fakeSettings(page, { favouriteShopIds: ["next", "zara"] });
+    await page.goto("/settings");
+    await page.getByRole("button", { name: "Change model" }).click();
+    await tap(page, "Women's, slim build, medium skin tone");
+    await page.getByRole("button", { name: "Save model" }).click();
+    await expect(currentModel(page)).toContainText("Women's, slim build, medium skin tone");
+    expect(fake.puts).toEqual([{ modelPresetId: "women_slim_medium" }]);
+    expect(fake.settings.favouriteShopIds).toEqual(["next", "zara"]);
+  });
 
+  test("the real mock route refuses an unknown preset and clearing it", async ({ page }) => {
+    // Both are refused by validation before anything is written, so the
+    // shared mock store is never changed.
     const refused = await page.request.put("/api/settings", { data: { modelPresetId: "women_tall_light" } });
     expect(refused.status()).toBe(400);
     const cleared = await page.request.put("/api/settings", { data: { modelPresetId: null } });

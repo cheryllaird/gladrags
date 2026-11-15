@@ -79,6 +79,16 @@ export const MODEL_PRESET_IDS = MODEL_PRESETS.map((p) => p.id) as [string, ...st
 export const ModelPresetIdSchema = z.enum(MODEL_PRESET_IDS);
 export type ModelPresetId = z.infer<typeof ModelPresetIdSchema>;
 
+/**
+ * A preset ID as stored or returned (the settings row, GET /api/settings).
+ * An ID that isn't on MODEL_PRESETS any more (a preset removed or renamed
+ * later, or a bad row) reads as null, "not picked yet", so the user is
+ * asked again rather than the whole settings read failing. Missing also
+ * reads as null. Requests that SET a preset still use the strict
+ * ModelPresetIdSchema.
+ */
+export const StoredModelPresetIdSchema = ModelPresetIdSchema.nullable().catch(null);
+
 export const MODEL_PRESETS_BY_ID: ReadonlyMap<string, ModelPreset> = new Map(MODEL_PRESETS.map((p) => [p.id, p]));
 
 /**

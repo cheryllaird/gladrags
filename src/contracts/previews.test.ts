@@ -68,7 +68,13 @@ describe("settings with a model preset", () => {
   it("GET carries the preset or null (missing reads as null)", () => {
     expect(UserSettingsSchema.parse({ favouriteShopIds: ["next"], forwardingAddress: null }).modelPresetId).toBeNull();
     expect(UserSettingsSchema.safeParse({ modelPresetId: "women_plus_deep", favouriteShopIds: ["next"], forwardingAddress: null }).success).toBe(true);
-    expect(UserSettingsSchema.safeParse({ modelPresetId: "robot", favouriteShopIds: ["next"], forwardingAddress: null }).success).toBe(false);
+    // An unknown stored preset (one removed or renamed later) reads as null, "not picked yet":
+    // the user is asked again instead of the whole settings read failing.
+    expect(UserSettingsSchema.parse({ modelPresetId: "robot", favouriteShopIds: ["next"], forwardingAddress: null }).modelPresetId).toBeNull();
+  });
+
+  it("setting a preset stays strict", () => {
+    expect(UpdateSettingsRequestSchema.safeParse({ modelPresetId: "robot" }).success).toBe(false);
   });
 
   it("PUT takes shops, a preset, or both; never neither, never a null preset", () => {

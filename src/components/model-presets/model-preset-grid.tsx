@@ -8,12 +8,14 @@ import { BUILD_HEADINGS, GENDER_TAB_LABELS, PRESET_IMAGES_ARE_PLACEHOLDERS, TONE
 
 export interface ModelPresetGridProps {
   /** The selected preset ID, or null when none is picked yet. */
-  value: string | null;
+  value: ModelPresetId | null;
   /** Called with the tapped preset. The grid doesn't save anything. */
   onChange: (id: ModelPresetId) => void;
   /**
    * The figure shown (women's or men's). Optional: by default the grid
-   * keeps it itself, starting on the figure of `value` (women's if none).
+   * keeps it itself, starting on the figure of `value` (women's if none),
+   * and switches to the figure of a new `value` when it changes (e.g.
+   * settings that load after the grid has mounted).
    */
   gender?: ModelGender;
   onGenderChange?: (gender: ModelGender) => void;
@@ -37,6 +39,13 @@ export interface ModelPresetGridProps {
  */
 export function ModelPresetGrid({ value, onChange, gender, onGenderChange, disabled = false, label = "Model", className }: ModelPresetGridProps) {
   const [ownGender, setOwnGender] = useState<ModelGender>(() => genderOf(value));
+  // Follow `value` to its figure when it changes from outside (adjusting state
+  // during render, React's pattern for this, rather than an effect).
+  const [seenValue, setSeenValue] = useState(value);
+  if (value !== seenValue) {
+    setSeenValue(value);
+    if (value !== null) setOwnGender(genderOf(value));
+  }
   const shown = gender ?? ownGender;
   const name = useId();
 
@@ -92,7 +101,7 @@ export function ModelPresetGrid({ value, onChange, gender, onGenderChange, disab
                       value={preset.id}
                       aria-label={preset.label}
                       checked={on}
-                      onChange={() => onChange(preset.id as ModelPresetId)}
+                      onChange={() => onChange(preset.id)}
                     />
                     {/* A plain <img>: small static files from public/presets, already sized. */}
                     {/* eslint-disable-next-line @next/next/no-img-element */}
