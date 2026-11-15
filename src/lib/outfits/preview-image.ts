@@ -49,7 +49,7 @@ export function storedPortraitSize(padded: { width: number; height: number }): {
  */
 export async function encodePreviewForStorage(data: Uint8Array): Promise<ImageInput> {
   const options = { limitInputPixels: PREVIEW_DECODE_MAX_INPUT_PIXELS, failOn: "error" as const };
-  const { data: raw, info } = await sharp(data, options).rotate().removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const { data: raw, info } = await sharp(data, options).rotate().flatten({ background: "#ffffff" }).raw().toBuffer({ resolveWithObject: true });
   // The model is asked for a plain background: pad with the colour of the top-left pixel.
   const background = { r: raw[0] ?? 255, g: raw[1] ?? 255, b: raw[2] ?? 255 };
   const padded = paddedPortraitSize(info.width, info.height);

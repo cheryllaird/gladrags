@@ -228,5 +228,6 @@ export interface ImageGenerationCall {
 /** Generates "wearing it" previews. Built by outfit-engine (a Gemini image model). */
 export interface ImageGenerationProvider {
   readonly name: string;
-  generatePreview(input: ImageGenerationInput): Promise<ImageGenerationCall>;
+  /** `signal` aborts the call (the caller's time limit), so a timed-out call can't overlap the retry. */
+  generatePreview(input: ImageGenerationInput, options?: { signal?: AbortSignal }): Promise<ImageGenerationCall>;
 }

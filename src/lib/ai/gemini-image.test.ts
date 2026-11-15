@@ -69,6 +69,8 @@ describe("buildImagePrompt", () => {
     expect(data.pieces.map((p: { ref: string }) => p.ref)).toEqual(["P1", "P2", "S1", "S2"]);
     expect(data.pieces[1]).toMatchObject({ slot: "bottom", suggested: false, picture: "none: draw it from the description" });
     expect(data.pieces[2]).toMatchObject({ slot: "shoes", suggested: true, kind: "trainers", colours: ["white"], description: "White leather trainers" });
+    // A picked product's picture goes with its description and colours, not instead of them.
+    expect(data.pieces[3]).toMatchObject({ slot: "outerwear", picture: "shop picture shown below", kind: "blazer", colours: ["navy"], description: "Navy blazer" });
     // The injection attempt is only in the data part.
     const loose = parts.filter((p, i) => i !== 1 && p.text).map((p) => p.text).join("\n");
     expect(loose).not.toMatch(/HELLO/);
@@ -135,6 +137,14 @@ describe("GeminiImageGenerationProvider", () => {
     const price = GEMINI_IMAGE_MODEL_PRICES[DEFAULT_GEMINI_IMAGE_MODEL]!;
     expect(imageCostPenceFromUsage(undefined, price)).toBeUndefined();
     expect(imageCostPenceFromUsage({ promptTokenCount: 10, candidatesTokenCount: -1_000_000 }, price)).toBeUndefined();
+  });
+
+  it("passes the caller's abort signal to the SDK, keeping the prompt's config", async () => {
+    const generator = new RecordedGenerator(GEMINI_IMAGE_REPLY_OK);
+    const controller = new AbortController();
+    await new GeminiImageGenerationProvider(generator).generatePreview(INPUT, { signal: controller.signal });
+    expect(generator.calls[0]!.config?.abortSignal).toBe(controller.signal);
+    expect(generator.calls[0]!.config?.responseModalities).toEqual(["IMAGE"]);
   });
 
   it("refuses a model without a known price", () => {

@@ -33,6 +33,12 @@ import { SafeFetchError, type FetchFailure, type SafeFetchOptions } from "@/lib/
 import { InMemoryUsageStore, UsageGuard } from "@/lib/usage";
 import { FakePreviewSupabase } from "@/test/fake-previews";
 import { entry, toItemRow, uuid } from "@/test/outfit-helpers";
+import { ESTIMATED_COST_PENCE } from "@/lib/usage/config";
+import { maxSettledCost } from "@/lib/usage/guard";
+
+/** The image estimate and settled-cost bound, whatever they are set to. */
+const EST = ESTIMATED_COST_PENCE.image_generation;
+const MAX = maxSettledCost("image_generation");
 
 const USER = { id: "0c000000-0000-4000-8000-000000000013", email: "qa@example.com" };
 const OTHER = { id: "0c000000-0000-4000-8000-000000000014", email: "qa-other@example.com" };
@@ -359,7 +365,7 @@ describe("QA preview route: bad model replies", () => {
     const id = addOutfit();
     await expectError(await post(id), "ai_failed");
     expect(reservedBefore).toEqual([1, 2]);
-    expect(events("image_generation").map((e) => e.costPence)).toEqual([4, 4]);
+    expect(events("image_generation").map((e) => e.costPence)).toEqual([EST, EST]);
     expect(events("outfit_preview")).toHaveLength(1);
     expect(previewRow(outfitRow(id).preview_id)).toMatchObject({ status: "failed", failure_reason: "ai_failed" });
   });
@@ -390,7 +396,7 @@ describe("QA preview route: time budget", () => {
     expect(callCount).toBe(2);
     await vi.advanceTimersByTimeAsync(35_000);
     await expectError(await response, "ai_failed");
-    expect(events("image_generation").map((e) => e.costPence)).toEqual([4, 4]);
+    expect(events("image_generation").map((e) => e.costPence)).toEqual([EST, EST]);
     expect(previewRow(outfitRow(id).preview_id)).toMatchObject({ status: "failed", failure_reason: "ai_failed" });
   });
 
@@ -430,10 +436,10 @@ describe("QA preview route: time budget", () => {
     await expectError(await response, "ai_failed");
   });
 
-  // BUG (low): the first attempt has no minimum-time check. When building the
-  // input eats the budget, the model is still called with a 0 ms timeout: the
-  // call is started (and may be billed; 4p recorded) but can't possibly finish.
-  it.fails("doesn't start a model call when building the input used up the budget", async () => {
+  // Was BUG (QA, low, it.fails): the first attempt had no minimum-time check,
+  // so a call that couldn't finish was started (and paid for). Fixed: every
+  // attempt needs PREVIEW_MIN_ATTEMPT_MS left.
+  it("doesn't start a model call when building the input used up the budget", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     const from = fake.db.storage.from;
     (fake.db.storage as { from: unknown }).from = (bucket: string) => {
@@ -461,13 +467,13 @@ describe("QA preview route: time budget", () => {
 
 describe("QA preview route: costs", () => {
   it.each([
-    ["NaN", Number.NaN, 4],
-    ["Infinity", Number.POSITIVE_INFINITY, 4],
-    ["-Infinity", Number.NEGATIVE_INFINITY, 4],
-    ["negative", -0.01, 4],
+    ["NaN", Number.NaN, EST],
+    ["Infinity", Number.POSITIVE_INFINITY, EST],
+    ["-Infinity", Number.NEGATIVE_INFINITY, EST],
+    ["negative", -0.01, EST],
     ["zero", 0, 0],
-    ["huge (clamped to 20p)", 1e12, 20],
-    ["just over the clamp", 20.5, 20],
+    ["huge (clamped)", 1e12, MAX],
+    ["just over the clamp", MAX + 0.5, MAX],
     ["a real cost", 7.25, 7.25],
   ])("a reported cost of %s is recorded as %s", async (_name, reported, recorded) => {
     providerFrom(async () => imageCall(img.exact!, "image/png", reported));
@@ -487,7 +493,7 @@ describe("QA preview route: costs", () => {
     ];
     fake.provider = new GeminiImageGenerationProvider({ generateContent: async () => replies.shift()! });
     await ok(await post(addOutfit()));
-    expect(events("image_generation").map((e) => e.costPence)).toEqual([4]);
+    expect(events("image_generation").map((e) => e.costPence)).toEqual([EST]);
   });
 
   it("the real Gemini provider: absurd token counts are clamped at 20p", async () => {

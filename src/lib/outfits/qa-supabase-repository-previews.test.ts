@@ -136,10 +136,9 @@ describe("QA reading previews: signing failures", () => {
     expect((await repo.getOutfit(ALICE, outfit.id))!.preview.status).toBe("none");
   });
 
-  // BUG (low): a failure reading outfit_previews fails the whole listing,
-  // although signing failures fall back to the collage. The spec's fallback
-  // ("the outfit keeps its collage") suggests the outfits should still load.
-  it.fails("the previews table failing to read still loads the outfits (as no preview)", async () => {
+  // Was BUG (QA, low, it.fails): a failure reading outfit_previews failed the
+  // whole listing. Fixed: the outfits load with no preview (their collages).
+  it("the previews table failing to read still loads the outfits (as no preview)", async () => {
     db.tables.outfit_previews!.push(previewRow(800));
     await saveOne("A", 800);
     db.failTable = "outfit_previews";

@@ -42,6 +42,13 @@ describe("encodePreviewForStorage", () => {
     expect([meta.width, meta.height]).toEqual([1024, 1536]);
   });
 
+  it("flattens a transparent picture onto white, so the padding isn't black", async () => {
+    const clear = new Uint8Array(await sharp({ create: { width: 700, height: 1000, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } }).png().toBuffer());
+    const stored = await encodePreviewForStorage(clear);
+    const { data } = await sharp(stored.data).extract({ left: 350, top: 2, width: 1, height: 1 }).raw().toBuffer({ resolveWithObject: true });
+    expect([...data.slice(0, 3)].every((v) => v > 245)).toBe(true);
+  });
+
   it("throws for bytes that don't decode", async () => {
     await expect(encodePreviewForStorage(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2]))).rejects.toThrow();
   });

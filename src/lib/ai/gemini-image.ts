@@ -205,9 +205,23 @@ const BLOCKING_FINISH_REASONS = new Set([
 
 export type GeminiImageResponse = Pick<GenerateContentResponse, "candidates" | "promptFeedback" | "usageMetadata">;
 
-/** Cost of one call in pence, with PRICE_HEADROOM, or undefined if Gemini didn't report usage. */
+/** A token count we can trust: missing, or a finite number of zero or more. */
+const usableCount = (n: unknown) => n === undefined || (typeof n === "number" && Number.isFinite(n) && n >= 0);
+
+/**
+ * Cost of one call in pence, with PRICE_HEADROOM, or undefined if Gemini
+ * didn't report usage or any count is negative or not finite (nonsense
+ * metadata must never under-report a call; the estimate stands instead).
+ */
 export function imageCostPenceFromUsage(usage: GeminiImageResponse["usageMetadata"], price: GeminiImageListPrice): number | undefined {
   if (!usage || typeof usage.promptTokenCount !== "number") return undefined;
+  const counts = [
+    usage.promptTokenCount,
+    usage.candidatesTokenCount,
+    usage.thoughtsTokenCount,
+    ...(usage.candidatesTokensDetails ?? []).map((d) => d.tokenCount),
+  ];
+  if (!counts.every(usableCount)) return undefined;
   const candidates = usage.candidatesTokenCount ?? 0;
   const details = usage.candidatesTokensDetails ?? [];
   // Image tokens by modality where reported; otherwise all output is
@@ -269,8 +283,14 @@ export class GeminiImageGenerationProvider implements ImageGenerationProvider {
     this.price = imagePriceFor(model);
   }
 
-  async generatePreview(input: ImageGenerationInput): Promise<ImageGenerationCall> {
-    const response = await this.generator.generateContent({ model: this.model, ...buildImagePrompt(input) });
+  async generatePreview(input: ImageGenerationInput, options: { signal?: AbortSignal } = {}): Promise<ImageGenerationCall> {
+    const prompt = buildImagePrompt(input);
+    const response = await this.generator.generateContent({
+      model: this.model,
+      ...prompt,
+      // The caller's time limit cancels the request itself, so it can't overlap the retry.
+      config: { ...prompt.config, ...(options.signal ? { abortSignal: options.signal } : {}) },
+    });
     return {
       ...readImageResponse(response),
       costPence: imageCostPenceFromUsage(response.usageMetadata, this.price),

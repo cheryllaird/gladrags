@@ -212,7 +212,11 @@ export class SupabaseOutfitRepository implements OutfitRepository {
       .select(PREVIEW_COLUMNS)
       .eq("user_id", userId)
       .in("id", previewIds);
-    if (error) fail("load outfit previews", error);
+    if (error) {
+      // Orchestrator decision: the outfits still load, showing their collages (no preview).
+      console.error("Couldn't load outfit previews; showing collages", { message: error.message });
+      return new Map();
+    }
     const previewRows = parseRows(OutfitPreviewRowSchema, data);
     const urls = await this.signPreviews(previewRows);
     const byId = new Map(previewRows.map((p) => [p.id, p]));

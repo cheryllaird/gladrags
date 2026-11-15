@@ -54,6 +54,8 @@ import type { WardrobeEntry } from "./types";
 export const PREVIEW_ROUTE_BUDGET_MS = 80_000;
 /** Most time spent fetching picked shop products' pictures (in parallel). */
 export const PREVIEW_PRODUCT_IMAGE_BUDGET_MS = 8_000;
+/** Most time loading one item's picture (download and shrink) may take; slower ones are described in words. */
+export const PREVIEW_ITEM_IMAGE_BUDGET_MS = 8_000;
 /** Most time one image call may take. */
 export const PREVIEW_ATTEMPT_TIMEOUT_MS = 35_000;
 /** Kept back after the image calls for storing the image and finishing. */
@@ -113,12 +115,16 @@ export function describeItem(tags: ItemTags, hasPicture: boolean): string {
   return `${parts.join(" ")}. ${tags.description}`;
 }
 
-function timeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+/** Rejects after `ms` (calling `onTimeout`, e.g. to abort the work), unless `promise` settles first. */
+function timeout<T>(promise: Promise<T>, ms: number, onTimeout?: () => void): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   return Promise.race([
     promise,
     new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error(`Timed out after ${ms} ms`)), Math.max(0, ms));
+      timer = setTimeout(() => {
+        onTimeout?.();
+        reject(new Error(`Timed out after ${ms} ms`));
+      }, Math.max(0, ms));
     }),
   ]).finally(() => clearTimeout(timer));
 }
@@ -198,7 +204,11 @@ export class PreviewService {
 
       for (let attempt = 0; attempt < 2; attempt++) {
         const left = remaining() - PREVIEW_STORE_RESERVE_MS;
-        if (attempt > 0 && left < PREVIEW_MIN_ATTEMPT_MS) break;
+        // Every attempt, the first included: a call that can't finish in time isn't started (nor paid for).
+        if (left < PREVIEW_MIN_ATTEMPT_MS) {
+          console.warn("Preview: not enough time left for an image call", { attempt: attempt + 1, leftMs: left });
+          break;
+        }
         try {
           await meter.beforeCall();
         } catch (error) {
@@ -219,6 +229,8 @@ export class PreviewService {
         return;
       }
 
+      // Out of time before any model call: the count is given back.
+      if (calls === 0) await reservation.cancel().catch(() => {});
       await this.finishFailed(userId, previewId, lastReason);
       throw new ApiException("ai_failed", "We couldn't make a picture of this outfit. It shows as a collage instead.");
     } catch (error) {
@@ -238,8 +250,10 @@ export class PreviewService {
     timeoutMs: number,
   ): Promise<AttemptOutcome> {
     let call: ImageGenerationCall;
+    // Cancels the request itself at the time limit, so it can't overlap the retry.
+    const controller = new AbortController();
     try {
-      call = await timeout(provider.generatePreview(input), timeoutMs);
+      call = await timeout(provider.generatePreview(input, { signal: controller.signal }), timeoutMs, () => controller.abort());
     } catch (error) {
       // A timed-out or failed call may still be billed: the estimate stands.
       await meter.onCall({ provider: provider.name });
@@ -290,7 +304,9 @@ export class PreviewService {
     let image: ImageInput | null = null;
     if (item.image) {
       try {
-        image = await this.deps.prepareForModel(await this.deps.itemImages.download(item.image), PREVIEW_INPUT_IMAGE_PX);
+        const ref = item.image;
+        const load = async () => this.deps.prepareForModel(await this.deps.itemImages.download(ref), PREVIEW_INPUT_IMAGE_PX);
+        image = await timeout(load(), PREVIEW_ITEM_IMAGE_BUDGET_MS);
       } catch (error) {
         // Described in words instead, like an item still waiting for a photo.
         console.warn("Preview: item picture not loaded; described in words", describeError(error));
@@ -303,7 +319,8 @@ export class PreviewService {
     let productImage: ImageInput | null = null;
     if (gap.shopProduct) {
       try {
-        productImage = await this.deps.productImages.fetch(gap.shopProduct, PREVIEW_PRODUCT_IMAGE_BUDGET_MS);
+        // The fetch has its own limit; this one also bounds checking and shrinking the picture.
+        productImage = await timeout(this.deps.productImages.fetch(gap.shopProduct, PREVIEW_PRODUCT_IMAGE_BUDGET_MS), PREVIEW_PRODUCT_IMAGE_BUDGET_MS + 2_000);
       } catch (error) {
         console.warn("Preview: shop picture not loaded; described in words", describeError(error));
       }

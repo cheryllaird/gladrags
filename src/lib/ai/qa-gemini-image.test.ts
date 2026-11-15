@@ -124,11 +124,10 @@ describe("QA imageCostPenceFromUsage", () => {
     expect(cost).toBeCloseTo((1290 * 60) / 1e6 * 100, 6);
   });
 
-  // BUG (low): a negative count in one field is subtracted from the others
-  // instead of making the whole usage untrustworthy, so nonsense metadata can
-  // under-report a call (here about 1.8p for a call the recorded reply prices
-  // at about 7.8p) and the images share runs over.
-  it.fails("a negative thoughts or image token count means no cost (the estimate stands), not a smaller one", () => {
+  // Was BUG (QA, low, it.fails): a negative count in one field was subtracted
+  // from the others, under-reporting the call. Fixed: any negative or
+  // non-finite count means no cost, so the estimate stands.
+  it("a negative thoughts or image token count means no cost (the estimate stands), not a smaller one", () => {
     expect(imageCostPenceFromUsage({ ...ok, thoughtsTokenCount: -20_000 }, PRICE)).toBeUndefined();
   });
 });

@@ -27,6 +27,10 @@ import { SafeFetchError, type SafeFetchOptions } from "@/lib/link-import/safe-fe
 import { InMemoryUsageStore } from "@/lib/usage";
 import { FakePreviewSupabase } from "@/test/fake-previews";
 import { entry, toItemRow, uuid } from "@/test/outfit-helpers";
+import { ESTIMATED_COST_PENCE } from "@/lib/usage/config";
+
+/** The image estimate, whatever it is set to. */
+const EST = ESTIMATED_COST_PENCE.image_generation;
 
 const USER = { id: "0c000000-0000-4000-8000-000000000003", email: "tester@example.com" };
 const OTHER = { id: "0c000000-0000-4000-8000-000000000004", email: "other@example.com" };
@@ -172,6 +176,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
 });
@@ -435,7 +440,7 @@ describe("POST /api/outfits/[id]/preview: caps, pauses and bad replies", () => {
     await expectError(await post(id), "ai_failed");
     expect(previewRow(outfitRow(id).preview_id)).toMatchObject({ status: "failed", failure_reason: "ai_failed" });
     // A thrown attempt keeps its estimate (it may still be billed).
-    expect(events("image_generation").map((e) => e.costPence)).toEqual([0, 4]);
+    expect(events("image_generation").map((e) => e.costPence)).toEqual([0, EST]);
   });
 
   it("records the estimate for a NaN or negative reported cost", async () => {
@@ -444,7 +449,7 @@ describe("POST /api/outfits/[id]/preview: caps, pauses and bad replies", () => {
     await ok(await post(addOutfit()));
     useReplies({ image: good.image, costPence: -3 });
     await ok(await post(addOutfit({ itemIds: [uuid(1), uuid(2)] })));
-    expect(events("image_generation").map((e) => e.costPence)).toEqual([4, 4]);
+    expect(events("image_generation").map((e) => e.costPence)).toEqual([EST, EST]);
   });
 
   it("removes the stored image when finish says the look has gone (an item was deleted meanwhile)", async () => {
@@ -481,5 +486,127 @@ describe("POST /api/outfits/[id]/preview: caps, pauses and bad replies", () => {
     expect(previewRow(outfitRow(id).preview_id)).toMatchObject({ status: "failed", failure_reason: "internal" });
     expect(events("outfit_preview")).toHaveLength(0);
     expect(events("image_generation")).toHaveLength(0);
+  });
+});
+
+describe("POST /api/outfits/[id]/preview: a pause between counting and the model call", () => {
+  /** Refuse the image_generation reservation (the images share ran out) from the given attempt on. */
+  function pauseImagesFromAttempt(n: number) {
+    const reserve = fake.usage.reserve.bind(fake.usage);
+    let attempts = 0;
+    fake.usage.reserve = async (request) => {
+      if (request.kind === "image_generation" && ++attempts >= n) return { ok: false, denied: "share_spend" };
+      return reserve(request);
+    };
+  }
+
+  it("paused before the first call: skipped (ai_paused), the count given back, no call", async () => {
+    pauseImagesFromAttempt(1);
+    const id = addOutfit();
+    const error = await expectError(await post(id), "ai_paused");
+    expect(error.cap?.kind).toBe("monthly_image_spend");
+    expect(previewRow(outfitRow(id).preview_id)).toMatchObject({ status: "skipped", failure_reason: "ai_paused" });
+    expect(events("outfit_preview")).toHaveLength(0);
+    expect(fakeProvider().calls).toHaveLength(0);
+  });
+
+  it("paused before the retry, after a paid call: skipped (ai_paused), the count kept", async () => {
+    useReplies(PREVIEW_REPLY_SQUARE);
+    pauseImagesFromAttempt(2);
+    const id = addOutfit();
+    await expectError(await post(id), "ai_paused");
+    expect(previewRow(outfitRow(id).preview_id)).toMatchObject({ status: "skipped", failure_reason: "ai_paused" });
+    expect(events("outfit_preview")).toHaveLength(1);
+    expect(events("image_generation")).toHaveLength(1);
+    expect(fakeProvider().calls).toHaveLength(1);
+  });
+});
+
+describe("POST /api/outfits/[id]/preview: time limits", () => {
+  const fakeClock = () => vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+
+  it("skips the retry when too little time is left (failed, one call)", async () => {
+    fakeClock();
+    const inner = new FakeImageGenerationProvider([PREVIEW_REPLY_SQUARE]);
+    let calls = 0;
+    fake.provider = {
+      name: "fake",
+      generatePreview: async (input) => {
+        calls++;
+        vi.setSystemTime(Date.now() + 65_000); // 80 - 65 - 5 = 10 s left: under the 15 s minimum
+        return inner.generatePreview(input);
+      },
+    };
+    const id = addOutfit();
+    await expectError(await post(id), "ai_failed");
+    expect(calls).toBe(1);
+    expect(previewRow(outfitRow(id).preview_id)).toMatchObject({ status: "failed", failure_reason: "invalid_image" });
+    expect(events("outfit_preview")).toHaveLength(1); // a paid call was made
+  });
+
+  it("no time for even the first call: no call, failed (ai_failed), the count given back", async () => {
+    fakeClock();
+    const from = fake.db.storage.from;
+    (fake.db.storage as { from: unknown }).from = (bucket: string) => ({
+      ...from(bucket),
+      download: async (path: string) => {
+        if (bucket === "cutouts") vi.setSystemTime(Date.now() + 70_000);
+        return from(bucket).download(path);
+      },
+    });
+    const id = addOutfit({ itemIds: [uuid(1)] });
+    await expectError(await post(id), "ai_failed");
+    expect(fakeProvider().calls).toHaveLength(0);
+    expect(previewRow(outfitRow(id).preview_id)).toMatchObject({ status: "failed", failure_reason: "ai_failed" });
+    expect(events("outfit_preview")).toHaveLength(0);
+    expect(events("image_generation")).toHaveLength(0);
+  });
+
+  it("aborts a timed-out call before the retry starts", async () => {
+    fakeClock();
+    const signals: AbortSignal[] = [];
+    let abortedWhenRetrying: boolean | null = null;
+    let firstStarted!: () => void;
+    const started = new Promise<void>((resolve) => (firstStarted = resolve));
+    fake.provider = {
+      name: "fake",
+      generatePreview: async (input, options) => {
+        signals.push(options!.signal!);
+        if (signals.length === 1) {
+          firstStarted();
+          return new Promise<never>(() => {}); // hangs
+        }
+        abortedWhenRetrying = signals[0]!.aborted;
+        return new FakeImageGenerationProvider([PREVIEW_REPLY_GOOD]).generatePreview(input);
+      },
+    };
+    const response = post(addOutfit());
+    await started;
+    await vi.advanceTimersByTimeAsync(36_000);
+    expect((await ok(await response)).preview.status).toBe("ready");
+    expect(abortedWhenRetrying).toBe(true);
+    expect(signals[1]!.aborted).toBe(false);
+  });
+
+  it("an item picture that takes too long to load is described in words", async () => {
+    fakeClock();
+    const from = fake.db.storage.from;
+    let slowStarted!: () => void;
+    const started = new Promise<void>((resolve) => (slowStarted = resolve));
+    (fake.db.storage as { from: unknown }).from = (bucket: string) => ({
+      ...from(bucket),
+      download: async (path: string) => {
+        if (!path.includes(uuid(602))) return from(bucket).download(path);
+        slowStarted();
+        return new Promise<never>(() => {});
+      },
+    });
+    const response = post(addOutfit());
+    await started;
+    await vi.advanceTimersByTimeAsync(9_000);
+    await ok(await response);
+    const items = fakeProvider().calls[0]!.items;
+    expect(items.map((i) => i.image !== null)).toEqual([true, false, true]);
+    expect(items[1]!.description).toMatch(/^navy plain chinos\. Navy chinos$/);
   });
 });
