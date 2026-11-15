@@ -40,6 +40,7 @@ import {
   type PreviewFailureReason,
 } from "@/contracts";
 import type { ImageGenerationCall, ImageGenerationInput, ImageGenerationProvider, ImageInput, PreviewGapInput, PreviewItemInput } from "@/lib/ai/types";
+import { ProviderQuotaError } from "@/lib/ai/errors";
 import { ApiException, notFound } from "@/lib/api/errors";
 import { describeError } from "@/lib/api/http";
 import type { ImageStorage } from "@/lib/ingestion/storage";
@@ -104,7 +105,8 @@ export interface PreviewServiceDeps {
   newImageKey?: (userId: string) => string;
 }
 
-type AttemptOutcome = { ok: true; image: Uint8Array } | { ok: false; reason: PreviewFailureReason };
+/** "quota": the provider refused the call for quota (HTTP 429); nothing was billed and it isn't retried. */
+type AttemptOutcome = { ok: true; image: Uint8Array } | { ok: false; reason: PreviewFailureReason | "quota" };
 
 /** Words for an owned piece: its tag description, plus its tags in words when there's no picture. */
 export function describeItem(tags: ItemTags, hasPicture: boolean): string {
@@ -221,12 +223,19 @@ export class PreviewService {
         }
         calls++;
         const outcome = await this.attempt(provider, input, meter, Math.min(PREVIEW_ATTEMPT_TIMEOUT_MS, left));
-        if (!outcome.ok) {
-          lastReason = outcome.reason;
-          continue;
+        if (outcome.ok) {
+          await this.store(userId, previewId, outcome.image);
+          return;
         }
-        await this.store(userId, previewId, outcome.image);
-        return;
+        if (outcome.reason === "quota") {
+          // No retry: the quota won't be back within this request. Skipped
+          // (ai_paused, the nearest skipped reason), so a later POST tries
+          // again; the count is given back unless an earlier call may have cost.
+          if (calls === 1) await reservation.cancel().catch(() => {});
+          await this.finishQuietly({ userId, previewId, status: "skipped", failureReason: "ai_paused" });
+          throw new ApiException("ai_paused", "Outfit pictures aren't available right now. Your outfits show as collages instead.");
+        }
+        lastReason = outcome.reason;
       }
 
       // Out of time before any model call: the count is given back.
@@ -255,6 +264,12 @@ export class PreviewService {
     try {
       call = await timeout(provider.generatePreview(input, { signal: controller.signal }), timeoutMs, () => controller.abort());
     } catch (error) {
+      if (error instanceof ProviderQuotaError) {
+        // Refused before any work (HTTP 429): nothing was billed, so 0p is booked.
+        await meter.onCall({ costPence: 0, provider: provider.name });
+        console.warn("Preview: image model quota used up", describeError(error));
+        return { ok: false, reason: "quota" };
+      }
       // A timed-out or failed call may still be billed: the estimate stands.
       await meter.onCall({ provider: provider.name });
       console.warn("Preview: image model call failed", describeError(error));

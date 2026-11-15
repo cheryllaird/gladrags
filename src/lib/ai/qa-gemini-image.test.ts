@@ -184,8 +184,9 @@ describe("QA buildImagePrompt: prompt injection stays in the data object", () =>
 
 describe("QA GeminiImageGenerationProvider", () => {
   it("a generator that rejects propagates the error (the service counts the attempt)", async () => {
-    const provider = new GeminiImageGenerationProvider({ generateContent: () => Promise.reject(new Error("429 RESOURCE_EXHAUSTED")) });
-    await expect(provider.generatePreview({ preset: { id: "p", label: "l", image: { data: new Uint8Array(1), mimeType: "image/webp" } }, items: [], gaps: [], aspectRatio: PREVIEW_ASPECT_RATIO })).rejects.toThrow(/429/);
+    // A 429 quota refusal is now a ProviderQuotaError (booked at 0p, not retried; gemini-image.test.ts).
+    const provider = new GeminiImageGenerationProvider({ generateContent: () => Promise.reject(new Error("503 UNAVAILABLE")) });
+    await expect(provider.generatePreview({ preset: { id: "p", label: "l", image: { data: new Uint8Array(1), mimeType: "image/webp" } }, items: [], gaps: [], aspectRatio: PREVIEW_ASPECT_RATIO })).rejects.toThrow(/503/);
   });
 
   it("a generator that resolves with nothing rejects rather than returning a fake image", async () => {

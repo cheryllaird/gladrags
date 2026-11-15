@@ -22,6 +22,7 @@ import {
   PREVIEW_REPLY_NOT_AN_IMAGE,
   PREVIEW_REPLY_SQUARE,
 } from "@/lib/ai/fixtures/preview-fixtures";
+import { ProviderQuotaError } from "@/lib/ai/errors";
 import type { ImageGenerationProvider } from "@/lib/ai/types";
 import { SafeFetchError, type SafeFetchOptions } from "@/lib/link-import/safe-fetch";
 import { InMemoryUsageStore } from "@/lib/usage";
@@ -608,5 +609,42 @@ describe("POST /api/outfits/[id]/preview: time limits", () => {
     const items = fakeProvider().calls[0]!.items;
     expect(items.map((i) => i.image !== null)).toEqual([true, false, true]);
     expect(items[1]!.description).toMatch(/^navy plain chinos\. Navy chinos$/);
+  });
+});
+
+describe("POST /api/outfits/[id]/preview: the image model's quota (429)", () => {
+  function providerThrowing(error: () => Error) {
+    let calls = 0;
+    fake.provider = {
+      name: "fake",
+      generatePreview: async () => {
+        calls++;
+        throw error();
+      },
+    };
+    return () => calls;
+  }
+
+  it("a quota refusal books 0p, isn't retried, gives the count back and ends skipped (ai_paused)", async () => {
+    const calls = providerThrowing(() => new ProviderQuotaError());
+    const id = addOutfit();
+    await expectError(await post(id), "ai_paused");
+    expect(calls()).toBe(1);
+    expect(events("image_generation").map((e) => e.costPence)).toEqual([0]);
+    expect(events("outfit_preview")).toHaveLength(0);
+    expect(previewRow(outfitRow(id).preview_id)).toMatchObject({ status: "skipped", failure_reason: "ai_paused" });
+    // Skipped doesn't stand: once the quota is back, a later POST makes it.
+    useReplies(PREVIEW_REPLY_GOOD);
+    expect((await ok(await post(id))).preview.status).toBe("ready");
+  });
+
+  it("a 503 still retries and books the estimate for each attempt", async () => {
+    const calls = providerThrowing(() => Object.assign(new Error("got status: 503 UNAVAILABLE"), { status: 503 }));
+    const id = addOutfit();
+    await expectError(await post(id), "ai_failed");
+    expect(calls()).toBe(2);
+    expect(events("image_generation").map((e) => e.costPence)).toEqual([EST, EST]);
+    expect(events("outfit_preview")).toHaveLength(1);
+    expect(previewRow(outfitRow(id).preview_id)).toMatchObject({ status: "failed", failure_reason: "ai_failed" });
   });
 });

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GenerateContentParameters } from "@google/genai";
 import { PREVIEW_ASPECT_RATIO } from "@/contracts";
 import { ConfigError } from "@/lib/env";
+import { ProviderQuotaError } from "./errors";
 import {
   GEMINI_IMAGE_REPLY_BAD_USAGE,
   GEMINI_IMAGE_REPLY_IMAGE_SAFETY,
@@ -151,9 +152,19 @@ describe("GeminiImageGenerationProvider", () => {
     expect(() => new GeminiImageGenerationProvider(new RecordedGenerator({}), "gemini-made-up-image")).toThrow(ConfigError);
   });
 
-  it("propagates a provider error (the service counts it as a failed attempt)", async () => {
-    const generator = { generateContent: async () => Promise.reject(new Error("429 RESOURCE_EXHAUSTED")) };
-    await expect(new GeminiImageGenerationProvider(generator).generatePreview(INPUT)).rejects.toThrow(/429/);
+  it("turns a quota refusal (429 / RESOURCE_EXHAUSTED) into ProviderQuotaError", async () => {
+    const byStatus = Object.assign(new Error("got status: 429"), { status: 429 });
+    const byMessage = new Error('{"error":{"code":429,"status":"RESOURCE_EXHAUSTED"}}');
+    for (const error of [byStatus, byMessage]) {
+      const generator = { generateContent: async () => Promise.reject(error) };
+      await expect(new GeminiImageGenerationProvider(generator).generatePreview(INPUT)).rejects.toBeInstanceOf(ProviderQuotaError);
+    }
+  });
+
+  it("propagates other provider errors unchanged (the service counts them as failed attempts)", async () => {
+    const error = Object.assign(new Error("got status: 503 UNAVAILABLE"), { status: 503 });
+    const generator = { generateContent: async () => Promise.reject(error) };
+    await expect(new GeminiImageGenerationProvider(generator).generatePreview(INPUT)).rejects.toBe(error);
   });
 });
 

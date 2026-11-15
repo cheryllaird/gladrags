@@ -41,6 +41,7 @@ import {
 } from "@google/genai";
 import { z } from "zod";
 import { ConfigError, parseEnv } from "@/lib/env";
+import { ProviderQuotaError, isGeminiQuotaRefusal } from "./errors";
 import { GBP_PER_USD, PRICE_HEADROOM } from "./gemini-tagging";
 import type { ImageGenerationCall, ImageGenerationInput, ImageGenerationProvider, ImageInput } from "./types";
 
@@ -71,9 +72,9 @@ export interface GeminiImageListPrice {
  * UNVERIFIED: Google's price page couldn't be reached from the build
  * environment. These are the list prices as last known (about $0.04 to
  * $0.08 an image); PRICE_HEADROOM adds 25%. At these prices one 1K image
- * comes to about 4p to 8p, so the 4p image_generation estimate may be low:
- * the real cost from usage metadata replaces it (recorded at most at 20p,
- * MAX_SETTLED_COST_PENCE). Confirm both before testers join.
+ * comes to about 4p to 8p, in line with the 8p image_generation estimate
+ * (ESTIMATED_COST_PENCE). The real cost from usage metadata replaces it
+ * (clamped at MAX_SETTLED_COST_PENCE). Confirm both before testers join.
  */
 export const GEMINI_IMAGE_MODEL_PRICES: Readonly<Record<string, GeminiImageListPrice>> = {
   "gemini-3.1-flash-image": { inputUsdPerMillionTokens: 0.5, textOutputUsdPerMillionTokens: 3.0, imageOutputUsdPerMillionTokens: 60 },
@@ -285,12 +286,19 @@ export class GeminiImageGenerationProvider implements ImageGenerationProvider {
 
   async generatePreview(input: ImageGenerationInput, options: { signal?: AbortSignal } = {}): Promise<ImageGenerationCall> {
     const prompt = buildImagePrompt(input);
-    const response = await this.generator.generateContent({
-      model: this.model,
-      ...prompt,
-      // The caller's time limit cancels the request itself, so it can't overlap the retry.
-      config: { ...prompt.config, ...(options.signal ? { abortSignal: options.signal } : {}) },
-    });
+    let response: GeminiImageResponse;
+    try {
+      response = await this.generator.generateContent({
+        model: this.model,
+        ...prompt,
+        // The caller's time limit cancels the request itself, so it can't overlap the retry.
+        config: { ...prompt.config, ...(options.signal ? { abortSignal: options.signal } : {}) },
+      });
+    } catch (error) {
+      // 429 RESOURCE_EXHAUSTED: refused before any work, so nothing was billed.
+      if (isGeminiQuotaRefusal(error)) throw new ProviderQuotaError(`Gemini image quota refused the call (${this.model})`);
+      throw error;
+    }
     return {
       ...readImageResponse(response),
       costPence: imageCostPenceFromUsage(response.usageMetadata, this.price),
